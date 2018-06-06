@@ -855,7 +855,7 @@ void LP_bobloop(void *_swap)
     bobwaittimeout = LP_calc_waittimeout(bobstr);
     alicewaittimeout = LP_calc_waittimeout(alicestr);
 #ifndef NOTETOMIC
-    if (swap->I.bobtomic[0] != 0 || swap->I.alicetomic != 0) {
+    if (swap->I.bobtomic[0] != 0 || swap->I.alicetomic[0] != 0) {
         uint64_t eth_balance = getEthBalance(swap->I.etomicsrc);
         if (eth_balance < 500000) {
             err = -5000, printf("Bob ETH balance too low, aborting swap!\n");
@@ -897,7 +897,7 @@ void LP_bobloop(void *_swap)
                 }
             }
             LP_unavailableset(swap->bobpayment.utxotxid,swap->bobpayment.utxovout,(uint32_t)time(NULL)+60,swap->I.otherhash);
-            if ( error == 0 && LP_waitfor(swap->N.pair,swap,alicewaittimeout,LP_verify_alicepayment) < 0 )
+            if ( error == 0 && LP_waitfor(swap->N.pair,swap,bobwaittimeout + alicewaittimeout,LP_verify_alicepayment) < 0 )
             {
                 error = 1;
                 err = -2006, printf("error waiting for alicepayment\n");
@@ -958,7 +958,7 @@ void LP_aliceloop(void *_swap)
     alicewaittimeout = LP_calc_waittimeout(alicestr);
 
 #ifndef NOTETOMIC
-    if (swap->I.bobtomic[0] != 0 || swap->I.alicetomic != 0) {
+    if (swap->I.bobtomic[0] != 0 || swap->I.alicetomic[0] != 0) {
         uint64_t eth_balance = getEthBalance(swap->I.etomicdest);
         if (eth_balance < 500000) {
             err = -5001, printf("Alice ETH balance too low, aborting swap!\n");
