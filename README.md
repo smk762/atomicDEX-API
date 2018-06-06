@@ -259,7 +259,6 @@ The iguana binary and its linked libraries are in ```$HOME/tmp/iguana```.
 # Cmake build of marketmaker with linked etomic lib for ETH/ERC20 atomic swaps:
 1. `make sure g++-7 ln to /usr/bin/g++`
 1. `cd ~/SuperNET`
-1. `git checkout dev`
 1. `git submodule update --init --recursive`
 1. `mkdir build`
 1. `cd build`
