@@ -200,7 +200,19 @@ char *sendErc20(
 );
 
 uint8_t verifyAliceErc20FeeData(char* tokenAddress, char *to, char *amount, char *data, uint8_t decimals);
-// Your prototype or Definition
+
+uint8_t alicePaymentStatus(char *paymentId);
+uint8_t bobDepositStatus(char *depositId);
+uint8_t bobPaymentStatus(char *paymentId);
+
+uint64_t estimate_erc20_gas(
+        char *tokenAddress,
+        char *to,
+        char *amount,
+        char *privKey,
+        uint8_t decimals
+);
+
 #ifdef __cplusplus
 }
 #endif
