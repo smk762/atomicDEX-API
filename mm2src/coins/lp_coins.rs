@@ -60,6 +60,7 @@ macro_rules! try_fus {
 pub mod coins_tests;
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
+pub mod tezos;
 pub mod utxo;
 use self::utxo::{utxo_coin_from_conf_and_request, UtxoCoin, UtxoFeeDetails, UtxoTx};
 #[doc(hidden)]
