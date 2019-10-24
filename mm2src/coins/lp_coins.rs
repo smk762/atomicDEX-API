@@ -61,6 +61,7 @@ pub mod coins_tests;
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
 pub mod tezos;
+use self::tezos::{TezosCoin, tezos_coin_from_conf_and_request};
 pub mod utxo;
 use self::utxo::{utxo_coin_from_conf_and_request, UtxoCoin, UtxoFeeDetails, UtxoTx};
 #[doc(hidden)]
@@ -396,7 +397,8 @@ pub trait MmCoin: SwapOps + MarketCoinOps + Debug + Send + Sync + 'static {
 pub enum MmCoinEnum {
     UtxoCoin (UtxoCoin),
     EthCoin (EthCoin),
-    Test (TestCoin)
+    Test (TestCoin),
+    Tezos (TezosCoin),
 }
 
 impl From<UtxoCoin> for MmCoinEnum {
@@ -414,6 +416,11 @@ impl From<TestCoin> for MmCoinEnum {
         MmCoinEnum::Test (c)
 }   }
 
+impl From<TezosCoin> for MmCoinEnum {
+    fn from (c: TezosCoin) -> MmCoinEnum {
+        MmCoinEnum::Tezos (c)
+}   }
+
 // NB: When stable and groked by IDEs, `enum_dispatch` can be used instead of `Deref` to speed things up.
 impl Deref for MmCoinEnum {
     type Target = dyn MmCoin;
@@ -422,6 +429,7 @@ impl Deref for MmCoinEnum {
             &MmCoinEnum::UtxoCoin (ref c) => c,
             &MmCoinEnum::EthCoin (ref c) => c,
             &MmCoinEnum::Test (ref c) => c,
+            &MmCoinEnum::Tezos (ref c) => c,
 }   }   }
 
 struct CoinsContext {
@@ -467,7 +475,11 @@ pub async fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoi
     let secret = &*ctx.secp256k1_key_pair().private().secret;
 
     let coin: MmCoinEnum = if coins_en["etomic"].is_null() {
-        try_s! (utxo_coin_from_conf_and_request (ticker, coins_en, req, secret) .await) .into()
+        if coins_en["protocol"].is_null() {
+            try_s!(utxo_coin_from_conf_and_request (ticker, coins_en, req, secret) .await).into()
+        } else {
+            try_s!(tezos_coin_from_conf_and_request (ticker, coins_en, req, secret) .await).into()
+        }
     } else {
         try_s! (eth_coin_from_conf_and_request (ctx, ticker, coins_en, req, secret) .await) .into()
     };
