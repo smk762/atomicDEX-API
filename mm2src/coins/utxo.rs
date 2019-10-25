@@ -1364,7 +1364,7 @@ async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<Transacti
         spent_by_me: big_decimal_from_sat(data.spent_by_me as i64, coin.decimals),
         received_by_me: big_decimal_from_sat(data.received_by_me as i64, coin.decimals),
         my_balance_change: big_decimal_from_sat(data.received_by_me as i64 - data.spent_by_me as i64, coin.decimals),
-        tx_hash: signed.hash().reversed().to_vec().into(),
+        tx_hash: hex::encode(&*signed.hash().reversed()),
         tx_hex: serialize(&signed).into(),
         fee_details: Some(fee_details.into()),
         block_height: 0,
@@ -1429,7 +1429,7 @@ impl MmCoin for UtxoCoin {
             "message": "history too large"
         });
         let history = self.load_history_from_file(&ctx);
-        let mut history_map: HashMap<H256Json, TransactionDetails> = history.into_iter().map(|tx| (H256Json::from(tx.tx_hash.as_slice()), tx)).collect();
+        let mut history_map: HashMap<H256Json, TransactionDetails> = history.into_iter().map(|tx| (unwrap!(H256Json::from_str(&tx.tx_hash)), tx)).collect();
         loop {
             if ctx.is_stopping() { break };
             {
@@ -1631,7 +1631,7 @@ impl MmCoin for UtxoCoin {
                 spent_by_me: big_decimal_from_sat(spent_by_me as i64, selfi.decimals),
                 my_balance_change: big_decimal_from_sat(received_by_me as i64 - spent_by_me as i64, selfi.decimals),
                 total_amount: big_decimal_from_sat(input_amount as i64, selfi.decimals),
-                tx_hash: tx.hash().reversed().to_vec().into(),
+                tx_hash: hex::encode(&*tx.hash().reversed()),
                 tx_hex: verbose_tx.hex,
                 fee_details: Some(UtxoFeeDetails {
                     amount: fee,

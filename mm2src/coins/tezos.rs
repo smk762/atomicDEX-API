@@ -10,7 +10,7 @@ use ed25519_dalek::{Keypair as EdKeypair, SecretKey as EdSecretKey, Signature as
                     PublicKey as EdPublicKey};
 use futures::TryFutureExt;
 use futures01::Future;
-use primitives::hash::H160;
+use primitives::hash::{H160, H256};
 use serde_json::{self as json, Value as Json};
 use sha2::{Sha512};
 use std::borrow::Cow;
@@ -28,6 +28,31 @@ mod tezos_rpc;
 use self::tezos_rpc::{ForgeOperationsRequest, Operation, PreapplyOperation, PreapplyOperationsRequest,
                       TezosRpcClient};
 
+macro_rules! impl_display_for_base_58_check_sum {
+    ($impl_for: ident) => {
+        impl fmt::Display for $impl_for {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                let mut bytes = self.prefixed_bytes();
+                let checksum = dhash256(&bytes);
+                bytes.extend_from_slice(&checksum[..4]);
+                bytes.to_base58().fmt(f)
+            }
+        }
+    };
+}
+
+fn blake2b_256(input: &[u8]) -> H256 {
+    let mut blake = unwrap!(VarBlake2b::new(32));
+    blake.input(&input);
+    H256::from(blake.vec_result().as_slice())
+}
+
+fn blake2b_160(input: &[u8]) -> H160 {
+    let mut blake = unwrap!(VarBlake2b::new(20));
+    blake.input(&input);
+    H160::from(blake.vec_result().as_slice())
+}
+
 const ED_SK_PREFIX: [u8; 4] = [13, 15, 58, 7];
 const ED_SIG_PREFIX: [u8; 5] = [9, 245, 205, 134, 18];
 
@@ -38,11 +63,20 @@ struct TezosSignature {
 }
 
 pub type TezosAddrPrefix = [u8; 3];
+pub type OpHashPrefix = [u8; 2];
+
+const OP_HASH_PREFIX: OpHashPrefix = [5, 116];
 
 #[derive(Debug, PartialEq)]
 pub struct TezosAddress {
     prefix: TezosAddrPrefix,
     hash: H160,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct OpHash {
+    prefix: OpHashPrefix,
+    hash: H256,
 }
 
 #[derive(Debug, PartialEq)]
@@ -67,6 +101,25 @@ impl FromStr for TezosAddress {
         Ok(TezosAddress {
             prefix: unwrap!(bytes[..3].try_into(), "slice with incorrect length"),
             hash: H160::from(&bytes[3..23]),
+        })
+    }
+}
+
+impl FromStr for OpHash {
+    type Err = ParseAddressError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = s.from_base58().map_err(|e| ParseAddressError::InvalidBase58(e))?;
+        if bytes.len() != 38 {
+            return Err(ParseAddressError::InvalidLength);
+        }
+        let checksum = dhash256(&bytes[..34]);
+        if bytes[34..] != checksum[..4] {
+            return Err(ParseAddressError::InvalidCheckSum);
+        }
+        Ok(OpHash {
+            prefix: unwrap!(bytes[..2].try_into(), "slice with incorrect length"),
+            hash: H256::from(&bytes[2..34]),
         })
     }
 }
@@ -99,31 +152,45 @@ impl FromStr for TezosSignature {
     }
 }
 
-impl fmt::Display for TezosAddress {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut buf = Vec::with_capacity(27);
-
-        buf.extend_from_slice(&self.prefix);
-        buf.extend_from_slice(&*self.hash);
-        let checksum = dhash256(&buf[..23]);
-        buf.extend_from_slice(&checksum[..4]);
-
-        buf.to_base58().fmt(f)
+impl TezosAddress {
+    fn prefixed_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend_from_slice(&self.prefix);
+        bytes.extend_from_slice(&*self.hash);
+        bytes
     }
 }
 
-impl fmt::Display for TezosSignature {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut buf = Vec::with_capacity(73);
+impl_display_for_base_58_check_sum!(TezosAddress);
 
-        buf.extend_from_slice(&self.prefix);
-        buf.extend_from_slice(&self.sig.to_bytes());
-        let checksum = dhash256(&buf[..69]);
-        buf.extend_from_slice(&checksum[..4]);
-
-        buf.to_base58().fmt(f)
+impl TezosSignature {
+    fn prefixed_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend_from_slice(&self.prefix);
+        bytes.extend_from_slice(&self.sig.to_bytes());
+        bytes
     }
 }
+
+impl_display_for_base_58_check_sum!(TezosSignature);
+
+impl OpHash {
+    fn for_op_bytes(bytes: &[u8]) -> Self {
+        OpHash {
+            prefix: OP_HASH_PREFIX,
+            hash: blake2b_256(bytes),
+        }
+    }
+
+    fn prefixed_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend_from_slice(&self.prefix);
+        bytes.extend_from_slice(&*self.hash);
+        bytes
+    }
+}
+
+impl_display_for_base_58_check_sum!(OpHash);
 
 /// Represents possible elliptic curves keypairs supported by Tezos
 #[derive(Debug)]
@@ -150,21 +217,21 @@ impl PartialEq for TezosKeyPair {
     }
 }
 
-impl fmt::Display for TezosKeyPair {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut buf = Vec::with_capacity(40);
+impl TezosKeyPair {
+    fn prefixed_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![];
         match self {
-            TezosKeyPair::ED25519(k) => {
-                buf.extend_from_slice(&ED_SK_PREFIX);
-                buf.extend_from_slice(k.secret.as_bytes());
+            TezosKeyPair::ED25519(key_pair) => {
+                bytes.extend_from_slice(&ED_SK_PREFIX);
+                bytes.extend_from_slice(key_pair.secret.as_bytes());
             }
-            _ => unimplemented!()
+            _ => unimplemented!(),
         }
-        let checksum = dhash256(&buf[..36]);
-        buf.extend_from_slice(&checksum[..4]);
-        buf.to_base58().fmt(f)
+        bytes
     }
 }
+
+impl_display_for_base_58_check_sum!(TezosKeyPair);
 
 #[derive(Debug, PartialEq)]
 pub enum ParseKeyPairError {
@@ -212,11 +279,7 @@ impl TezosKeyPair {
     fn get_address(&self, prefix: TezosAddrPrefix) -> TezosAddress {
         let hash = match self {
             TezosKeyPair::ED25519(pair) => {
-                let mut h = H160::default();
-                let mut blake = unwrap!(VarBlake2b::new(20));
-                blake.input(pair.public.as_bytes());
-                blake.variable_result(|res| h = H160::from(res));
-                h
+                blake2b_160(pair.public.as_bytes())
             },
             _ => unimplemented!()
         };
@@ -470,11 +533,9 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
     let mut tx_bytes = try_s!(coin.rpc_client.forge_operations(&head.chain_id, &head.hash, forge_req).await);
     let mut prefixed = vec![3u8];
     prefixed.append(&mut tx_bytes.0);
-    let mut sig_hash = unwrap!(VarBlake2b::new(32));
-    sig_hash.input(&prefixed);
-    let sig_hash = sig_hash.vec_result();
+    let sig_hash = blake2b_256(&prefixed);
     let sig = match &coin.key_pair {
-        TezosKeyPair::ED25519(key_pair) => key_pair.sign::<Sha512>(&sig_hash),
+        TezosKeyPair::ED25519(key_pair) => key_pair.sign::<Sha512>(&*sig_hash),
         _ => unimplemented!(),
     };
     let signature = TezosSignature {
@@ -490,6 +551,7 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
     try_s!(coin.rpc_client.preapply_operations(preapply_req).await);
     prefixed.extend_from_slice(&signature.sig.to_bytes());
     prefixed.remove(0);
+    let op_hash = OpHash::for_op_bytes(&prefixed);
     let details = TransactionDetails {
         coin: coin.ticker.clone(),
         to: vec![req.to],
@@ -503,7 +565,7 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
         timestamp: 0,
         received_by_me: 0.into(),
         spent_by_me: 0.into(),
-        tx_hash: vec![].into()
+        tx_hash: op_hash.to_string()
     };
     Ok(details)
 }
@@ -658,24 +720,12 @@ fn tezos_signature_from_to_string() {
     let sig_str = "edsigtrFyTY19vJ4XFdrK8uUM3qHzE6427u4JYRNsMtzdBqQvPPnKZYE3xps25CEPm2yTXu53Po16Z523PHG7jzgowb3X75w66Y";
     let sig: TezosSignature = sig_str.parse().unwrap();
     assert_eq!(sig_str, sig.to_string());
-    log!([sig]);
+}
 
-    let key_pair: TezosKeyPair = "edsk2j9jaipLSH77rtwZFroZqEoSkr5fFUzcPqhphBH3BKudQU9rtw".parse().unwrap();
-    log!((key_pair.get_address([4, 177, 1])));
-
-    let unsigned = hex::decode("036fd71cb17630f3b805e841b98000c80349c4757c97faaf79710d32fc8c34a9220800002969737230bd5ea60f632b52777981e43a25d069a08d06fc0380ea30e0d4030001c56d2c471c59aa98400fa4256bd94cc7217ec4aa00ff000000330005080505070701000000244b5431474532415a68617a52784773416a52566b516363486342327076414e585157643700a80f").unwrap();
-    if let TezosKeyPair::ED25519(key_pair) = key_pair {
-        let mut hashed = unwrap!(VarBlake2b::new(32));
-        hashed.input(&unsigned);
-        let hash = hashed.vec_result();
-        log!([hash]);
-        log!([hash.len()]);
-
-        let sig = key_pair.sign::<Sha512>(&hash);
-        let sig = TezosSignature {
-            prefix: ED_SIG_PREFIX,
-            sig,
-        };
-        log!((sig));
-    }
+#[test]
+fn operation_hash_from_to_string() {
+    let op_hash_str = "op9z9QouqrxjnE4RRQ86PCvhLLQcyKoWBoHBLX6BRE8JqBmcKWe";
+    let op_hash: OpHash = op_hash_str.parse().unwrap();
+    log!([op_hash]);
+    assert_eq!(op_hash_str, op_hash.to_string());
 }
