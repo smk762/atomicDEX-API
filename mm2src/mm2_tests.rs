@@ -822,6 +822,13 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
     for uuid in uuids.iter() {
         unwrap! (mm_bob.wait_for_log (600., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
         unwrap! (mm_alice.wait_for_log (600., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
+
+        #[cfg(not(feature = "native"))] {
+            log! ("Waiting a few second for the fresh swap status to be saved..");
+            Timer::sleep (7.77) .await;
+        }
+
+        log! ("Checking alice/taker status..");
         check_my_swap_status(
             &mm_alice,
             &uuid,
@@ -831,6 +838,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
             "0.1".parse().unwrap(),
         ).await;
 
+        log! ("Checking bob/maker status..");
         check_my_swap_status(
             &mm_bob,
             &uuid,
@@ -841,10 +849,11 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
         ).await;
     }
 
-    // give nodes 3 seconds to broadcast their swaps data
+    log! ("Waiting 3 seconds for nodes to broadcast their swaps data..");
     Timer::sleep (3.) .await;
 
     for uuid in uuids.iter() {
+        log! ("Checking alice status..");
         check_stats_swap_status(
             &mm_alice,
             &uuid,
@@ -852,6 +861,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
             &taker_success_events,
         ).await;
 
+        log! ("Checking bob status..");
         check_stats_swap_status(
             &mm_bob,
             &uuid,
@@ -860,7 +870,9 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
         ).await;
     }
 
+    log! ("Checking alice recent swaps..");
     check_recent_swaps(&mm_alice, uuids.len()).await;
+    log! ("Checking bob recent swaps..");
     check_recent_swaps(&mm_bob, uuids.len()).await;
     for (base, rel) in pairs.iter() {
         log!("Get " (base) "/" (rel) " orderbook");
@@ -906,8 +918,8 @@ pub extern fn trade_test_electrum_and_eth_coins (cb_id: i32) {
 
 #[cfg(feature = "native")]
 fn trade_base_rel_native(base: &str, rel: &str) {
-    let (bob_file_passphrase, bob_file_userpass) = from_env_file (slurp (&".env.seed"));
-    let (alice_file_passphrase, alice_file_userpass) = from_env_file (slurp (&".env.client"));
+    let (bob_file_passphrase, bob_file_userpass) = from_env_file (unwrap! (slurp (&".env.seed")));
+    let (alice_file_passphrase, alice_file_userpass) = from_env_file (unwrap! (slurp (&".env.client")));
 
     let bob_passphrase = unwrap! (var ("BOB_PASSPHRASE") .ok().or (bob_file_passphrase), "No BOB_PASSPHRASE or .env.seed/PASSPHRASE");
     let bob_userpass = unwrap! (var ("BOB_USERPASS") .ok().or (bob_file_userpass), "No BOB_USERPASS or .env.seed/USERPASS");
@@ -1146,7 +1158,7 @@ fn withdraw_and_send(mm: &MarketMakerIt, coin: &str, to: &str, enable_res: &Hash
 #[test]
 #[cfg(feature = "native")]
 fn test_withdraw_and_send() {
-    let (alice_file_passphrase, _alice_file_userpass) = from_env_file (slurp (&".env.client"));
+    let (alice_file_passphrase, _alice_file_userpass) = from_env_file (unwrap! (slurp (&".env.client")));
 
     let alice_passphrase = unwrap! (var ("ALICE_PASSPHRASE") .ok().or (alice_file_passphrase), "No ALICE_PASSPHRASE or .env.client/PASSPHRASE");
 
@@ -1381,7 +1393,7 @@ fn test_multiple_buy_sell_no_delay() {
         {"coin":"ETOMIC","asset":"ETOMIC","txversion":4},
     ]);
 
-    let (bob_file_passphrase, _bob_file_userpass) = from_env_file (slurp (&".env.seed"));
+    let (bob_file_passphrase, _bob_file_userpass) = from_env_file (unwrap! (slurp (&".env.seed")));
     let bob_passphrase = unwrap! (var ("BOB_PASSPHRASE") .ok().or (bob_file_passphrase), "No BOB_PASSPHRASE or .env.seed/PASSPHRASE");
 
     let mut mm = unwrap! (MarketMakerIt::start (

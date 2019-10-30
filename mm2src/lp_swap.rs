@@ -58,25 +58,19 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, MmCoinEnum, TradeInfo, TransactionDetails, TransactionEnum};
-use common::{block_on, bits256, now_ms, now_float, rpc_response, HyRes, MM_VERSION};
+use coins::{lp_coinfind, TransactionEnum};
+use common::{block_on, read_dir, rpc_response, slurp, write, HyRes};
 use common::mm_ctx::{from_ctx, MmArc};
-use futures01::Future;
-use futures::future::Either;
-use gstuff::{slurp};
 use http::Response;
 use primitives::hash::{H160, H264};
-use rpc::v1::types::{Bytes as BytesJson, H160 as H160Json, H256 as H256Json, H264 as H264Json};
+use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
-use serialization::{deserialize, serialize};
 use std::collections::{HashSet, HashMap};
 use std::ffi::OsStr;
-use std::fs::{File, DirEntry};
-use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use uuid::Uuid;
 
 // NB: Using a macro instead of a function in order to preserve the line numbers in the log.
@@ -150,6 +144,8 @@ const BASIC_COMM_TIMEOUT: u64 = 90;
 const PAYMENT_LOCKTIME: u64 = 3600 * 2 + 300 * 2;
 const _SWAP_DEFAULT_NUM_CONFIRMS: u32 = 1;
 const _SWAP_DEFAULT_MAX_CONFIRMS: u32 = 6;
+/// MM2 checks that swap payment is confirmed every WAIT_CONFIRM_INTERVAL seconds
+const WAIT_CONFIRM_INTERVAL: u64 = 15;
 
 #[derive(Debug, PartialEq, Serialize)]
 pub enum RecoveredSwapAction {
@@ -319,8 +315,7 @@ fn save_stats_swap(ctx: &MmArc, swap: &SavedSwap) -> Result<(), String> {
         SavedSwap::Maker(maker_swap) => (stats_maker_swap_file_path(ctx, &maker_swap.uuid), try_s!(json::to_vec(&maker_swap))),
         SavedSwap::Taker(taker_swap) => (stats_taker_swap_file_path(ctx, &taker_swap.uuid), try_s!(json::to_vec(&taker_swap))),
     };
-    let mut file = try_s!(File::create(path));
-    try_s!(file.write_all(&content));
+    try_s!(write(&path, &content));
     Ok(())
 }
 
@@ -461,7 +456,7 @@ impl<'a> From<&'a SavedSwap> for MySwapStatusResponse<'a> {
 pub fn my_swap_status(ctx: MmArc, req: Json) -> HyRes {
     let uuid = try_h!(req["params"]["uuid"].as_str().ok_or("uuid parameter is not set or is not string"));
     let path = my_swap_file_path(&ctx, uuid);
-    let content = slurp(&path);
+    let content = try_h!(slurp(&path));
     if content.is_empty() {
         return rpc_response(404, json!({
             "error": "swap data is not found"
@@ -479,8 +474,8 @@ pub fn stats_swap_status(ctx: MmArc, req: Json) -> HyRes {
     let uuid = try_h!(req["params"]["uuid"].as_str().ok_or("uuid parameter is not set or is not string"));
     let maker_path = stats_maker_swap_file_path(&ctx, uuid);
     let taker_path = stats_taker_swap_file_path(&ctx, uuid);
-    let maker_content = slurp(&maker_path);
-    let taker_content = slurp(&taker_path);
+    let maker_content = try_h!(slurp(&maker_path));
+    let taker_content = try_h!(slurp(&taker_path));
     let maker_status: Option<MakerSavedSwap> = if maker_content.is_empty() {
         None
     } else {
@@ -510,7 +505,7 @@ pub fn stats_swap_status(ctx: MmArc, req: Json) -> HyRes {
 /// Broadcasts `my` swap status to P2P network
 fn broadcast_my_swap_status(uuid: &str, ctx: &MmArc) -> Result<(), String> {
     let path = my_swap_file_path(ctx, uuid);
-    let content = slurp(&path);
+    let content = try_s!(slurp(&path));
     let mut status: SavedSwap = try_s!(json::from_slice(&content));
     match &mut status {
         SavedSwap::Taker(_) => (), // do nothing for taker
@@ -539,51 +534,24 @@ pub fn save_stats_swap_status(ctx: &MmArc, data: Json) -> HyRes {
 pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
     let limit = req["limit"].as_u64().unwrap_or(10);
     let from_uuid = req["from_uuid"].as_str();
-    let mut entries: Vec<(SystemTime, DirEntry)> = try_h!(my_swaps_dir(&ctx).read_dir()).filter_map(|dir_entry| {
-        let entry = match dir_entry {
-            Ok(ent) => ent,
-            Err(e) => {
-                log!("Error " (e) " reading from dir " (my_swaps_dir(&ctx).display()));
-                return None;
-            }
-        };
-
-        let metadata = match entry.metadata() {
-            Ok(m) => m,
-            Err(e) => {
-                log!("Error " (e) " getting file " (entry.path().display()) " meta");
-                return None;
-            }
-        };
-
-        let m_time = match metadata.modified() {
-            Ok(time) => time,
-            Err(e) => {
-                log!("Error " (e) " getting file " (entry.path().display()) " m_time");
-                return None;
-            }
-        };
-
-        if entry.path().extension() == Some(OsStr::new("json")) {
-            Some((m_time, entry))
-        } else {
-            None
-        }
-    }).collect();
+    let mut entries: Vec<(u64, PathBuf)> = try_h!(read_dir(&my_swaps_dir(&ctx)));
     // sort by m_time in descending order
     entries.sort_by(|(a, _), (b, _)| b.cmp(&a));
 
     let skip = match from_uuid {
-        Some(uuid) => try_h!(entries.iter().position(|(_, entry)| entry.path() == my_swap_file_path(&ctx, uuid)).ok_or(format!("from_uuid {} swap is not found", uuid))) + 1,
+        Some(uuid) => {
+            let swap_path = my_swap_file_path(&ctx, uuid);
+            try_h!(entries.iter().position(|(_, path)| *path == swap_path).ok_or(format!("from_uuid {} swap is not found", uuid))) + 1
+        },
         None => 0,
     };
 
     // iterate over file entries trying to parse the file contents and add to result vector
-    let swaps: Vec<Json> = entries.iter().skip(skip).take(limit as usize).map(|(_, entry)|
-        match json::from_slice::<SavedSwap>(&slurp(&entry.path())) {
+    let swaps: Vec<Json> = entries.iter().skip(skip).take(limit as usize).map(|(_, path)|
+        match json::from_slice::<SavedSwap>(&unwrap!(slurp(&path))) {
             Ok(swap) => unwrap!(json::to_value(MySwapStatusResponse::from(&swap))),
             Err(e) => {
-                log!("Error " (e) " parsing JSON from " (entry.path().display()));
+                log!("Error " (e) " parsing JSON from " (path.display()));
                 Json::Null
             },
         },
@@ -604,24 +572,16 @@ pub fn my_recent_swaps(ctx: MmArc, req: Json) -> HyRes {
 /// Return the tickers of coins that must be enabled for swaps to continue
 pub fn swap_kick_starts(ctx: MmArc) -> HashSet<String> {
     let mut coins = HashSet::new();
-    let entries: Vec<DirEntry> = unwrap!(my_swaps_dir(&ctx).read_dir()).filter_map(|dir_entry| {
-        let entry = match dir_entry {
-            Ok(ent) => ent,
-            Err(e) => {
-                log!("Error " (e) " reading from dir " (my_swaps_dir(&ctx).display()));
-                return None;
-            }
-        };
-
-        if entry.path().extension() == Some(OsStr::new("json")) {
-            Some(entry)
+    let entries: Vec<PathBuf> = unwrap!(read_dir(&my_swaps_dir(&ctx))).into_iter().filter_map(|(_lm, path)| {
+        if path.extension() == Some(OsStr::new("json")) {
+            Some(path)
         } else {
             None
         }
     }).collect();
 
-    entries.iter().for_each(|entry| {
-        match json::from_slice::<SavedSwap>(&slurp(&entry.path())) {
+    entries.iter().for_each(|path| {
+        match json::from_slice::<SavedSwap>(&unwrap!(slurp(&path))) {
             Ok(swap) => {
                 if !swap.is_finished() {
                     log!("Kick starting the swap " [swap.uuid()]);
@@ -715,7 +675,7 @@ pub async fn coins_needed_for_kick_start(ctx: MmArc) -> Result<Response<Vec<u8>>
 pub async fn recover_funds_of_swap(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let uuid = try_s!(req["params"]["uuid"].as_str().ok_or("uuid parameter is not set or is not string"));
     let path = my_swap_file_path(&ctx, uuid);
-    let content = slurp(&path);
+    let content = try_s!(slurp(&path));
     if content.is_empty() { return ERR!("swap data is not found") }
 
     let swap: SavedSwap = try_s!(json::from_slice(&content));
@@ -753,6 +713,7 @@ pub async fn import_swaps(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
 
 #[cfg(test)]
 mod lp_swap_tests {
+    use serialization::{deserialize, serialize};
     use super::*;
 
     #[test]

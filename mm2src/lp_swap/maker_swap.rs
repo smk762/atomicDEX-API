@@ -25,7 +25,7 @@ use super::{broadcast_my_swap_status, dex_fee_amount, get_locked_amount_by_other
   lp_atomic_locktime, my_swap_file_path,
   AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
   SavedSwap, SwapsContext, SwapError, SwapNegotiationData,
-  BASIC_COMM_TIMEOUT};
+  BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
 
 pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
     ctx.dbdir().join("SWAPS").join("STATS").join("MAKER").join(format!("{}.json", uuid))
@@ -33,7 +33,7 @@ pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
 
 fn save_my_maker_swap_event(ctx: &MmArc, swap: &MakerSwap, event: MakerSavedEvent) -> Result<(), String> {
     let path = my_swap_file_path(ctx, &swap.uuid);
-    let content = slurp(&path);
+    let content = try_s!(slurp(&path));
     let swap: SavedSwap = if content.is_empty() {
         SavedSwap::Maker(MakerSavedSwap {
             uuid: swap.uuid.clone(),
@@ -552,7 +552,7 @@ impl MakerSwap {
             &unwrap!(self.r().taker_payment.clone()).tx_hex,
             self.r().data.taker_payment_confirmations,
             wait_taker_payment,
-            1,
+            WAIT_CONFIRM_INTERVAL,
         ).compat();
 
         if let Err(err) = wait_f.await {
@@ -969,10 +969,8 @@ pub async fn run_maker_swap(swap: MakerSwap, initial_command: Option<MakerSwapCo
         match res.0 {
             Some(c) => { command = c; },
             None => {
-                if cfg!(feature = "native") {
-                    if let Err(e) = broadcast_my_swap_status(&uuid, &ctx) {
-                        log!("!broadcast_my_swap_status(" (uuid) "): " (e));
-                    }
+                if let Err(e) = broadcast_my_swap_status(&uuid, &ctx) {
+                    log!("!broadcast_my_swap_status(" (uuid) "): " (e));
                 }
                 break;
             },
