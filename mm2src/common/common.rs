@@ -1100,6 +1100,7 @@ pub extern "C" fn lp_queue_command_for_c (retstrp: *mut *mut c_char, buf: *mut c
 }
 
 pub fn lp_queue_command (ctx: &mm_ctx::MmArc, msg: String) -> Result<(), String> {
+    log!("got command" (msg));
     // If we're helping a WASM then leave a copy of the broadcast for them.
     if let Some (ref mut cq) = *try_s! (ctx.command_queueʰ.lock()) {
         // Monotonic increment.

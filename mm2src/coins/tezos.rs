@@ -10,12 +10,14 @@ use ed25519_dalek::{Keypair as EdKeypair, SecretKey as EdSecretKey, Signature as
                     PublicKey as EdPublicKey};
 use futures::TryFutureExt;
 use futures01::Future;
+use num_bigint::BigUint;
 use primitives::hash::{H160, H256};
+use serde::de::{self, Visitor};
 use serde_json::{self as json, Value as Json};
 use sha2::{Sha512};
 use std::borrow::Cow;
 use std::cmp::PartialEq;
-use std::convert::TryInto;
+use std::convert::{TryInto, TryFrom};
 use std::fmt;
 use std::ops::Deref;
 use std::str::FromStr;
@@ -27,6 +29,7 @@ use common::slurp_url;
 mod tezos_rpc;
 use self::tezos_rpc::{ForgeOperationsRequest, Operation, PreapplyOperation, PreapplyOperationsRequest,
                       TezosRpcClient};
+use crate::MmCoinEnum::Tezos;
 
 macro_rules! impl_display_for_base_58_check_sum {
     ($impl_for: ident) => {
@@ -728,4 +731,81 @@ fn operation_hash_from_to_string() {
     let op_hash: OpHash = op_hash_str.parse().unwrap();
     log!([op_hash]);
     assert_eq!(op_hash_str, op_hash.to_string());
+}
+
+#[derive(Debug)]
+struct TezosErcStorage {
+    accounts: [u8; 0],
+    version: u64,
+    total_supply: BigUint,
+    decimals: u8,
+    name: String,
+    symbol: String,
+    owner: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+enum TezosRpcValue {
+    Pair { prim: String, args: (Box<TezosRpcValue>, Box<TezosRpcValue>) },
+    Int { int: String },
+    String { string: String },
+    Generic (Json),
+}
+
+impl TezosRpcValue {
+    fn split_and_read_value(self) -> (String, Option<TezosRpcValue>) {
+        match self {
+            TezosRpcValue::Pair { prim, args } => match *args.0 {
+                TezosRpcValue::Int { int } => (int, Some(*args.1)),
+                TezosRpcValue::String { string } => (string, Some(*args.1)),
+                TezosRpcValue::Generic(json) => (unwrap!(json::to_string(&json)), Some(*args.1)),
+                _ => unimplemented!(),
+            },
+            TezosRpcValue::Int { int } => (int, None),
+            TezosRpcValue::String { string } => (string, None),
+            TezosRpcValue::Generic(json) => (unwrap!(json::to_string(&json)), None),
+        }
+    }
+}
+
+struct TezosRpcValueReader {
+    inner: Option<TezosRpcValue>,
+}
+
+impl TezosRpcValueReader {
+    fn read(&mut self) -> Result<String, String> {
+        let val = self.inner.take();
+        let (res, next) = val.unwrap().split_and_read_value();
+        self.inner = next;
+        Ok(res)
+    }
+}
+
+impl TryFrom<TezosRpcValue> for TezosErcStorage {
+    type Error = String;
+
+    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+        let mut reader = TezosRpcValueReader {
+            inner: Some(value),
+        };
+        Ok(TezosErcStorage {
+            accounts: unwrap!(json::from_str(&reader.read().unwrap())),
+            version: reader.read().unwrap().parse().unwrap(),
+            total_supply: reader.read().unwrap().parse().unwrap(),
+            decimals: reader.read().unwrap().parse().unwrap(),
+            name: reader.read().unwrap(),
+            symbol: reader.read().unwrap(),
+            owner: reader.read().unwrap(),
+        })
+    }
+}
+
+#[test]
+fn deserialize_erc_storage() {
+    let json = r#"{"prim":"Pair","args":[[],{"prim":"Pair","args":[{"int":"1"},{"prim":"Pair","args":[{"int":"100000"},{"prim":"Pair","args":[{"int":"0"},{"prim":"Pair","args":[{"string":"TEST"},{"prim":"Pair","args":[{"string":"TEST"},{"string":"dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp"}]}]}]}]}]}]}"#;
+    let pair: TezosRpcValue = json::from_str(&json).unwrap();
+    log!([pair]);
+    let storage = unwrap!(TezosErcStorage::try_from(pair));
+    log!([storage]);
 }
