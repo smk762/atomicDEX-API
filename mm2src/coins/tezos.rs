@@ -10,13 +10,15 @@ use ed25519_dalek::{Keypair as EdKeypair, SecretKey as EdSecretKey, Signature as
                     PublicKey as EdPublicKey};
 use futures::TryFutureExt;
 use futures01::Future;
-use num_bigint::BigUint;
+use num_bigint::{ BigInt, BigUint};
 use primitives::hash::{H160, H256};
+use rpc::v1::types::{Bytes as BytesJson};
 use serde::de::{self, Visitor};
 use serde_json::{self as json, Value as Json};
 use sha2::{Sha512};
 use std::borrow::Cow;
 use std::cmp::PartialEq;
+use std::collections::HashMap;
 use std::convert::{TryInto, TryFrom};
 use std::fmt;
 use std::ops::Deref;
@@ -27,8 +29,8 @@ use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, Transact
 use common::slurp_url;
 
 mod tezos_rpc;
-use self::tezos_rpc::{ForgeOperationsRequest, Operation, PreapplyOperation, PreapplyOperationsRequest,
-                      TezosRpcClient};
+use self::tezos_rpc::{BigMapReq, ForgeOperationsRequest, Operation, PreapplyOperation,
+                      PreapplyOperationsRequest, TezosInputType, TezosRpcClient};
 use crate::MmCoinEnum::Tezos;
 
 macro_rules! impl_display_for_base_58_check_sum {
@@ -70,7 +72,7 @@ pub type OpHashPrefix = [u8; 2];
 
 const OP_HASH_PREFIX: OpHashPrefix = [5, 116];
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub struct TezosAddress {
     prefix: TezosAddrPrefix,
     hash: H160,
@@ -161,6 +163,31 @@ impl TezosAddress {
         bytes.extend_from_slice(&self.prefix);
         bytes.extend_from_slice(&*self.hash);
         bytes
+    }
+
+    fn from_rpc_bytes(bytes: BytesJson, prefix: TezosAddrPrefix) -> Result<Self, String> {
+        let bytes = bytes.0;
+        if bytes.len() != 22 {
+            return ERR!("Invalid input len {}, expected 22", bytes.len());
+        }
+
+        match bytes[0] {
+            0 => if bytes[1] == 0 {
+                Ok(TezosAddress {
+                    prefix,
+                    hash: H160::from(&bytes[2..]),
+                })
+            } else {
+                ERR!("Input has unexpected prefix, expected 0000, got {}", hex::encode(&bytes[..2]))
+            },
+            1 => {
+                Ok(TezosAddress {
+                    prefix,
+                    hash: H160::from(&bytes[1..21]),
+                })
+            },
+            _ => ERR!("Input {} has unexpected prefix", hex::encode(bytes))
+        }
     }
 }
 
@@ -336,10 +363,27 @@ impl MarketCoinOps for TezosCoin {
     }
 
     fn my_balance(&self) -> Box<dyn Future<Item=BigDecimal, Error=String> + Send> {
-        let client = self.rpc_client.clone();
+        let selfi = self.clone();
         let addr = format!("{}", self.my_address);
         let fut = Box::pin(async move {
-            client.get_balance(&addr).await
+            match &selfi.coin_type {
+                TezosCoinType::Tezos => selfi.rpc_client.get_balance(&addr).await,
+                TezosCoinType::ERC(token_addr) => {
+                    let req = BigMapReq {
+                        r#type: TezosInputType {
+                            prim: "address".into(),
+                        },
+                        key: TezosRpcValue::String {
+                            string: selfi.my_address.to_string(),
+                        }
+                    };
+                    let account: TezosErcAccount = try_s!(selfi.rpc_client.get_big_map(
+                        &token_addr.to_string(),
+                        req,
+                    ).await);
+                    Ok(BigDecimal::from(BigInt::from(account.balance)))
+                }
+            }
         });
         let divisor = BigDecimal::from(10u64.pow(self.decimals as u32));
         Box::new(fut.compat().map(move |balance| balance / divisor))
@@ -634,10 +678,28 @@ pub async fn tezos_coin_from_conf_and_request(
     let key_pair = try_s!(TezosKeyPair::from_bytes(priv_key));
     let ed25519_addr_prefix: TezosAddrPrefix = try_s!(json::from_value(conf["ed25519_addr_prefix"].clone()));
     let my_address = key_pair.get_address(ed25519_addr_prefix);
-    let decimals = conf["decimals"].as_u64().unwrap_or (6) as u8;
+    let (decimals, coin_type) = match conf["protocol"]["token_type"].as_str().unwrap() {
+        "TESOS" => {
+            let decimals = conf["decimals"].as_u64().unwrap_or (6) as u8;
+            (decimals, TezosCoinType::Tezos)
+        },
+        "ERC20" => {
+            let addr = try_s!(TezosAddress::from_str(conf["protocol"]["contract_address"].as_str().unwrap()));
+            let decimals = match conf["decimals"].as_u64() {
+                Some(d) => d as u8,
+                None => {
+                    let storage: TezosErcStorage = try_s!(rpc_client.get_storage(&addr.to_string()).await);
+                    storage.decimals
+                }
+            };
+
+            (decimals, TezosCoinType::ERC(addr))
+        },
+        _ => unimplemented!()
+    };
 
     Ok(TezosCoin(Arc::new(TezosCoinImpl {
-        coin_type: TezosCoinType::Tezos,
+        coin_type,
         decimals,
         key_pair,
         my_address,
@@ -667,6 +729,14 @@ fn dune_address_from_to_string() {
 
     assert_eq!("dn1c5mt3XTbLo5mKBpaTqidP6bSzUVD9T5By", address.to_string());
     assert_eq!(address, unwrap!(TezosAddress::from_str("dn1c5mt3XTbLo5mKBpaTqidP6bSzUVD9T5By")));
+
+    let address = TezosAddress {
+        prefix: [4, 177, 4],
+        hash: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
+    };
+
+    assert_eq!("dn2p6aqNRKitBiDcc5eiqg5kuxLWFKLiDwmb", address.to_string());
+    assert_eq!(address, unwrap!(TezosAddress::from_str("dn2p6aqNRKitBiDcc5eiqg5kuxLWFKLiDwmb")));
 }
 
 #[test]
@@ -735,7 +805,7 @@ fn operation_hash_from_to_string() {
 
 #[derive(Debug)]
 struct TezosErcStorage {
-    accounts: [u8; 0],
+    accounts: HashMap<BytesJson, TezosErcAccount>,
     version: u64,
     total_supply: BigUint,
     decimals: u8,
@@ -744,27 +814,118 @@ struct TezosErcStorage {
     owner: String,
 }
 
+impl TryFrom<TezosRpcValue> for BigUint {
+    type Error = String;
+
+    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+        match value {
+            TezosRpcValue::Int { int } => Ok(try_s!(int.parse())),
+            _ => ERR!("BigUint can be constructed only from TezosRpcValue::Int, got {:?}", value),
+        }
+    }
+}
+
+impl TryFrom<TezosRpcValue> for u8 {
+    type Error = String;
+
+    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+        match value {
+            TezosRpcValue::Int { int } => Ok(try_s!(int.parse())),
+            _ => ERR!("u8 can be constructed only from TezosRpcValue::Int, got {:?}", value),
+        }
+    }
+}
+
+impl TryFrom<TezosRpcValue> for u64 {
+    type Error = String;
+
+    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+        match value {
+            TezosRpcValue::Int { int } => Ok(try_s!(int.parse())),
+            _ => ERR!("u64 can be constructed only from TezosRpcValue::Int, got {:?}", value),
+        }
+    }
+}
+
+impl TryFrom<TezosRpcValue> for String {
+    type Error = String;
+
+    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+        match value {
+            TezosRpcValue::String { string } => Ok(string),
+            _ => ERR!("String can be constructed only from TezosRpcValue::String, got {:?}", value),
+        }
+    }
+}
+
+macro_rules! impl_try_from_tezos_rpc_value_for_hash_map {
+    ($key_type: ident, $value_type: ident) => {
+        impl TryFrom<TezosRpcValue> for HashMap<$key_type, $value_type> {
+            type Error = String;
+
+            fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+                match value {
+                    TezosRpcValue::List (elems) => {
+                        let mut res = HashMap::new();
+                        for elem in elems {
+                            match elem {
+                                TezosRpcValue::TezosPrim(TezosPrim::Elt((key, value))) => {
+                                    res.insert(try_s!((*key).try_into()), try_s!((*value).try_into()));
+                                },
+                                _ => return ERR!("Unexpected item {:?} in list, must be TezosPrim::Elt", elem),
+                            }
+                        }
+                        Ok(res)
+                    },
+                    _ => ERR!("HashMap can be constructed only from TezosRpcValue::List, got {:?}", value),
+                }
+            }
+        }
+    };
+}
+
+impl_try_from_tezos_rpc_value_for_hash_map!(BytesJson, TezosErcAccount);
+impl_try_from_tezos_rpc_value_for_hash_map!(BytesJson, BigUint);
+
+impl TryFrom<TezosRpcValue> for TezosErcAccount {
+    type Error = String;
+
+    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+        let mut reader = TezosRpcValueReader {
+            inner: Some(value),
+        };
+
+        Ok(TezosErcAccount {
+            balance: try_s!(reader.read().unwrap().try_into()),
+            allowances: try_s!(reader.read().unwrap().try_into()),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "prim", content = "args")]
+pub enum TezosPrim {
+    Pair ((Box<TezosRpcValue>, Box<TezosRpcValue>)),
+    Elt ((Box<TezosRpcValue>, Box<TezosRpcValue>)),
+    Right ((Box<TezosRpcValue>)),
+    Left ((Box<TezosRpcValue>)),
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
-enum TezosRpcValue {
-    Pair { prim: String, args: (Box<TezosRpcValue>, Box<TezosRpcValue>) },
+pub enum TezosRpcValue {
+    Bytes { bytes: BytesJson },
     Int { int: String },
+    List (Vec<TezosRpcValue>),
+    TezosPrim (TezosPrim),
     String { string: String },
-    Generic (Json),
 }
 
 impl TezosRpcValue {
-    fn split_and_read_value(self) -> (String, Option<TezosRpcValue>) {
+    fn split_and_read_value(self) -> (TezosRpcValue, Option<TezosRpcValue>) {
         match self {
-            TezosRpcValue::Pair { prim, args } => match *args.0 {
-                TezosRpcValue::Int { int } => (int, Some(*args.1)),
-                TezosRpcValue::String { string } => (string, Some(*args.1)),
-                TezosRpcValue::Generic(json) => (unwrap!(json::to_string(&json)), Some(*args.1)),
-                _ => unimplemented!(),
-            },
-            TezosRpcValue::Int { int } => (int, None),
-            TezosRpcValue::String { string } => (string, None),
-            TezosRpcValue::Generic(json) => (unwrap!(json::to_string(&json)), None),
+            TezosRpcValue::TezosPrim(TezosPrim::Pair((left, right))) => (*left, Some(*right)),
+            _ => (self, None),
         }
     }
 }
@@ -774,7 +935,7 @@ struct TezosRpcValueReader {
 }
 
 impl TezosRpcValueReader {
-    fn read(&mut self) -> Result<String, String> {
+    fn read(&mut self) -> Result<TezosRpcValue, String> {
         let val = self.inner.take();
         let (res, next) = val.unwrap().split_and_read_value();
         self.inner = next;
@@ -789,16 +950,34 @@ impl TryFrom<TezosRpcValue> for TezosErcStorage {
         let mut reader = TezosRpcValueReader {
             inner: Some(value),
         };
+
         Ok(TezosErcStorage {
-            accounts: unwrap!(json::from_str(&reader.read().unwrap())),
-            version: reader.read().unwrap().parse().unwrap(),
-            total_supply: reader.read().unwrap().parse().unwrap(),
-            decimals: reader.read().unwrap().parse().unwrap(),
-            name: reader.read().unwrap(),
-            symbol: reader.read().unwrap(),
-            owner: reader.read().unwrap(),
+            accounts: try_s!(reader.read().unwrap().try_into()),
+            version: try_s!(reader.read().unwrap().try_into()),
+            total_supply: try_s!(reader.read().unwrap().try_into()),
+            decimals: try_s!(reader.read().unwrap().try_into()),
+            name: try_s!(reader.read().unwrap().try_into()),
+            symbol: try_s!(reader.read().unwrap().try_into()),
+            owner: try_s!(reader.read().unwrap().try_into()),
         })
     }
+}
+
+impl TryFrom<TezosRpcValue> for BytesJson {
+    type Error = String;
+
+    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+        match value {
+            TezosRpcValue::Bytes { bytes } => Ok(bytes),
+            _ => ERR!("Bytes can be constructed only from TezosRpcValue::Bytes, got {:?}", value),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TezosErcAccount {
+    balance: BigUint,
+    allowances: HashMap<BytesJson, BigUint>,
 }
 
 #[test]
@@ -808,4 +987,28 @@ fn deserialize_erc_storage() {
     log!([pair]);
     let storage = unwrap!(TezosErcStorage::try_from(pair));
     log!([storage]);
+}
+
+#[test]
+fn deserialize_erc_account() {
+    let json = r#"{"prim":"Pair","args":[{"int":"99984"},[{"prim":"Elt","args":[{"bytes":"01088e02012f75cdee43326dfdec205f7bfd30dd6c00"},{"int":"990"}]},{"prim":"Elt","args":[{"bytes":"0122bef431640e29dd4a01cf7cc5befac05f0b99b700"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"0152f0ecfb244e2b393b60263d8ae60ac13d08472900"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"0153663d8ad9f9c6b28f94508599a255b6c2c5b0c900"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"0153d475620cccc1cdb1fb2e1d20c2c713a729fc5100"},{"int":"1"}]},{"prim":"Elt","args":[{"bytes":"015eef25239095cfef6325bbbe7671821d0761936e00"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"0164ba0f8a211f0584171b47e1c7d00686d80642d600"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"0169ad9656ad447d6394c0dae64588f307f47ac37500"},{"int":"1000"}]},{"prim":"Elt","args":[{"bytes":"017d8c19f42235a54c7e932cf0120a9b869a141fad00"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"01c90438d5b073d5d8bde6f2cd24957f911bd78beb00"},{"int":"998"}]},{"prim":"Elt","args":[{"bytes":"01d2fd4e3c7cb8a766462c02d388b530ce40192f5c00"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"01fcf0818b6d79358258675f07451f8de76ff8626e00"},{"int":"999"}]}]]}"#;
+    let rpc_value: TezosRpcValue = json::from_str(&json).unwrap();
+    log!([rpc_value]);
+    let erc_account = unwrap!(TezosErcAccount::try_from(rpc_value));
+    log!([erc_account]);
+}
+
+#[test]
+fn tezos_address_from_rpc_bytes() {
+    let bytes: BytesJson = unwrap!(hex::decode("00002969737230bd5ea60f632b52777981e43a25d069")).into();
+    let addr = unwrap!(TezosAddress::from_rpc_bytes(bytes, [4, 177, 1]));
+    assert_eq!("dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp", addr.to_string());
+
+    let bytes: BytesJson = unwrap!(hex::decode("00002969737230bd5ea60f632b52777981e43a25d069")).into();
+    let addr = unwrap!(TezosAddress::from_rpc_bytes(bytes, [4, 177, 1]));
+    assert_eq!("dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp", addr.to_string());
+
+    let bytes: BytesJson = unwrap!(hex::decode("01c56d2c471c59aa98400fa4256bd94cc7217ec4aa00")).into();
+    let addr = unwrap!(TezosAddress::from_rpc_bytes(bytes, [2, 90, 121]));
+    assert_eq!("KT1SafU2UYYQEDchguKra2ya9AKpaEgY2KLx", addr.to_string());
 }

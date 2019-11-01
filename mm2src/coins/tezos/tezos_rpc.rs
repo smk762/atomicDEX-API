@@ -11,8 +11,10 @@ use rpc::v1::types::{Bytes as BytesJson};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{self as json, Value as Json};
+use std::convert::TryFrom;
 use std::ops::Deref;
 use std::sync::Arc;
+use crate::tezos::TezosRpcValue;
 
 #[derive(Debug)]
 pub struct TezosRpcClientImpl {
@@ -111,6 +113,17 @@ pub struct PreapplyOperation {
 #[derive(Debug, Serialize)]
 pub struct PreapplyOperationsRequest(pub Vec<PreapplyOperation>);
 
+#[derive(Debug, Serialize)]
+pub struct TezosInputType {
+    pub prim: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BigMapReq {
+    pub r#type: TezosInputType,
+    pub key: TezosRpcValue,
+}
+
 impl TezosRpcClientImpl {
     pub fn new(urls: Vec<String>) -> Result<Self, String> {
         let mut uris = vec![];
@@ -135,6 +148,22 @@ impl TezosRpcClientImpl {
     pub async fn get_balance(&self, addr: &str) -> Result<BigDecimal, String> {
         let path = format!("/chains/main/blocks/head/context/contracts/{}/balance", addr);
         tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e))
+    }
+
+    pub async fn get_storage<T: TryFrom<TezosRpcValue>>(&self, addr: &str) -> Result<T, String>
+        where T::Error: std::fmt::Display
+    {
+        let path = format!("/chains/main/blocks/head/context/contracts/{}/storage", addr);
+        let value: TezosRpcValue = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
+        Ok(try_s!(T::try_from(value)))
+    }
+
+    pub async fn get_big_map<T: TryFrom<TezosRpcValue>>(&self, addr: &str, req: BigMapReq) -> Result<T, String>
+        where T::Error: std::fmt::Display
+    {
+        let path = format!("/chains/main/blocks/head/context/contracts/{}/big_map_get", addr);
+        let value: TezosRpcValue = try_s!(tezos_req(&self.uris, &path, http::Method::POST, req).await.map_err(|e| ERRL!("{:?}", e)));
+        Ok(try_s!(T::try_from(value)))
     }
 
     pub async fn forge_operations(&self, chain_id: &str, block_id: &str, req: ForgeOperationsRequest) -> Result<BytesJson, String> {
