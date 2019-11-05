@@ -859,6 +859,7 @@ impl SwapOps for UtxoCoin {
 
     fn send_taker_payment(
         &self,
+        _uuid: &[u8],
         time_lock: u32,
         maker_pub: &[u8],
         priv_bn_hash: &[u8],
@@ -898,6 +899,7 @@ impl SwapOps for UtxoCoin {
 
     fn send_maker_spends_taker_payment(
         &self,
+        _uuid: &[u8],
         taker_payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &[u8],

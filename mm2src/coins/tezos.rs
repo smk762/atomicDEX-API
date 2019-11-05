@@ -3,6 +3,7 @@ use bigdecimal::BigDecimal;
 use bitcrypto::{sha256, dhash256};
 use blake2::{VarBlake2b, Blake2b};
 use blake2::digest::{Input, VariableOutput};
+use chrono::prelude::*;
 use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest};
@@ -10,7 +11,7 @@ use ed25519_dalek::{Keypair as EdKeypair, SecretKey as EdSecretKey, Signature as
                     PublicKey as EdPublicKey};
 use futures::TryFutureExt;
 use futures01::Future;
-use num_bigint::{ BigInt, BigUint};
+use num_bigint::{BigInt, BigUint, ToBigInt};
 use primitives::hash::{H160, H256};
 use rpc::v1::types::{Bytes as BytesJson};
 use serde::de::{self, Visitor};
@@ -25,13 +26,15 @@ use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails, TransactionEnum, TransactionFut};
-use common::slurp_url;
+use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, Transaction, TransactionDetails,
+            TransactionEnum, TransactionFut};
+use common::{slurp_url, block_on};
 
 mod tezos_rpc;
 use self::tezos_rpc::{BigMapReq, ForgeOperationsRequest, Operation, PreapplyOperation,
                       PreapplyOperationsRequest, TezosInputType, TezosRpcClient};
 use crate::MmCoinEnum::Tezos;
+use crate::tezos::tezos_rpc::TezosRpcClientImpl;
 
 macro_rules! impl_display_for_base_58_check_sum {
     ($impl_for: ident) => {
@@ -72,7 +75,7 @@ pub type OpHashPrefix = [u8; 2];
 
 const OP_HASH_PREFIX: OpHashPrefix = [5, 116];
 
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TezosAddress {
     prefix: TezosAddrPrefix,
     hash: H160,
@@ -345,6 +348,7 @@ pub struct TezosCoinImpl {
     my_address: TezosAddress,
     required_confirmations: AtomicU64,
     rpc_client: TezosRpcClient,
+    swap_contract_address: TezosAddress,
     ticker: String,
 }
 
@@ -447,22 +451,58 @@ impl SwapOps for TezosCoin {
 
     fn send_taker_payment(
         &self,
+        uuid: &[u8],
         time_lock: u32,
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> TransactionFut {
-        unimplemented!()
+        let maker_addr = TezosAddress {
+            prefix: [4, 177, 1],
+            hash: blake2b_160(maker_pub),
+        };
+
+        let args = init_tezos_swap_call(
+            uuid.to_vec().into(),
+            DateTime::from_utc(NaiveDateTime::from_timestamp(time_lock as i64, 0), Utc),
+            secret_hash.to_vec().into(),
+            maker_addr,
+        );
+        let amount = amount * BigDecimal::from(10u64.pow(self.decimals as u32));
+
+        let coin = self.clone();
+        let fut = Box::pin(async move {
+            let dest = coin.swap_contract_address.clone();
+            sign_and_send_operation(coin, amount, &dest, Some(args)).await
+        }).compat().map(|tx| tx.into());
+        Box::new(fut)
     }
 
     fn send_maker_spends_taker_payment(
         &self,
+        uuid: &[u8],
         taker_payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &[u8],
         secret: &[u8],
     ) -> TransactionFut {
-        unimplemented!()
+        let taker_addr = TezosAddress {
+            prefix: [4, 177, 1],
+            hash: blake2b_160(taker_pub),
+        };
+
+        let args = receiver_spends_call(
+            uuid.to_vec().into(),
+            secret.to_vec().into(),
+            self.my_address.clone(),
+        );
+
+        let coin = self.clone();
+        let fut = Box::pin(async move {
+            let dest = coin.swap_contract_address.clone();
+            sign_and_send_operation(coin, 0.into(), &dest, Some(args)).await
+        }).compat().map(|tx| tx.into());
+        Box::new(fut)
     }
 
     fn send_taker_spends_maker_payment(
@@ -559,19 +599,102 @@ impl SwapOps for TezosCoin {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TezosTransaction(Vec<u8>);
+
+impl Transaction for TezosTransaction {
+    fn tx_hex(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+
+    fn extract_secret(&self) -> Result<Vec<u8>, String> {
+        unimplemented!()
+    }
+
+    fn tx_hash(&self) -> BytesJson {
+        unimplemented!()
+    }
+}
+
+async fn sign_and_send_operation(
+    coin: TezosCoin,
+    amount: BigDecimal,
+    destination: &TezosAddress,
+    parameters: Option<TezosRpcValue>
+) -> Result<TezosTransaction, String> {
+    let counter = try_s!(coin.rpc_client.counter(&coin.my_address()).await) + BigDecimal::from(1);
+    let head = try_s!(coin.rpc_client.block_header("head").await);
+    let op = Operation {
+        amount,
+        counter,
+        destination: destination.to_string(),
+        fee: 0100000.into(),
+        gas_limit: 800000.into(),
+        kind: "transaction".into(),
+        parameters,
+        source: coin.my_address().into(),
+        storage_limit: 60000.into(),
+    };
+    let forge_req = ForgeOperationsRequest {
+        branch: head.hash.clone(),
+        contents: vec![op.clone()]
+    };
+    let mut tx_bytes = try_s!(coin.rpc_client.forge_operations(&head.chain_id, &head.hash, forge_req).await);
+    let mut prefixed = vec![3u8];
+    prefixed.append(&mut tx_bytes.0);
+    let sig_hash = blake2b_256(&prefixed);
+    let sig = match &coin.key_pair {
+        TezosKeyPair::ED25519(key_pair) => key_pair.sign::<Sha512>(&*sig_hash),
+        _ => unimplemented!(),
+    };
+    let signature = TezosSignature {
+        prefix: ED_SIG_PREFIX,
+        sig,
+    };
+    let preapply_req = PreapplyOperationsRequest(vec![PreapplyOperation {
+        branch: head.hash,
+        contents: vec![op],
+        protocol: head.protocol,
+        signature: format!("{}", signature),
+    }]);
+    try_s!(coin.rpc_client.preapply_operations(preapply_req).await);
+    prefixed.extend_from_slice(&signature.sig.to_bytes());
+    prefixed.remove(0);
+    try_s!(coin.rpc_client.inject_operation(&hex::encode(&prefixed)).await);
+    Ok(TezosTransaction(prefixed))
+}
+
 async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
     let to_addr: TezosAddress = try_s!(req.to.parse());
     let counter = try_s!(coin.rpc_client.counter(&coin.my_address()).await) + BigDecimal::from(1);
     let head = try_s!(coin.rpc_client.block_header("head").await);
-    let op = Operation {
-        amount: &req.amount * BigDecimal::from(10u64.pow(coin.decimals as u32)),
-        counter,
-        destination: req.to.clone(),
-        fee: 1420.into(),
-        gas_limit: 10600.into(),
-        kind: "transaction".into(),
-        source: coin.my_address().into(),
-        storage_limit: 300.into(),
+    let op = match &coin.coin_type {
+        TezosCoinType::Tezos => Operation {
+            amount: &req.amount * BigDecimal::from(10u64.pow(coin.decimals as u32)),
+            counter,
+            destination: req.to.clone(),
+            fee: 1420.into(),
+            gas_limit: 10600.into(),
+            kind: "transaction".into(),
+            parameters: None,
+            source: coin.my_address().into(),
+            storage_limit: 300.into(),
+        },
+        TezosCoinType::ERC(addr) => {
+            let amount: BigUint = (&req.amount * BigDecimal::from(10u64.pow(coin.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+            let parameters = Some(erc_transfer_call(&to_addr, &amount));
+            Operation {
+                amount: 0.into(),
+                counter,
+                destination: addr.to_string(),
+                fee: 0100000.into(),
+                gas_limit: 800000.into(),
+                kind: "transaction".into(),
+                parameters,
+                source: coin.my_address().into(),
+                storage_limit: 60000.into(),
+            }
+        },
     };
     let forge_req = ForgeOperationsRequest {
         branch: head.hash.clone(),
@@ -679,7 +802,7 @@ pub async fn tezos_coin_from_conf_and_request(
     let ed25519_addr_prefix: TezosAddrPrefix = try_s!(json::from_value(conf["ed25519_addr_prefix"].clone()));
     let my_address = key_pair.get_address(ed25519_addr_prefix);
     let (decimals, coin_type) = match conf["protocol"]["token_type"].as_str().unwrap() {
-        "TESOS" => {
+        "TEZOS" => {
             let decimals = conf["decimals"].as_u64().unwrap_or (6) as u8;
             (decimals, TezosCoinType::Tezos)
         },
@@ -705,6 +828,7 @@ pub async fn tezos_coin_from_conf_and_request(
         my_address,
         required_confirmations: conf["required_confirmations"].as_u64().unwrap_or(1).into(),
         rpc_client,
+        swap_contract_address: "KT1E7u5j3tfsTiCfGXeG59kdNFZjE3ooGAKc".parse().unwrap(),
         ticker: ticker.into(),
     })))
 }
@@ -902,16 +1026,17 @@ impl TryFrom<TezosRpcValue> for TezosErcAccount {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "prim", content = "args")]
 pub enum TezosPrim {
     Pair ((Box<TezosRpcValue>, Box<TezosRpcValue>)),
     Elt ((Box<TezosRpcValue>, Box<TezosRpcValue>)),
-    Right ((Box<TezosRpcValue>)),
-    Left ((Box<TezosRpcValue>)),
+    Right ([Box<TezosRpcValue>; 1]),
+    Left ([Box<TezosRpcValue>; 1]),
+    Unit,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum TezosRpcValue {
     Bytes { bytes: BytesJson },
@@ -1011,4 +1136,198 @@ fn tezos_address_from_rpc_bytes() {
     let bytes: BytesJson = unwrap!(hex::decode("01c56d2c471c59aa98400fa4256bd94cc7217ec4aa00")).into();
     let addr = unwrap!(TezosAddress::from_rpc_bytes(bytes, [2, 90, 121]));
     assert_eq!("KT1SafU2UYYQEDchguKra2ya9AKpaEgY2KLx", addr.to_string());
+}
+
+#[test]
+fn blake2b_of_zeros() {
+    let input = [0; 32];
+    let blake = blake2b_256(&input);
+    let sha = sha256(&input);
+    log!((hex::encode(&*blake)));
+    log!((hex::encode(&*sha)));
+    log!((hex::encode(&input)));
+}
+
+enum Or {
+    L,
+    R,
+}
+
+impl Into<TezosRpcValue> for &str {
+    fn into(self) -> TezosRpcValue {
+        TezosRpcValue::String {
+            string: self.into()
+        }
+    }
+}
+
+impl Into<TezosRpcValue> for &TezosAddress {
+    fn into(self) -> TezosRpcValue {
+        TezosRpcValue::String {
+            string: self.to_string()
+        }
+    }
+}
+
+impl Into<TezosRpcValue> for &BigUint {
+    fn into(self) -> TezosRpcValue {
+        TezosRpcValue::Int {
+            int: self.to_string()
+        }
+    }
+}
+
+impl Into<TezosRpcValue> for BytesJson {
+    fn into(self) -> TezosRpcValue {
+        TezosRpcValue::Bytes {
+            bytes: self
+        }
+    }
+}
+
+impl Into<TezosRpcValue> for TezosAddress {
+    fn into(self) -> TezosRpcValue {
+        TezosRpcValue::String {
+            string: self.to_string()
+        }
+    }
+}
+
+impl Into<TezosRpcValue> for DateTime<Utc> {
+    fn into(self) -> TezosRpcValue {
+        TezosRpcValue::String {
+            string: self.to_rfc3339_opts(SecondsFormat::Secs, true)
+        }
+    }
+}
+
+macro_rules! tezos_func {
+    ($func:expr $(, $arg_name:ident)*) => {{
+        let mut params: Vec<TezosRpcValue> = vec![];
+        $(
+            params.push($arg_name.into());
+        )*
+        let args = match params.pop() {
+            Some(a) => a,
+            None => TezosRpcValue::TezosPrim(TezosPrim::Unit),
+        };
+        let args = params.into_iter().rev().fold(args, |arg, cur| TezosRpcValue::TezosPrim(TezosPrim::Pair((
+            Box::new(cur),
+            Box::new(arg)
+        ))));
+        construct_function_call($func, args)
+    }}
+}
+
+fn erc_transfer_call(to: &TezosAddress, amount: &BigUint) -> TezosRpcValue {
+    tezos_func!(&[Or::L], to, amount)
+}
+
+fn init_tezos_swap_call(
+    id: BytesJson,
+    time_lock: DateTime<Utc>,
+    secret_hash: BytesJson,
+    receiver: TezosAddress,
+) -> TezosRpcValue {
+    tezos_func!(&[Or::R, Or::L], id, time_lock, secret_hash, receiver)
+}
+
+fn receiver_spends_call(
+    id: BytesJson,
+    secret: BytesJson,
+    send_to: TezosAddress,
+) -> TezosRpcValue {
+    tezos_func!(&[Or::R, Or::R], id, secret, send_to)
+}
+
+fn construct_function_call(func: &[Or], args: TezosRpcValue) -> TezosRpcValue {
+    func.iter().rev().fold(args, |arg, or| match or {
+        Or::L => TezosRpcValue::TezosPrim(TezosPrim::Left([Box::new(arg)])),
+        Or::R => TezosRpcValue::TezosPrim(TezosPrim::Right([Box::new(arg)])),
+    })
+}
+
+#[test]
+fn test_construct_function_call() {
+    let id = BytesJson(vec![1]);
+    let timestamp: DateTime<Utc> = "1970-01-01T00:00:00Z".parse().unwrap();
+    let secret_hash: BytesJson = hex::decode("66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925").unwrap().into();
+    let address: TezosAddress = "dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp".parse().unwrap();
+    let call = tezos_func!(&[Or::L], id, timestamp, secret_hash, address);
+    let expected = r#"{"prim":"Left","args":[{"prim":"Pair","args":[{"bytes":"01"},{"prim":"Pair","args":[{"string":"1970-01-01T00:00:00Z"},{"prim":"Pair","args":[{"bytes":"66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"},{"string":"dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp"}]}]}]}]}"#;
+    assert_eq!(expected, json::to_string(&call).unwrap());
+
+    let id = BytesJson(vec![0x10]);
+    let timestamp = DateTime::from_utc(NaiveDateTime::from_timestamp(0, 0), Utc);
+    let secret_hash: BytesJson = hex::decode("66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925").unwrap().into();
+    let address: TezosAddress = "dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp".parse().unwrap();
+    let call = tezos_func!(&[Or::R, Or::L], id, timestamp, secret_hash, address);
+    let expected = r#"{"prim":"Right","args":[{"prim":"Left","args":[{"prim":"Pair","args":[{"bytes":"10"},{"prim":"Pair","args":[{"string":"1970-01-01T00:00:00Z"},{"prim":"Pair","args":[{"bytes":"66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"},{"string":"dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp"}]}]}]}]}]}"#;
+    assert_eq!(expected, json::to_string(&call).unwrap());
+
+    let call = tezos_func!(&[Or::L]);
+    let expected = r#"{"prim":"Left","args":[{"prim":"Unit"}]}"#;
+    assert_eq!(expected, json::to_string(&call).unwrap());
+}
+
+fn tezos_coin_for_test() -> TezosCoin {
+    let conf = json!({
+        "coin": "DUNETEST",
+        "name": "dunetestnet",
+        "ed25519_addr_prefix": [4, 177, 1],
+        "protocol": {
+          "platform": "TEZOS",
+          "token_type": "TEZOS"
+        },
+        "mm2": 1
+    });
+    let req = json!({
+        "method": "enable",
+        "coin": "DUNETESTERC",
+        "urls": [
+            "https://testnet-node.dunscan.io"
+        ],
+        "mm2":1
+    });
+    let priv_key = hex::decode("0760b6189e10610d3800d75d14ffe2f0abb35f8bf612a9510b5598d978f83f7a").unwrap();
+    let coin = block_on(tezos_coin_from_conf_and_request("DUNETEST", &conf, &req, &priv_key)).unwrap();
+    coin
+}
+
+#[test]
+fn send_swap_payment() {
+    let coin = tezos_coin_for_test();
+    let maker_pub = match &coin.key_pair {
+        TezosKeyPair::ED25519(p) => p.public.as_bytes(),
+        _ => unimplemented!(),
+    };
+    let tx = coin.send_taker_payment(
+        &[0x12],
+        0,
+        maker_pub,
+        &hex::decode("66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925").unwrap(),
+        1.into(),
+    ).wait().unwrap();
+
+    let op_hash = OpHash::for_op_bytes(&tx.tx_hex());
+    log!((op_hash));
+}
+
+#[test]
+fn spend_swap_payment() {
+    let coin = tezos_coin_for_test();
+    let taker_pub = match &coin.key_pair {
+        TezosKeyPair::ED25519(p) => p.public.as_bytes(),
+        _ => unimplemented!(),
+    };
+    let tx = coin.send_maker_spends_taker_payment(
+        &[0x12],
+        &[],
+        0,
+        taker_pub,
+        &[0; 32],
+    ).wait().unwrap();
+
+    let op_hash = OpHash::for_op_bytes(&tx.tx_hex());
+    log!((op_hash));
 }

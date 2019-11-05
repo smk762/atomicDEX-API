@@ -92,6 +92,7 @@ pub struct Operation {
     pub fee: BigDecimal,
     pub gas_limit: BigDecimal,
     pub kind: String,
+    pub parameters: Option<TezosRpcValue>,
     pub source: String,
     pub storage_limit: BigDecimal,
 }

@@ -465,6 +465,7 @@ impl SwapOps for EthCoin {
 
     fn send_taker_payment(
         &self,
+        _uuid: &[u8],
         time_lock: u32,
         maker_pub: &[u8],
         secret_hash: &[u8],
@@ -483,6 +484,7 @@ impl SwapOps for EthCoin {
 
     fn send_maker_spends_taker_payment(
         &self,
+        _uuid: &[u8],
         taker_payment_tx: &[u8],
         _time_lock: u32,
         _taker_pub: &[u8],
