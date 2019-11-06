@@ -14,7 +14,6 @@ use futures01::Future;
 use num_bigint::{BigInt, BigUint, ToBigInt};
 use primitives::hash::{H160, H256};
 use rpc::v1::types::{Bytes as BytesJson};
-use serde::de::{self, Visitor};
 use serde_json::{self as json, Value as Json};
 use sha2::{Sha512};
 use std::borrow::Cow;
@@ -462,13 +461,30 @@ impl SwapOps for TezosCoin {
             hash: blake2b_160(maker_pub),
         };
 
-        let args = init_tezos_swap_call(
-            uuid.to_vec().into(),
-            DateTime::from_utc(NaiveDateTime::from_timestamp(time_lock as i64, 0), Utc),
-            secret_hash.to_vec().into(),
-            maker_addr,
-        );
-        let amount = amount * BigDecimal::from(10u64.pow(self.decimals as u32));
+        let (amount, args) = match &self.coin_type {
+            TezosCoinType::Tezos => {
+                let args = init_tezos_swap_call(
+                    uuid.to_vec().into(),
+                    DateTime::from_utc(NaiveDateTime::from_timestamp(time_lock as i64, 0), Utc),
+                    secret_hash.to_vec().into(),
+                    maker_addr,
+                );
+                let amount = amount * BigDecimal::from(10u64.pow(self.decimals as u32));
+                (amount, args)
+            },
+            TezosCoinType::ERC(addr) => {
+                let amount: BigUint = (amount * BigDecimal::from(10u64.pow(self.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+                let args = init_tezos_erc_swap_call(
+                    uuid.to_vec().into(),
+                    DateTime::from_utc(NaiveDateTime::from_timestamp(time_lock as i64, 0), Utc),
+                    secret_hash.to_vec().into(),
+                    maker_addr,
+                    amount,
+                    &addr,
+                );
+                (0.into(), args)
+            }
+        };
 
         let coin = self.clone();
         let fut = Box::pin(async move {
@@ -828,7 +844,7 @@ pub async fn tezos_coin_from_conf_and_request(
         my_address,
         required_confirmations: conf["required_confirmations"].as_u64().unwrap_or(1).into(),
         rpc_client,
-        swap_contract_address: "KT1E7u5j3tfsTiCfGXeG59kdNFZjE3ooGAKc".parse().unwrap(),
+        swap_contract_address: "KT1SrjTJMRwZEzy7kReBV9ZDktRopu5Ebdgu".parse().unwrap(),
         ticker: ticker.into(),
     })))
 }
@@ -1177,6 +1193,14 @@ impl Into<TezosRpcValue> for &BigUint {
     }
 }
 
+impl Into<TezosRpcValue> for BigUint {
+    fn into(self) -> TezosRpcValue {
+        TezosRpcValue::Int {
+            int: self.to_string()
+        }
+    }
+}
+
 impl Into<TezosRpcValue> for BytesJson {
     fn into(self) -> TezosRpcValue {
         TezosRpcValue::Bytes {
@@ -1232,12 +1256,23 @@ fn init_tezos_swap_call(
     tezos_func!(&[Or::R, Or::L], id, time_lock, secret_hash, receiver)
 }
 
+fn init_tezos_erc_swap_call(
+    id: BytesJson,
+    time_lock: DateTime<Utc>,
+    secret_hash: BytesJson,
+    receiver: TezosAddress,
+    amount: BigUint,
+    erc_addr: &TezosAddress,
+) -> TezosRpcValue {
+    tezos_func!(&[Or::R, Or::R, Or::L], id, time_lock, secret_hash, receiver, amount, erc_addr)
+}
+
 fn receiver_spends_call(
     id: BytesJson,
     secret: BytesJson,
     send_to: TezosAddress,
 ) -> TezosRpcValue {
-    tezos_func!(&[Or::R, Or::R], id, secret, send_to)
+    tezos_func!(&[Or::R, Or::R, Or::R], id, secret, send_to)
 }
 
 fn construct_function_call(func: &[Or], args: TezosRpcValue) -> TezosRpcValue {
@@ -1283,6 +1318,31 @@ fn tezos_coin_for_test() -> TezosCoin {
     });
     let req = json!({
         "method": "enable",
+        "coin": "DUNETEST",
+        "urls": [
+            "https://testnet-node.dunscan.io"
+        ],
+        "mm2":1
+    });
+    let priv_key = hex::decode("0760b6189e10610d3800d75d14ffe2f0abb35f8bf612a9510b5598d978f83f7a").unwrap();
+    let coin = block_on(tezos_coin_from_conf_and_request("DUNETEST", &conf, &req, &priv_key)).unwrap();
+    coin
+}
+
+fn tezos_erc_coin_for_test() -> TezosCoin {
+    let conf = json!({
+        "coin": "DUNETESTERC",
+        "name": "dunetesterc",
+        "ed25519_addr_prefix": [4, 177, 1],
+        "protocol": {
+            "platform": "TEZOS",
+            "token_type": "ERC20",
+            "contract_address": "KT1SafU2UYYQEDchguKra2ya9AKpaEgY2KLx"
+        },
+        "mm2": 1
+    });
+    let req = json!({
+        "method": "enable",
         "coin": "DUNETESTERC",
         "urls": [
             "https://testnet-node.dunscan.io"
@@ -1295,7 +1355,7 @@ fn tezos_coin_for_test() -> TezosCoin {
 }
 
 #[test]
-fn send_swap_payment() {
+fn send_swap_payment_tezos() {
     let coin = tezos_coin_for_test();
     let maker_pub = match &coin.key_pair {
         TezosKeyPair::ED25519(p) => p.public.as_bytes(),
@@ -1314,6 +1374,25 @@ fn send_swap_payment() {
 }
 
 #[test]
+fn send_swap_payment_tezos_erc() {
+    let coin = tezos_erc_coin_for_test();
+    let maker_pub = match &coin.key_pair {
+        TezosKeyPair::ED25519(p) => p.public.as_bytes(),
+        _ => unimplemented!(),
+    };
+    let tx = coin.send_taker_payment(
+        &[0x13],
+        0,
+        maker_pub,
+        &hex::decode("66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925").unwrap(),
+        1.into(),
+    ).wait().unwrap();
+
+    let op_hash = OpHash::for_op_bytes(&tx.tx_hex());
+    log!((op_hash));
+}
+
+#[test]
 fn spend_swap_payment() {
     let coin = tezos_coin_for_test();
     let taker_pub = match &coin.key_pair {
@@ -1321,7 +1400,7 @@ fn spend_swap_payment() {
         _ => unimplemented!(),
     };
     let tx = coin.send_maker_spends_taker_payment(
-        &[0x12],
+        &[0x13],
         &[],
         0,
         taker_pub,
