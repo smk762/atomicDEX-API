@@ -844,7 +844,7 @@ pub async fn tezos_coin_from_conf_and_request(
         my_address,
         required_confirmations: conf["required_confirmations"].as_u64().unwrap_or(1).into(),
         rpc_client,
-        swap_contract_address: "KT1SrjTJMRwZEzy7kReBV9ZDktRopu5Ebdgu".parse().unwrap(),
+        swap_contract_address: "KT1Ase2xd1TmMmSBCuo1PtmJqCu3axSs2hTu".parse().unwrap(),
         ticker: ticker.into(),
     })))
 }
@@ -1253,7 +1253,7 @@ fn init_tezos_swap_call(
     secret_hash: BytesJson,
     receiver: TezosAddress,
 ) -> TezosRpcValue {
-    tezos_func!(&[Or::R, Or::L], id, time_lock, secret_hash, receiver)
+    tezos_func!(&[Or::L], id, time_lock, secret_hash, receiver)
 }
 
 fn init_tezos_erc_swap_call(
@@ -1264,7 +1264,7 @@ fn init_tezos_erc_swap_call(
     amount: BigUint,
     erc_addr: &TezosAddress,
 ) -> TezosRpcValue {
-    tezos_func!(&[Or::R, Or::R, Or::L], id, time_lock, secret_hash, receiver, amount, erc_addr)
+    tezos_func!(&[Or::R, Or::L], id, time_lock, secret_hash, receiver, amount, erc_addr)
 }
 
 fn receiver_spends_call(
@@ -1272,7 +1272,14 @@ fn receiver_spends_call(
     secret: BytesJson,
     send_to: TezosAddress,
 ) -> TezosRpcValue {
-    tezos_func!(&[Or::R, Or::R, Or::R], id, secret, send_to)
+    tezos_func!(&[Or::R, Or::R, Or::L], id, secret, send_to)
+}
+
+fn sender_refunds_call(
+    id: BytesJson,
+    send_to: TezosAddress,
+) -> TezosRpcValue {
+    tezos_func!(&[Or::R, Or::R, Or::R], id, send_to)
 }
 
 fn construct_function_call(func: &[Or], args: TezosRpcValue) -> TezosRpcValue {
