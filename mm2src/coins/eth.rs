@@ -715,6 +715,7 @@ impl MarketCoinOps for EthCoin {
         confirmations: u64,
         wait_until: u64,
         check_every: u64,
+        _since_block: u64
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let unsigned: UnverifiedTransaction = try_fus!(rlp::decode(tx));
         let tx = try_fus!(SignedEthTx::new(unsigned));

@@ -553,6 +553,7 @@ impl MakerSwap {
             self.r().data.taker_payment_confirmations,
             wait_taker_payment,
             WAIT_CONFIRM_INTERVAL,
+            self.r().data.taker_coin_start_block
         ).compat();
 
         if let Err(err) = wait_f.await {
@@ -570,6 +571,7 @@ impl MakerSwap {
 
     async fn spend_taker_payment(&self) -> Result<(Option<MakerSwapCommand>, Vec<MakerSwapEvent>), String> {
         let spend_fut = self.taker_coin.send_maker_spends_taker_payment(
+            &[],
             &unwrap!(self.r().taker_payment.clone()).tx_hex,
             self.taker_payment_lock.load(Ordering::Relaxed) as u32,
             &*self.r().other_persistent_pub,

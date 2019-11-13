@@ -1277,6 +1277,7 @@ impl MarketCoinOps for UtxoCoin {
         confirmations: u64,
         wait_until: u64,
         check_every: u64,
+        _since_block: u64
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let tx: UtxoTx = try_fus!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
         self.rpc_client.wait_for_confirmations(

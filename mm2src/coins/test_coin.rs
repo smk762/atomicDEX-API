@@ -37,6 +37,7 @@ impl MarketCoinOps for TestCoin {
         confirmations: u64,
         wait_until: u64,
         check_every: u64,
+        since_block: u64
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         unimplemented!()
     }

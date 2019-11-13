@@ -702,6 +702,7 @@ impl TakerSwap {
             self.r().data.maker_payment_confirmations,
             self.r().data.maker_payment_wait,
             WAIT_CONFIRM_INTERVAL,
+            self.r().data.maker_coin_start_block
         );
         if let Err(err) = f.compat().await {
             return Ok((
@@ -739,6 +740,7 @@ impl TakerSwap {
                 Some(tx) => tx,
                 None => {
                     let payment_fut = self.taker_coin.send_taker_payment(
+                        &[],
                         self.r().data.taker_payment_lock as u32,
                         &*self.r().other_persistent_pub,
                         &self.r().secret_hash.0,
