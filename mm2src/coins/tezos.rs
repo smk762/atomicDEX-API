@@ -8,6 +8,7 @@ use common::executor::Timer;
 use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest};
+use derive_more::{Add, Deref, Display};
 use ed25519_dalek::{Keypair as EdKeypair, SecretKey as EdSecretKey, Signature as EdSignature, SignatureError,
                     PublicKey as EdPublicKey};
 use futures::TryFutureExt;
@@ -15,12 +16,12 @@ use futures01::Future;
 use num_bigint::{BigInt, BigUint, ToBigInt};
 use num_traits::pow::Pow;
 use num_traits::cast::ToPrimitive;
-use primitives::hash::{H160, H256};
+use primitives::hash::{H32, H160, H256, H512};
 use rpc::v1::types::{Bytes as BytesJson};
-use serde::{Serialize, Serializer};
-use serde::de::{Deserializer, DeserializeOwned, Visitor};
+use serde::{Serialize, Serializer, Deserialize};
+use serde::de::{Deserializer, Visitor};
 use serde_json::{self as json, Value as Json};
-use serialization::{Serializable, serialize, Stream};
+use serialization::{Deserializable, deserialize, Reader, Serializable, serialize, Stream};
 use sha2::{Sha512};
 use std::borrow::Cow;
 use std::cmp::PartialEq;
@@ -421,7 +422,7 @@ impl MarketCoinOps for TezosCoin {
                         r#type: TezosInputType {
                             prim: "address".into(),
                         },
-                        key: TezosRpcValue::String {
+                        key: TezosValue::String {
                             string: selfi.my_address.to_string(),
                         }
                     };
@@ -706,12 +707,9 @@ impl SwapOps for TezosCoin {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct TezosTransaction(Vec<u8>);
-
-impl Transaction for TezosTransaction {
+impl Transaction for TezosOperation {
     fn tx_hex(&self) -> Vec<u8> {
-        self.0.clone()
+        unimplemented!()
     }
 
     fn extract_secret(&self) -> Result<Vec<u8>, String> {
@@ -727,8 +725,8 @@ async fn sign_and_send_operation(
     coin: TezosCoin,
     amount: BigUint,
     destination: &TezosAddress,
-    parameters: Option<TezosRpcValue>
-) -> Result<TezosTransaction, String> {
+    parameters: Option<TezosValue>
+) -> Result<TezosOperation, String> {
     let counter = try_s!(coin.rpc_client.counter(&coin.my_address()).await) + BigUint::from(1u8);
     let head = try_s!(coin.rpc_client.block_header("head").await);
     let op = Operation {
@@ -768,7 +766,7 @@ async fn sign_and_send_operation(
     prefixed.extend_from_slice(&signature.sig.to_bytes());
     prefixed.remove(0);
     try_s!(coin.rpc_client.inject_operation(&hex::encode(&prefixed)).await);
-    Ok(TezosTransaction(prefixed))
+    Ok(deserialize(prefixed.as_slice()).unwrap())
 }
 
 async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
@@ -1056,62 +1054,62 @@ struct TezosErcStorage {
     owner: String,
 }
 
-impl TryFrom<TezosRpcValue> for BigUint {
+impl TryFrom<TezosValue> for BigUint {
     type Error = String;
 
-    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
         match value {
-            TezosRpcValue::Int { int } => Ok(try_s!(int.to_biguint().ok_or(fomat!("Could not convert " (int) " to BigUint")))),
-            _ => ERR!("BigUint can be constructed only from TezosRpcValue::Int, got {:?}", value),
+            TezosValue::Int { int } => Ok(try_s!(int.to_biguint().ok_or(fomat!("Could not convert " (int) " to BigUint")))),
+            _ => ERR!("BigUint can be constructed only from TezosValue::Int, got {:?}", value),
         }
     }
 }
 
-impl TryFrom<TezosRpcValue> for u8 {
+impl TryFrom<TezosValue> for u8 {
     type Error = String;
 
-    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
         match value {
-            TezosRpcValue::Int { int } => Ok(try_s!(int.to_u8().ok_or(fomat!("Could not convert " (int) " to u8")))),
-            _ => ERR!("u8 can be constructed only from TezosRpcValue::Int, got {:?}", value),
+            TezosValue::Int { int } => Ok(try_s!(int.to_u8().ok_or(fomat!("Could not convert " (int) " to u8")))),
+            _ => ERR!("u8 can be constructed only from TezosValue::Int, got {:?}", value),
         }
     }
 }
 
-impl TryFrom<TezosRpcValue> for u64 {
+impl TryFrom<TezosValue> for u64 {
     type Error = String;
 
-    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
         match value {
-            TezosRpcValue::Int { int } => Ok(try_s!(int.to_u64().ok_or(fomat!("Could not convert " (int) " to u64")))),
-            _ => ERR!("u64 can be constructed only from TezosRpcValue::Int, got {:?}", value),
+            TezosValue::Int { int } => Ok(try_s!(int.to_u64().ok_or(fomat!("Could not convert " (int) " to u64")))),
+            _ => ERR!("u64 can be constructed only from TezosValue::Int, got {:?}", value),
         }
     }
 }
 
-impl TryFrom<TezosRpcValue> for String {
+impl TryFrom<TezosValue> for String {
     type Error = String;
 
-    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
         match value {
-            TezosRpcValue::String { string } => Ok(string),
-            _ => ERR!("String can be constructed only from TezosRpcValue::String, got {:?}", value),
+            TezosValue::String { string } => Ok(string),
+            _ => ERR!("String can be constructed only from TezosValue::String, got {:?}", value),
         }
     }
 }
 
 macro_rules! impl_try_from_tezos_rpc_value_for_hash_map {
     ($key_type: ident, $value_type: ident) => {
-        impl TryFrom<TezosRpcValue> for HashMap<$key_type, $value_type> {
+        impl TryFrom<TezosValue> for HashMap<$key_type, $value_type> {
             type Error = String;
 
-            fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+            fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
                 match value {
-                    TezosRpcValue::List (elems) => {
+                    TezosValue::List (elems) => {
                         let mut res = HashMap::new();
                         for elem in elems {
                             match elem {
-                                TezosRpcValue::TezosPrim(TezosPrim::Elt((key, value))) => {
+                                TezosValue::TezosPrim(TezosPrim::Elt((key, value))) => {
                                     res.insert(try_s!((*key).try_into()), try_s!((*value).try_into()));
                                 },
                                 _ => return ERR!("Unexpected item {:?} in list, must be TezosPrim::Elt", elem),
@@ -1119,7 +1117,7 @@ macro_rules! impl_try_from_tezos_rpc_value_for_hash_map {
                         }
                         Ok(res)
                     },
-                    _ => ERR!("HashMap can be constructed only from TezosRpcValue::List, got {:?}", value),
+                    _ => ERR!("HashMap can be constructed only from TezosValue::List, got {:?}", value),
                 }
             }
         }
@@ -1129,11 +1127,11 @@ macro_rules! impl_try_from_tezos_rpc_value_for_hash_map {
 impl_try_from_tezos_rpc_value_for_hash_map!(BytesJson, TezosErcAccount);
 impl_try_from_tezos_rpc_value_for_hash_map!(BytesJson, BigUint);
 
-impl TryFrom<TezosRpcValue> for TezosErcAccount {
+impl TryFrom<TezosValue> for TezosErcAccount {
     type Error = String;
 
-    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
-        let mut reader = TezosRpcValueReader {
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
+        let mut reader = TezosValueReader {
             inner: Some(value),
         };
 
@@ -1144,94 +1142,105 @@ impl TryFrom<TezosRpcValue> for TezosErcAccount {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "prim", content = "args")]
 pub enum TezosPrim {
-    Pair ((Box<TezosRpcValue>, Box<TezosRpcValue>)),
-    Elt ((Box<TezosRpcValue>, Box<TezosRpcValue>)),
-    Right ([Box<TezosRpcValue>; 1]),
-    Left ([Box<TezosRpcValue>; 1]),
+    Pair ((Box<TezosValue>, Box<TezosValue>)),
+    Elt ((Box<TezosValue>, Box<TezosValue>)),
+    Right ([Box<TezosValue>; 1]),
+    Left ([Box<TezosValue>; 1]),
     Unit,
 }
 
-fn big_int_to_string<S>(num: &BigInt, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
-    s.serialize_str(&num.to_string())
-}
-
-fn big_int_from_str<'de, D>(d: D) -> Result<BigInt, D::Error> where D: Deserializer<'de> {
-    struct BigIntStringVisitor;
-
-    impl<'de> Visitor<'de> for BigIntStringVisitor {
-        type Value = BigInt;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a string containing json data")
-        }
-
-        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-        {
-            BigInt::from_str(v).map_err(E::custom)
-        }
+impl Serialize for TezosInt {
+    fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        s.serialize_str(&self.0.to_string())
     }
-
-    d.deserialize_any(BigIntStringVisitor)
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+impl<'de> Deserialize<'de> for TezosInt {
+    fn deserialize<D>(d: D) -> Result<TezosInt, D::Error> where D: Deserializer<'de> {
+        struct BigIntStringVisitor;
+
+        impl<'de> Visitor<'de> for BigIntStringVisitor {
+            type Value = TezosInt;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a string containing json data")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+            {
+
+                BigInt::from_str(v).map_err(E::custom).map(|num| num.into())
+            }
+        }
+
+        d.deserialize_any(BigIntStringVisitor)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
-pub enum TezosRpcValue {
+pub enum TezosValue {
     Bytes { bytes: BytesJson },
-    Int {
-        #[serde(deserialize_with = "big_int_from_str")]
-        #[serde(serialize_with = "big_int_to_string")]
-        int: BigInt
-    },
-    List (Vec<TezosRpcValue>),
+    Int { int: TezosInt },
+    List (Vec<TezosValue>),
     TezosPrim (TezosPrim),
     String { string: String },
 }
 
-impl TezosRpcValue {
-    fn split_and_read_value(self) -> (TezosRpcValue, Option<TezosRpcValue>) {
+impl TezosValue {
+    fn split_and_read_value(self) -> (TezosValue, Option<TezosValue>) {
         match self {
-            TezosRpcValue::TezosPrim(TezosPrim::Pair((left, right))) => (*left, Some(*right)),
+            TezosValue::TezosPrim(TezosPrim::Pair((left, right))) => (*left, Some(*right)),
             _ => (self, None),
         }
     }
 }
 
-struct TezosRpcValueReader {
-    inner: Option<TezosRpcValue>,
+struct TezosValueReader {
+    inner: Option<TezosValue>,
 }
 
-impl Serializable for TezosRpcValue {
+impl Serializable for TezosValue {
     fn serialize(&self, s: &mut Stream) {
         match self {
-            TezosRpcValue::String { string } => {
+            TezosValue::String { string } => {
                 let bytes = string.as_bytes();
                 s.append(&1u8);
                 s.append_slice(&(bytes.len() as u32).to_be_bytes());
                 s.append_slice(&bytes);
             },
-            TezosRpcValue::Int { int } => {
+            TezosValue::Int { int } => {
                 s.append(&0u8);
-                s.append_slice(&big_int_to_zarith_bytes(int.clone()));
+                s.append(int);
             },
-            TezosRpcValue::TezosPrim(TezosPrim::Pair((left, right))) => {
+            TezosValue::TezosPrim(TezosPrim::Pair((left, right))) => {
                 s.append(&7u8);
                 s.append(&7u8);
                 s.append(left.as_ref());
                 s.append(right.as_ref());
+            },
+            TezosValue::TezosPrim(TezosPrim::Left(value)) => {
+                s.append(&5u8);
+                s.append(&5u8);
+                s.append(value[0].as_ref());
+            },
+            TezosValue::TezosPrim(TezosPrim::Right(value)) => {
+                s.append(&5u8);
+                s.append(&8u8);
+                s.append(value[0].as_ref());
             },
             _ => unimplemented!(),
         }
     }
 }
 
-impl TezosRpcValueReader {
-    fn read(&mut self) -> Result<TezosRpcValue, String> {
+impl TezosValueReader {
+    fn read(&mut self) -> Result<TezosValue, String> {
         let val = self.inner.take();
         let (res, next) = val.unwrap().split_and_read_value();
         self.inner = next;
@@ -1239,11 +1248,11 @@ impl TezosRpcValueReader {
     }
 }
 
-impl TryFrom<TezosRpcValue> for TezosErcStorage {
+impl TryFrom<TezosValue> for TezosErcStorage {
     type Error = String;
 
-    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
-        let mut reader = TezosRpcValueReader {
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
+        let mut reader = TezosValueReader {
             inner: Some(value),
         };
 
@@ -1259,13 +1268,13 @@ impl TryFrom<TezosRpcValue> for TezosErcStorage {
     }
 }
 
-impl TryFrom<TezosRpcValue> for BytesJson {
+impl TryFrom<TezosValue> for BytesJson {
     type Error = String;
 
-    fn try_from(value: TezosRpcValue) -> Result<Self, Self::Error> {
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
         match value {
-            TezosRpcValue::Bytes { bytes } => Ok(bytes),
-            _ => ERR!("Bytes can be constructed only from TezosRpcValue::Bytes, got {:?}", value),
+            TezosValue::Bytes { bytes } => Ok(bytes),
+            _ => ERR!("Bytes can be constructed only from TezosValue::Bytes, got {:?}", value),
         }
     }
 }
@@ -1279,7 +1288,7 @@ struct TezosErcAccount {
 #[test]
 fn deserialize_erc_storage() {
     let json = r#"{"prim":"Pair","args":[[],{"prim":"Pair","args":[{"int":"1"},{"prim":"Pair","args":[{"int":"100000"},{"prim":"Pair","args":[{"int":"0"},{"prim":"Pair","args":[{"string":"TEST"},{"prim":"Pair","args":[{"string":"TEST"},{"string":"dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp"}]}]}]}]}]}]}"#;
-    let pair: TezosRpcValue = json::from_str(&json).unwrap();
+    let pair: TezosValue = json::from_str(&json).unwrap();
     log!([pair]);
     let storage = unwrap!(TezosErcStorage::try_from(pair));
     log!([storage]);
@@ -1288,7 +1297,7 @@ fn deserialize_erc_storage() {
 #[test]
 fn deserialize_erc_account() {
     let json = r#"{"prim":"Pair","args":[{"int":"99984"},[{"prim":"Elt","args":[{"bytes":"01088e02012f75cdee43326dfdec205f7bfd30dd6c00"},{"int":"990"}]},{"prim":"Elt","args":[{"bytes":"0122bef431640e29dd4a01cf7cc5befac05f0b99b700"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"0152f0ecfb244e2b393b60263d8ae60ac13d08472900"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"0153663d8ad9f9c6b28f94508599a255b6c2c5b0c900"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"0153d475620cccc1cdb1fb2e1d20c2c713a729fc5100"},{"int":"1"}]},{"prim":"Elt","args":[{"bytes":"015eef25239095cfef6325bbbe7671821d0761936e00"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"0164ba0f8a211f0584171b47e1c7d00686d80642d600"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"0169ad9656ad447d6394c0dae64588f307f47ac37500"},{"int":"1000"}]},{"prim":"Elt","args":[{"bytes":"017d8c19f42235a54c7e932cf0120a9b869a141fad00"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"01c90438d5b073d5d8bde6f2cd24957f911bd78beb00"},{"int":"998"}]},{"prim":"Elt","args":[{"bytes":"01d2fd4e3c7cb8a766462c02d388b530ce40192f5c00"},{"int":"999"}]},{"prim":"Elt","args":[{"bytes":"01fcf0818b6d79358258675f07451f8de76ff8626e00"},{"int":"999"}]}]]}"#;
-    let rpc_value: TezosRpcValue = json::from_str(&json).unwrap();
+    let rpc_value: TezosValue = json::from_str(&json).unwrap();
     log!([rpc_value]);
     let erc_account = unwrap!(TezosErcAccount::try_from(rpc_value));
     log!([erc_account]);
@@ -1324,57 +1333,57 @@ enum Or {
     R,
 }
 
-impl Into<TezosRpcValue> for &str {
-    fn into(self) -> TezosRpcValue {
-        TezosRpcValue::String {
+impl Into<TezosValue> for &str {
+    fn into(self) -> TezosValue {
+        TezosValue::String {
             string: self.into()
         }
     }
 }
 
-impl Into<TezosRpcValue> for &TezosAddress {
-    fn into(self) -> TezosRpcValue {
-        TezosRpcValue::String {
+impl Into<TezosValue> for &TezosAddress {
+    fn into(self) -> TezosValue {
+        TezosValue::String {
             string: self.to_string()
         }
     }
 }
 
-impl Into<TezosRpcValue> for &BigUint {
-    fn into(self) -> TezosRpcValue {
-        TezosRpcValue::Int {
-            int: unwrap!(self.to_bigint())
+impl Into<TezosValue> for &BigUint {
+    fn into(self) -> TezosValue {
+        TezosValue::Int {
+            int: unwrap!(self.to_bigint()).into()
         }
     }
 }
 
-impl Into<TezosRpcValue> for BigUint {
-    fn into(self) -> TezosRpcValue {
-        TezosRpcValue::Int {
-            int: unwrap!(self.to_bigint())
+impl Into<TezosValue> for BigUint {
+    fn into(self) -> TezosValue {
+        TezosValue::Int {
+            int: unwrap!(self.to_bigint()).into()
         }
     }
 }
 
-impl Into<TezosRpcValue> for BytesJson {
-    fn into(self) -> TezosRpcValue {
-        TezosRpcValue::Bytes {
+impl Into<TezosValue> for BytesJson {
+    fn into(self) -> TezosValue {
+        TezosValue::Bytes {
             bytes: self
         }
     }
 }
 
-impl Into<TezosRpcValue> for TezosAddress {
-    fn into(self) -> TezosRpcValue {
-        TezosRpcValue::String {
+impl Into<TezosValue> for TezosAddress {
+    fn into(self) -> TezosValue {
+        TezosValue::String {
             string: self.to_string()
         }
     }
 }
 
-impl Into<TezosRpcValue> for DateTime<Utc> {
-    fn into(self) -> TezosRpcValue {
-        TezosRpcValue::String {
+impl Into<TezosValue> for DateTime<Utc> {
+    fn into(self) -> TezosValue {
+        TezosValue::String {
             string: self.to_rfc3339_opts(SecondsFormat::Secs, true)
         }
     }
@@ -1382,15 +1391,15 @@ impl Into<TezosRpcValue> for DateTime<Utc> {
 
 macro_rules! tezos_func {
     ($func:expr $(, $arg_name:ident)*) => {{
-        let mut params: Vec<TezosRpcValue> = vec![];
+        let mut params: Vec<TezosValue> = vec![];
         $(
             params.push($arg_name.into());
         )*
         let args = match params.pop() {
             Some(a) => a,
-            None => TezosRpcValue::TezosPrim(TezosPrim::Unit),
+            None => TezosValue::TezosPrim(TezosPrim::Unit),
         };
-        let args = params.into_iter().rev().fold(args, |arg, cur| TezosRpcValue::TezosPrim(TezosPrim::Pair((
+        let args = params.into_iter().rev().fold(args, |arg, cur| TezosValue::TezosPrim(TezosPrim::Pair((
             Box::new(cur),
             Box::new(arg)
         ))));
@@ -1398,7 +1407,7 @@ macro_rules! tezos_func {
     }}
 }
 
-fn erc_transfer_call(to: &TezosAddress, amount: &BigUint) -> TezosRpcValue {
+fn erc_transfer_call(to: &TezosAddress, amount: &BigUint) -> TezosValue {
     tezos_func!(&[Or::L], to, amount)
 }
 
@@ -1407,7 +1416,7 @@ fn init_tezos_swap_call(
     time_lock: DateTime<Utc>,
     secret_hash: BytesJson,
     receiver: TezosAddress,
-) -> TezosRpcValue {
+) -> TezosValue {
     tezos_func!(&[Or::L], id, time_lock, secret_hash, receiver)
 }
 
@@ -1418,7 +1427,7 @@ fn init_tezos_erc_swap_call(
     receiver: TezosAddress,
     amount: BigUint,
     erc_addr: &TezosAddress,
-) -> TezosRpcValue {
+) -> TezosValue {
     tezos_func!(&[Or::R, Or::L], id, time_lock, secret_hash, receiver, amount, erc_addr)
 }
 
@@ -1426,21 +1435,21 @@ fn receiver_spends_call(
     id: BytesJson,
     secret: BytesJson,
     send_to: TezosAddress,
-) -> TezosRpcValue {
+) -> TezosValue {
     tezos_func!(&[Or::R, Or::R, Or::L], id, secret, send_to)
 }
 
 fn sender_refunds_call(
     id: BytesJson,
     send_to: TezosAddress,
-) -> TezosRpcValue {
+) -> TezosValue {
     tezos_func!(&[Or::R, Or::R, Or::R], id, send_to)
 }
 
-fn construct_function_call(func: &[Or], args: TezosRpcValue) -> TezosRpcValue {
+fn construct_function_call(func: &[Or], args: TezosValue) -> TezosValue {
     func.iter().rev().fold(args, |arg, or| match or {
-        Or::L => TezosRpcValue::TezosPrim(TezosPrim::Left([Box::new(arg)])),
-        Or::R => TezosRpcValue::TezosPrim(TezosPrim::Right([Box::new(arg)])),
+        Or::L => TezosValue::TezosPrim(TezosPrim::Left([Box::new(arg)])),
+        Or::R => TezosValue::TezosPrim(TezosPrim::Right([Box::new(arg)])),
     })
 }
 
@@ -1586,28 +1595,28 @@ fn forge_op_req_to_bytes(req: ForgeOperationsRequest) -> Vec<u8> {
     let branch = TezosBlockHash::from_str(&req.branch).unwrap();
     bytes.extend_from_slice(&*branch.hash);
     bytes.push(8);
-    bytes.push(0);
-    bytes.push(0);
     let source = TezosAddress::from_str(&req.contents[0].source).unwrap();
+    bytes.push(0);
+    bytes.push(0);
     bytes.extend_from_slice(&*source.hash);
     bytes.extend_from_slice(&big_uint_to_zarith_bytes(req.contents[0].fee.clone()));
     bytes.extend_from_slice(&big_uint_to_zarith_bytes(req.contents[0].counter.clone()));
     bytes.extend_from_slice(&big_uint_to_zarith_bytes(req.contents[0].gas_limit.clone()));
     bytes.extend_from_slice(&big_uint_to_zarith_bytes(req.contents[0].storage_limit.clone()));
     bytes.extend_from_slice(&big_uint_to_zarith_bytes(req.contents[0].amount.clone()));
-    bytes.push(0);
-    bytes.push(0);
+    bytes.push(1);
     let destination = TezosAddress::from_str(&req.contents[0].destination).unwrap();
     bytes.extend_from_slice(&*destination.hash);
+    bytes.push(0);
     match &req.contents[0].parameters {
         Some(value) => {
             bytes.push(255);
-            let mut parameters_bytes = vec![];
-            parameters_bytes.push(0);
-
+            let serialized = serialize(value).take();
+            bytes.extend_from_slice(&(serialized.len() as u32 + 1).to_be_bytes());
+            bytes.push(0);
+            bytes.extend_from_slice(&serialized);
         },
         None => bytes.push(0),
-
     }
     bytes
 }
@@ -1678,18 +1687,14 @@ fn forge_req_to_bytes_erc_transfer() {
     log!((hex::encode(&bytes)));
 
     let actual = forge_op_req_to_bytes(req);
-    // assert_eq!(bytes, actual);
-    // log!((hex::encode(&actual)));
+    assert_eq!(bytes, actual);
 
     let req_str = r#"{"branch":"BKuQLz7JwinB1rZoEwdqQD4mu9nwtLmbjxyd5MB8ARmCA6TR6pA","contents":[{"kind":"transaction","source":"dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp","fee":"0100000","counter":"604","gas_limit":"800000","storage_limit":"60000","amount":"0000000","destination":"KT1SafU2UYYQEDchguKra2ya9AKpaEgY2KLx","parameters":{"prim":"Right","args":[{"prim":"Right","args":[{"prim":"Right","args":[{"prim":"Left","args":[{"prim":"Pair","args":[{"string":"dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp"},{"int":"0"}]}]}]}]}]}}]}"#;
     let req: ForgeOperationsRequest = unwrap!(json::from_str(req_str));
-    // assert_eq!(req_str, unwrap!(json::to_string(&req)));
 
-    let op = "194053273d19ec275875e7df74c8ca15b8dc8afec855ece1830b0c2b9a8e0a6b0800002969737230bd5ea60f632b52777981e43a25d069a08d06dc0480ea30e0d4030001c56d2c471c59aa98400fa4256bd94cc7217ec4aa00ff0000003600050805080508050507070100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779700000";
-    log!((op));
-
-    let addr = "dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp";
-    log!((hex::encode(addr.as_bytes())));
+    let expected_bytes = unwrap!(hex::decode("194053273d19ec275875e7df74c8ca15b8dc8afec855ece1830b0c2b9a8e0a6b0800002969737230bd5ea60f632b52777981e43a25d069a08d06dc0480ea30e0d4030001c56d2c471c59aa98400fa4256bd94cc7217ec4aa00ff0000003600050805080508050507070100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779700000"));
+    let actual_bytes = forge_op_req_to_bytes(req);
+    assert_eq!(expected_bytes, actual_bytes);
 }
 
 fn big_uint_from_zarith_hex(hex: &str) -> BigUint {
@@ -1769,35 +1774,321 @@ fn big_int_to_zarith_bytes(mut num: BigInt) -> Vec<u8> {
     bytes
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum CurveType {
+    ED25519,
+    SECP256K1,
+    P256,
+}
+
+/// http://tezos.gitlab.io/api/p2p.html#public-key-hash-21-bytes-8-bit-tag
+#[derive(Clone, Debug, PartialEq)]
+struct PubkeyHash {
+    curve_type: CurveType,
+    hash: H160,
+}
+
+/// http://tezos.gitlab.io/api/p2p.html#contract-id-22-bytes-8-bit-tag
+#[derive(Clone, Debug, PartialEq)]
+enum ContractId {
+    PubkeyHash(PubkeyHash),
+    Originated(H160),
+}
+
+impl Serializable for ContractId {
+    fn serialize(&self, s: &mut Stream) {
+        match self {
+            ContractId::PubkeyHash(hash) => {
+                s.append(&0u8);
+                match hash.curve_type {
+                    CurveType::ED25519 => s.append(&0u8),
+                    CurveType::SECP256K1 => s.append(&1u8),
+                    CurveType::P256 => s.append(&2u8),
+                };
+                s.append(&hash.hash);
+            },
+            ContractId::Originated(hash) => {
+                s.append(&1u8);
+                s.append(hash);
+                s.append(&0u8);
+            },
+        }
+    }
+}
+
+impl Deserializable for ContractId {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        let tag: u8 = reader.read()?;
+        match tag {
+            0 => {
+                let curve_tag: u8 = reader.read()?;
+                let curve_type = match curve_tag {
+                    0 => CurveType::ED25519,
+                    1 => CurveType::SECP256K1,
+                    2 => CurveType::P256,
+                    _ => return Err(serialization::Error::MalformedData),
+                };
+                Ok(ContractId::PubkeyHash(PubkeyHash {
+                    curve_type,
+                    hash: reader.read()?,
+                }))
+            },
+            1 => {
+                let hash = reader.read()?;
+                let padding: u8 = reader.read()?;
+                Ok(ContractId::Originated(hash))
+            },
+            _ => Err(serialization::Error::MalformedData)
+        }
+    }
+}
+
+impl Deserializable for TezosValue {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        let tag: u8 = reader.read()?;
+        match tag {
+            0 => {
+                Ok(TezosValue::Int {
+                    int: reader.read()?
+                })
+            },
+            1 => {
+                let length: H32 = reader.read()?;
+                let length = u32::from_be_bytes(length.take());
+                let mut bytes = vec![0; length as usize];
+                reader.read_slice(&mut bytes)?;
+                Ok(TezosValue::String {
+                    string: String::from_utf8(bytes).map_err(|_| serialization::Error::MalformedData)?
+                })
+            },
+            5 => {
+                let sub_tag: u8 = reader.read()?;
+                match sub_tag {
+                    5 => Ok(TezosValue::TezosPrim(TezosPrim::Left([
+                        Box::new(reader.read()?),
+                    ]))),
+                    8 => Ok(TezosValue::TezosPrim(TezosPrim::Right([
+                        Box::new(reader.read()?),
+                    ]))),
+                    _ => unimplemented!(),
+                }
+            },
+            7 => {
+                let sub_tag: u8 = reader.read()?;
+                match sub_tag {
+                    7 => Ok(TezosValue::TezosPrim(TezosPrim::Pair((
+                        Box::new(reader.read()?),
+                        Box::new(reader.read()?),
+                    )))),
+                    _ => unimplemented!(),
+                }
+            },
+            _ => unimplemented!(),
+        }
+    }
+}
+
+#[derive(Add, Clone, Debug, Deref, Display, PartialEq)]
+pub struct TezosInt(pub BigInt);
+
+impl Deserializable for TezosInt {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        let mut res = BigInt::from(0u8);
+        let mut sign = BigInt::from(1);
+        let mut i = 0;
+        let mut stop = false;
+        loop {
+            let mut byte: u8 = reader.read()?;
+            if i == 0 && byte & 1u8 << 6 != 0 {
+                sign = -sign;
+                byte ^= 1u8 << 6;
+            }
+
+            if byte & 1u8 << 7 != 0 {
+                byte ^= 1u8 << 7;
+            } else {
+                stop = true
+            }
+            res += byte * BigInt::from(128u8).pow(i as u32);
+            if stop { break; }
+            i += 1;
+        }
+        Ok(TezosInt::from(sign * (res >> 1)))
+    }
+}
+
+impl Serializable for TezosInt {
+    fn serialize(&self, s: &mut Stream) {
+        let bytes = big_int_to_zarith_bytes(self.0.clone());
+        s.append_slice(&bytes);
+    }
+}
+
+/// http://tezos.gitlab.io/api/p2p.html#transaction-tag-108
+#[derive(Clone, Debug, PartialEq)]
+pub struct TezosTransaction {
+    source: ContractId,
+    fee: TezosUint,
+    counter: TezosUint,
+    gas_limit: TezosUint,
+    storage_limit: TezosUint,
+    amount: TezosUint,
+    destination: ContractId,
+    parameters: Option<TezosValue>,
+}
+
+fn read_parameters<T>(reader: &mut Reader<T>) -> Result<Option<TezosValue>, serialization::Error>
+    where T: std::io::Read {
+    let has_parameters: u8 = reader.read()?;
+    match has_parameters {
+        0 => Ok(None),
+        255 => {
+            let len: H32 = reader.read()?;
+            let len = u32::from_be_bytes(len.take()) as usize;
+            let mut bytes = vec![0; len];
+            reader.read_slice(&mut bytes)?;
+            deserialize(&bytes[1..]).map(|res| Some(res))
+        },
+        _ => Err(serialization::Error::MalformedData),
+    }
+}
+
+impl Deserializable for TezosTransaction {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        Ok(TezosTransaction {
+            source: reader.read()?,
+            fee: reader.read()?,
+            counter: reader.read()?,
+            gas_limit: reader.read()?,
+            storage_limit: reader.read()?,
+            amount: reader.read()?,
+            destination: reader.read()?,
+            parameters: read_parameters(reader)?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TezosOperationEnum {
+    Transaction(TezosTransaction)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TezosOperation {
+    branch: H256,
+    op: TezosOperationEnum,
+    signature: Option<H512>,
+}
+
+impl Deserializable for TezosOperation {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        let branch = reader.read()?;
+        let tag: u8 = reader.read()?;
+        let op = match tag {
+            8 => {
+                TezosOperationEnum::Transaction(reader.read()?)
+            },
+            _ => unimplemented!(),
+        };
+        let signature = if reader.is_finished() {
+            None
+        } else {
+            Some(reader.read()?)
+        };
+        Ok(TezosOperation {
+            branch,
+            op,
+            signature
+        })
+    }
+}
+
+#[derive(Add, Clone, Debug, Deref, Display, PartialEq)]
+pub struct TezosUint(pub BigUint);
+
+impl Deserializable for TezosUint {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        unimplemented!()
+    }
+}
+
+impl From<BigInt> for TezosInt {
+    fn from(n: BigInt) -> TezosInt {
+        TezosInt(n)
+    }
+}
+
+impl From<BigUint> for TezosUint {
+    fn from(n: BigUint) -> TezosUint {
+        TezosUint(n)
+    }
+}
+
 fn big_int_to_zarith_hex(num: BigInt) -> String {
     hex::encode(&big_int_to_zarith_bytes(num))
 }
 
 #[test]
-fn test_serializable_tezos_rpc_value() {
+fn test_tezos_rpc_value_binary_serialization() {
     let expected_bytes = unwrap!(hex::decode("0100000024646e314b75746668346577744e7875394663774448667a375834535775575a6452477970"));
-    let value = TezosRpcValue::String {
+    let value = TezosValue::String {
         string: "dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp".into()
     };
-    let serialized = serialize(&value);
-    assert_eq!(expected_bytes, serialized.take());
+    let serialized = serialize(&value).take();
+    assert_eq!(expected_bytes, serialized);
+    let deserialized = unwrap!(deserialize(serialized.as_slice()));
+    assert_eq!(value, deserialized);
 
     let expected_bytes = unwrap!(hex::decode("0080a8d6b907"));
-    let value = TezosRpcValue::Int {
-        int: BigInt::from(1000000000i64)
+    let value = TezosValue::Int {
+        int: BigInt::from(1000000000i64).into()
     };
-    let serialized = serialize(&value);
-    assert_eq!(expected_bytes, serialized.take());
+    let serialized = serialize(&value).take();
+    assert_eq!(expected_bytes, serialized);
+    let deserialized = unwrap!(deserialize(serialized.as_slice()));
+    assert_eq!(value, deserialized);
 
     let expected_bytes = unwrap!(hex::decode("07070100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779700080a8d6b907"));
-    let value = TezosRpcValue::TezosPrim(TezosPrim::Pair ((
-        Box::new(TezosRpcValue::String {
+    let value = TezosValue::TezosPrim(TezosPrim::Pair ((
+        Box::new(TezosValue::String {
             string: "dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp".into()
         }),
-        Box::new(TezosRpcValue::Int {
-            int: BigInt::from(1000000000i64)
+        Box::new(TezosValue::Int {
+            int: BigInt::from(1000000000i64).into()
         }),
     )));
-    let serialized = serialize(&value);
-    assert_eq!(expected_bytes, serialized.take());
+    let serialized = serialize(&value).take();
+    assert_eq!(expected_bytes, serialized);
+    let deserialized = unwrap!(deserialize(serialized.as_slice()));
+    assert_eq!(value, deserialized);
+
+    let expected_bytes = unwrap!(hex::decode("050507070100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779700080a8d6b907"));
+    let value = TezosValue::TezosPrim(TezosPrim::Left([
+        Box::new(value)
+    ]));
+    let serialized = serialize(&value).take();
+    assert_eq!(expected_bytes, serialized);
+    let deserialized = unwrap!(deserialize(serialized.as_slice()));
+    assert_eq!(value, deserialized);
+
+    let expected_bytes = unwrap!(hex::decode("0508050507070100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779700080a8d6b907"));
+    let value = TezosValue::TezosPrim(TezosPrim::Right([
+        Box::new(value)
+    ]));
+    let serialized = serialize(&value).take();
+    assert_eq!(expected_bytes, serialized);
+    let deserialized = unwrap!(deserialize(serialized.as_slice()));
+    assert_eq!(value, deserialized);
 }

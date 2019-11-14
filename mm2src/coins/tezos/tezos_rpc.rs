@@ -16,7 +16,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
-use crate::tezos::TezosRpcValue;
+use crate::tezos::TezosValue;
 use num_bigint::BigUint;
 
 #[derive(Debug)]
@@ -132,7 +132,7 @@ pub struct Operation {
     pub gas_limit: BigUint,
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<TezosRpcValue>,
+    pub parameters: Option<TezosValue>,
     pub source: String,
     #[serde(deserialize_with = "big_uint_from_str")]
     #[serde(serialize_with = "big_uint_to_string")]
@@ -164,7 +164,7 @@ pub struct TezosInputType {
 #[derive(Debug, Serialize)]
 pub struct BigMapReq {
     pub r#type: TezosInputType,
-    pub key: TezosRpcValue,
+    pub key: TezosValue,
 }
 
 impl TezosRpcClientImpl {
@@ -211,19 +211,19 @@ impl TezosRpcClientImpl {
         tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e))
     }
 
-    pub async fn get_storage<T: TryFrom<TezosRpcValue>>(&self, addr: &str) -> Result<T, String>
+    pub async fn get_storage<T: TryFrom<TezosValue>>(&self, addr: &str) -> Result<T, String>
         where T::Error: std::fmt::Display
     {
         let path = format!("/chains/main/blocks/head/context/contracts/{}/storage", addr);
-        let value: TezosRpcValue = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
+        let value: TezosValue = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
         Ok(try_s!(T::try_from(value)))
     }
 
-    pub async fn get_big_map<T: TryFrom<TezosRpcValue>>(&self, addr: &str, req: BigMapReq) -> Result<T, String>
+    pub async fn get_big_map<T: TryFrom<TezosValue>>(&self, addr: &str, req: BigMapReq) -> Result<T, String>
         where T::Error: std::fmt::Display
     {
         let path = format!("/chains/main/blocks/head/context/contracts/{}/big_map_get", addr);
-        let value: TezosRpcValue = try_s!(tezos_req(&self.uris, &path, http::Method::POST, req).await.map_err(|e| ERRL!("{:?}", e)));
+        let value: TezosValue = try_s!(tezos_req(&self.uris, &path, http::Method::POST, req).await.map_err(|e| ERRL!("{:?}", e)));
         Ok(try_s!(T::try_from(value)))
     }
 

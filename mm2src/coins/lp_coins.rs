@@ -61,7 +61,7 @@ pub mod coins_tests;
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
 pub mod tezos;
-use self::tezos::{TezosCoin, tezos_coin_from_conf_and_request, TezosTransaction};
+use self::tezos::{TezosCoin, tezos_coin_from_conf_and_request, TezosOperation};
 pub mod utxo;
 use self::utxo::{utxo_coin_from_conf_and_request, UtxoCoin, UtxoFeeDetails, UtxoTx};
 #[doc(hidden)]
@@ -81,11 +81,11 @@ pub trait Transaction: Debug + 'static {
 pub enum TransactionEnum {
     UtxoTx (UtxoTx),
     SignedEthTx (SignedEthTx),
-    TezosTransaction (TezosTransaction),
+    TezosOperation (TezosOperation),
 }
 ifrom! (TransactionEnum, UtxoTx);
 ifrom! (TransactionEnum, SignedEthTx);
-ifrom! (TransactionEnum, TezosTransaction);
+ifrom! (TransactionEnum, TezosOperation);
 
 // NB: When stable and groked by IDEs, `enum_dispatch` can be used instead of `Deref` to speed things up.
 impl Deref for TransactionEnum {
@@ -94,7 +94,7 @@ impl Deref for TransactionEnum {
         match self {
             &TransactionEnum::UtxoTx (ref t) => t,
             &TransactionEnum::SignedEthTx (ref t) => t,
-            &TransactionEnum::TezosTransaction (ref t) => t,
+            &TransactionEnum::TezosOperation (ref t) => t,
 }   }   }
 
 pub type TransactionFut = Box<dyn Future<Item=TransactionEnum, Error=String> + Send>;
