@@ -313,7 +313,7 @@ fn payment_script(
         .push_opcode(Opcode::OP_SIZE)
         .push_bytes(&[32])
         .push_opcode(Opcode::OP_EQUALVERIFY)
-        .push_opcode(Opcode::OP_HASH160)
+        .push_opcode(Opcode::OP_SHA256)
         .push_bytes(secret_hash)
         .push_opcode(Opcode::OP_EQUALVERIFY)
         .push_bytes(pub_1)

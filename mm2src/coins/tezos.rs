@@ -709,7 +709,7 @@ impl SwapOps for TezosCoin {
 
 impl Transaction for TezosOperation {
     fn tx_hex(&self) -> Vec<u8> {
-        unimplemented!()
+        serialize(self).take()
     }
 
     fn extract_secret(&self) -> Result<Vec<u8>, String> {
@@ -766,6 +766,7 @@ async fn sign_and_send_operation(
     prefixed.extend_from_slice(&signature.sig.to_bytes());
     prefixed.remove(0);
     try_s!(coin.rpc_client.inject_operation(&hex::encode(&prefixed)).await);
+    log!((hex::encode(prefixed.as_slice())));
     Ok(deserialize(prefixed.as_slice()).unwrap())
 }
 
@@ -933,7 +934,7 @@ pub async fn tezos_coin_from_conf_and_request(
         my_address,
         required_confirmations: conf["required_confirmations"].as_u64().unwrap_or(1).into(),
         rpc_client,
-        swap_contract_address: "KT1Ase2xd1TmMmSBCuo1PtmJqCu3axSs2hTu".parse().unwrap(),
+        swap_contract_address: "KT1B1D1iVrVyrABRRp6PxPU894dzWghvt4mf".parse().unwrap(),
         ticker: ticker.into(),
     })))
 }
@@ -1149,7 +1150,9 @@ pub enum TezosPrim {
     Elt ((Box<TezosValue>, Box<TezosValue>)),
     Right ([Box<TezosValue>; 1]),
     Left ([Box<TezosValue>; 1]),
+    Some ([Box<TezosValue>; 1]),
     Unit,
+    None,
 }
 
 impl Serialize for TezosInt {
@@ -1218,6 +1221,11 @@ impl Serializable for TezosValue {
                 s.append(&0u8);
                 s.append(int);
             },
+            TezosValue::Bytes { bytes } => {
+                s.append(&10u8);
+                s.append_slice(&(bytes.len() as u32).to_be_bytes());
+                s.append_slice(&bytes);
+            },
             TezosValue::TezosPrim(TezosPrim::Pair((left, right))) => {
                 s.append(&7u8);
                 s.append(&7u8);
@@ -1244,6 +1252,7 @@ impl TezosValueReader {
         let val = self.inner.take();
         let (res, next) = val.unwrap().split_and_read_value();
         self.inner = next;
+        log!([res]);
         Ok(res)
     }
 }
@@ -1508,7 +1517,7 @@ fn tezos_erc_coin_for_test() -> TezosCoin {
         "protocol": {
             "platform": "TEZOS",
             "token_type": "ERC20",
-            "contract_address": "KT1SafU2UYYQEDchguKra2ya9AKpaEgY2KLx"
+            "contract_address": "KT1Bzq2mPvZk6jdmSzvVySXrQhYrybPnnxyZ"
         },
         "mm2": 1
     });
@@ -1528,13 +1537,14 @@ fn tezos_erc_coin_for_test() -> TezosCoin {
 #[test]
 fn send_swap_payment_tezos() {
     let coin = tezos_coin_for_test();
+    log!((coin.my_address));
     let maker_pub = match &coin.key_pair {
         TezosKeyPair::ED25519(p) => p.public.as_bytes(),
         _ => unimplemented!(),
     };
     let current_block = coin.current_block().wait().unwrap();
     let tx = coin.send_taker_payment(
-        &[0x25],
+        &[0x30],
         0,
         maker_pub,
         &hex::decode("66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925").unwrap(),
@@ -1579,7 +1589,7 @@ fn spend_swap_payment() {
         _ => unimplemented!(),
     };
     let tx = coin.send_maker_spends_taker_payment(
-        &[0x13],
+        &[0x30],
         &[],
         0,
         taker_pub,
@@ -1887,6 +1897,15 @@ impl Deserializable for TezosValue {
                     _ => unimplemented!(),
                 }
             },
+            10 => {
+                let length: H32 = reader.read()?;
+                let length = u32::from_be_bytes(length.take());
+                let mut bytes = vec![0; length as usize];
+                reader.read_slice(&mut bytes)?;
+                Ok(TezosValue::Bytes {
+                    bytes: bytes.into()
+                })
+            },
             _ => unimplemented!(),
         }
     }
@@ -1901,7 +1920,7 @@ impl Deserializable for TezosInt {
     {
         let mut res = BigInt::from(0u8);
         let mut sign = BigInt::from(1);
-        let mut i = 0;
+        let mut i = 0u32;
         let mut stop = false;
         loop {
             let mut byte: u8 = reader.read()?;
@@ -1915,11 +1934,15 @@ impl Deserializable for TezosInt {
             } else {
                 stop = true
             }
-            res += byte * BigInt::from(128u8).pow(i as u32);
+            res += byte * BigInt::from(128u8).pow(i);
             if stop { break; }
             i += 1;
         }
-        Ok(TezosInt::from(sign * (res >> 1)))
+
+        if i > 0 {
+            res = res >> 1;
+        }
+        Ok(TezosInt::from(sign * res))
     }
 }
 
@@ -1976,6 +1999,31 @@ impl Deserializable for TezosTransaction {
     }
 }
 
+impl Serializable for TezosTransaction {
+    fn serialize(&self, s: &mut Stream) {
+        s.append(&self.source);
+        s.append(&self.fee);
+        s.append(&self.counter);
+        s.append(&self.gas_limit);
+        s.append(&self.storage_limit);
+        s.append(&self.amount);
+        s.append(&self.destination);
+        match &self.parameters {
+            Some(params) => {
+                s.append(&255u8);
+                let bytes = serialize(params).take();
+                let len = bytes.len() as u32 + 1;
+                s.append_slice(&len.to_be_bytes());
+                s.append(&0u8);
+                s.append_slice(&bytes);
+            },
+            None => {
+                s.append(&0u8);
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TezosOperationEnum {
     Transaction(TezosTransaction)
@@ -2013,6 +2061,21 @@ impl Deserializable for TezosOperation {
     }
 }
 
+impl Serializable for TezosOperation {
+    fn serialize(&self, s: &mut Stream) {
+        s.append(&self.branch);
+        match &self.op {
+            TezosOperationEnum::Transaction(tx) => {
+                s.append(&8u8);
+                s.append(tx);
+            }
+        }
+        if let Some(sig) = &self.signature {
+            s.append(sig);
+        }
+    }
+}
+
 #[derive(Add, Clone, Debug, Deref, Display, PartialEq)]
 pub struct TezosUint(pub BigUint);
 
@@ -2020,7 +2083,28 @@ impl Deserializable for TezosUint {
     fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
         where Self: Sized, T: std::io::Read
     {
-        unimplemented!()
+        let mut res = BigUint::from(0u8);
+        let mut stop = false;
+        let mut i = 0u32;
+        loop {
+            let mut byte: u8 = reader.read()?;
+            if byte & 1u8 << 7 != 0 {
+                byte ^= 1u8 << 7;
+            } else {
+                stop = true
+            }
+            res += byte * BigUint::from(128u8).pow(i);
+            if stop { break; }
+            i += 1;
+        }
+        Ok(TezosUint::from(res))
+    }
+}
+
+impl Serializable for TezosUint {
+    fn serialize(&self, s: &mut Stream) {
+        let bytes = big_uint_to_zarith_bytes(self.0.clone());
+        s.append_slice(&bytes);
     }
 }
 
@@ -2091,4 +2175,124 @@ fn test_tezos_rpc_value_binary_serialization() {
     assert_eq!(expected_bytes, serialized);
     let deserialized = unwrap!(deserialize(serialized.as_slice()));
     assert_eq!(value, deserialized);
+}
+
+#[test]
+fn test_operation_serde() {
+    let tx_hex = "ef48deeeae27573e2c77f3c5c011af40437ffebde394f343a1545e82d39f854d0800002969737230bd5ea60f632b52777981e43a25d069a08d06e00480ea30e0d403c0843d01192109476f194a603982c1cfc028b5fad65b789100ff0000007600050507070a000000012507070100000014313937302d30312d30315430303a30303a30305a07070a0000002066687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f29250100000024646e314b75746668346577744e7875394663774448667a375834535775575a6452477970d110ea0d70706147276244fc231f71d4452e4dde51647595d984aa49ce95aee2928aa521bd4a316ee29b2cc62d56e8c8a750208062abf0d19077c637310ec201";
+    let tx_bytes = hex::decode(tx_hex).unwrap();
+    let op: TezosOperation = unwrap!(deserialize(tx_bytes.as_slice()));
+    let serialized = serialize(&op).take();
+    assert_eq!(tx_bytes, serialized);
+
+    let tx_hex = "4ea793fe179be186e7cad783eb797d5ef00e4e91b840d856172dc3ee51ddafe90800002969737230bd5ea60f632b52777981e43a25d069a08d06ee0480ea30e0d40300011a8f7a22dd852d1c8542d795eae3b094a7c629aa00ff000000a7000508050507070a000000011307070100000014313937302d30312d30315430303a30303a30305a07070a0000002066687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f292507070100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779700707000101000000244b5431427a71326d50765a6b366a646d537a765679535872516859727962506e6e78795a079655d5c2b8c864945c698dc49de289ebc041f14eff57436cbd6beed52b455c80983e94352f080fa209177bd4f347fd026b891b122fdc9bd7f47c974780e303";
+    let tx_bytes = hex::decode(tx_hex).unwrap();
+    let op: TezosOperation = unwrap!(deserialize(tx_bytes.as_slice()));
+    log!([op]);
+    let serialized = serialize(&op).take();
+    log!((hex::encode(&serialized)));
+    let tx_hex = "4ea793fe179be186e7cad783eb797d5ef00e4e91b840d856172dc3ee51ddafe90800002969737230bd5ea60f632b52777981e43a25d069a08d06ee0480ea30e0d40300011a8f7a22dd852d1c8542d795eae3b094a7c629aa00ff000000a7000508050507070a000000011307070100000014313937302d30312d30315430303a30303a30305a07070a0000002066687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f292507070100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779700707000001000000244b5431427a71326d50765a6b366a646d537a765679535872516859727962506e6e78795a079655d5c2b8c864945c698dc49de289ebc041f14eff57436cbd6beed52b455c80983e94352f080fa209177bd4f347fd026b891b122fdc9bd7f47c974780e303";
+    assert_eq!(tx_bytes, serialized);
+}
+
+enum TezosAtomicSwapState {
+    Initialized,
+    ReceiverSpent,
+    SenderRefunded,
+}
+
+impl TryFrom<TezosValue> for TezosAtomicSwapState {
+    type Error = String;
+
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
+        match value {
+            TezosValue::TezosPrim(TezosPrim::Left(_)) => Ok(TezosAtomicSwapState::Initialized),
+            TezosValue::TezosPrim(TezosPrim::Right(value)) => match *value[0] {
+                TezosValue::TezosPrim(TezosPrim::Left(_)) => Ok(TezosAtomicSwapState::ReceiverSpent),
+                TezosValue::TezosPrim(TezosPrim::Right(_)) => Ok(TezosAtomicSwapState::SenderRefunded),
+                _ => ERR!("TezosAtomicSwapState can be constructed only from TezosPrim::Left or TezosPrim::Right, got {:?}", value),
+            },
+            _ => ERR!("TezosAtomicSwapState can be constructed only from TezosPrim::Left or TezosPrim::Right, got {:?}", value),
+        }
+    }
+}
+
+struct TezosAtomicSwap {
+    amount: BigUint,
+    amount_nat: BigUint,
+    contract_address: TezosOption<ContractId>,
+    lock_time: BigUint,
+    receiver: ContractId,
+    secret_hash: BytesJson,
+    sender: ContractId,
+    state: TezosAtomicSwapState,
+    uuid: BytesJson,
+    spent_at: TezosOption<BigUint>,
+}
+
+impl TryFrom<TezosValue> for TezosAtomicSwap {
+    type Error = String;
+
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
+        let mut reader = TezosValueReader {
+            inner: Some(value),
+        };
+
+        Ok(TezosAtomicSwap {
+            amount: try_s!(reader.read().unwrap().try_into()),
+            amount_nat: try_s!(reader.read().unwrap().try_into()),
+            contract_address: try_s!(reader.read().unwrap().try_into()),
+            lock_time: try_s!(reader.read().unwrap().try_into()),
+            receiver: try_s!(reader.read().unwrap().try_into()),
+            secret_hash: try_s!(reader.read().unwrap().try_into()),
+            sender: try_s!(reader.read().unwrap().try_into()),
+            state: try_s!(reader.read().unwrap().try_into()),
+            uuid: try_s!(reader.read().unwrap().try_into()),
+            spent_at: try_s!(reader.read().unwrap().try_into()),
+        })
+    }
+}
+
+impl TryFrom<TezosValue> for ContractId {
+    type Error = String;
+
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
+        match value {
+            TezosValue::Bytes { bytes } => Ok(try_s!(deserialize(bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)))),
+            _ => ERR!("ContractId can be constructed only from TezosValue::Bytes, got {:?}", value),
+        }
+    }
+}
+
+struct TezosOption<T>(Option<T>);
+
+impl<T: TryFrom<TezosValue>> TryFrom<TezosValue> for TezosOption<T>
+where T::Error: fmt::Display {
+    type Error = String;
+
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
+        match value {
+            TezosValue::TezosPrim(TezosPrim::None) => Ok(TezosOption(None)),
+            TezosValue::TezosPrim(TezosPrim::Some(value)) => Ok(TezosOption(Some(try_s!(T::try_from((*value[0]).clone()))))),
+            _ => ERR!("TezosOption can be constructed only from TezosPrim::None or TezosPrim::Some, got {:?}", value),
+        }
+    }
+}
+
+#[test]
+fn test_tezos_atomic_swap_from_value() {
+    let json_str = r#"{"prim":"Pair","args":[{"int":"1000000"},{"prim":"Pair","args":[{"int":"0"},{"prim":"Pair","args":[{"prim":"None"},{"prim":"Pair","args":[{"int":"0"},{"prim":"Pair","args":[{"bytes":"00002969737230bd5ea60f632b52777981e43a25d069"},{"prim":"Pair","args":[{"bytes":"66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"},{"prim":"Pair","args":[{"bytes":"00002969737230bd5ea60f632b52777981e43a25d069"},{"prim":"Pair","args":[{"prim":"Left","args":[{"prim":"Unit"}]},{"prim":"Pair","args":[{"bytes":"30"},{"prim":"None"}]}]}]}]}]}]}]}]}]}"#;
+    let value: TezosValue = unwrap!(json::from_str(json_str));
+    let swap = unwrap!(TezosAtomicSwap::try_from(value));
+
+    let json_str = r#"{"prim":"Pair","args":[{"int":"1000000"},{"prim":"Pair","args":[{"int":"0"},{"prim":"Pair","args":[{"prim":"None"},{"prim":"Pair","args":[{"int":"0"},{"prim":"Pair","args":[{"bytes":"00002969737230bd5ea60f632b52777981e43a25d069"},{"prim":"Pair","args":[{"bytes":"66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"},{"prim":"Pair","args":[{"bytes":"00002969737230bd5ea60f632b52777981e43a25d069"},{"prim":"Pair","args":[{"prim":"Right","args":[{"prim":"Left","args":[{"prim":"Unit"}]}]},{"prim":"Pair","args":[{"bytes":"30"},{"prim":"Some","args":[{"int":"1574016141"}]}]}]}]}]}]}]}]}]}]}"#;
+    let value: TezosValue = unwrap!(json::from_str(json_str));
+    let swap = unwrap!(TezosAtomicSwap::try_from(value));
+}
+
+#[test]
+fn tezos_int_binary_serde() {
+    let bytes = vec![1];
+    let num: TezosInt = unwrap!(deserialize(bytes.as_slice()));
+    assert_eq!(num.0, BigInt::from(1));
 }
