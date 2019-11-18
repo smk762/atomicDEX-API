@@ -59,7 +59,6 @@ async fn tezos_req<I: Serialize, O: DeserializeOwned + std::fmt::Debug + Send + 
         if !status.is_success() {errors.push(ERRL!("!200: {}, {}", status, binprint(&body, b'.'))); continue}
         match json::from_slice(&body) {
             Ok(b) => {
-                log!([b]);
                 return Ok(b)
             },
             Err(e) => {
@@ -116,7 +115,7 @@ fn big_uint_from_str<'de, D>(d: D) -> Result<BigUint, D::Error> where D: Deseria
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Operation {
+pub struct Transaction {
     #[serde(deserialize_with = "big_uint_from_str")]
     #[serde(serialize_with = "big_uint_to_string")]
     pub amount: BigUint,
@@ -130,13 +129,36 @@ pub struct Operation {
     #[serde(deserialize_with = "big_uint_from_str")]
     #[serde(serialize_with = "big_uint_to_string")]
     pub gas_limit: BigUint,
-    pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<TezosValue>,
     pub source: String,
     #[serde(deserialize_with = "big_uint_from_str")]
     #[serde(serialize_with = "big_uint_to_string")]
     pub storage_limit: BigUint,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Endorsement {
+    level: u64,
+    metadata: Json,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[serde(tag = "kind")]
+pub enum Operation {
+    transaction(Transaction),
+    endorsement(Endorsement)
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OperationResult {
+    protocol: String,
+    chain_id: String,
+    hash: String,
+    pub branch: String,
+    pub contents: Vec<Operation>,
+    pub signature: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -241,6 +263,12 @@ impl TezosRpcClientImpl {
     pub async fn operation_hashes(&self, block_id: &str) -> Result<Vec<String>, String> {
         let mut path = format!("/chains/main/blocks/{}/operation_hashes", block_id);
         let hashes: Vec<Vec<String>> = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
+        Ok(hashes.into_iter().flatten().collect())
+    }
+
+    pub async fn operations(&self, block_id: &str) -> Result<Vec<OperationResult>, String> {
+        let mut path = format!("/chains/main/blocks/{}/operations", block_id);
+        let hashes: Vec<Vec<OperationResult>> = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
         Ok(hashes.into_iter().flatten().collect())
     }
 
