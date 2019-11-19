@@ -847,7 +847,21 @@ impl Transaction for TezosOperation {
     }
 
     fn extract_secret(&self) -> Result<Vec<u8>, String> {
-        unimplemented!()
+        match &self.op {
+            TezosOperationEnum::Transaction(tx) => {
+                match &tx.parameters {
+                    Some(params) => {
+                        let (path, args) = read_function_call(vec![], params.clone());
+                        if path == vec![Or::R, Or::R, Or::L] {
+                            unimplemented!()
+                        } else {
+                            ERR!("Invalid function call")
+                        }
+                    },
+                    None => ERR!("parameters are None"),
+                }
+            }
+        }
     }
 
     fn tx_hash(&self) -> BytesJson {
@@ -2438,4 +2452,11 @@ fn tezos_int_binary_serde() {
     let bytes = vec![1];
     let num: TezosInt = unwrap!(deserialize(bytes.as_slice()));
     assert_eq!(num.0, BigInt::from(1));
+}
+
+#[test]
+fn test_extract_secret() {
+    let tx_bytes = unwrap!(hex::decode("ed0dd721b69a9caa34631c12de656294f40769eadc0f472f4cb86cccb643bae90800002969737230bd5ea60f632b52777981e43a25d069a08d069b0580ea30e0d40300011a8f7a22dd852d1c8542d795eae3b094a7c629aa00ff0000006e0005080508050507070a000000103bf685c8da0c4cbb9766ab46d36d5c9b07070a0000002000000000000000000000000000000000000000000000000000000000000000000100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779708ea21a6d1d3dfaf448f9ac095c456a43c2e08f9e148cf84f215cb888bdd36c28eaf0b351a063f71ac293112a9c8bf8ad6d38b6e47b1b8c84d2a1cb0d8044500f"));
+    let op: TezosOperation = unwrap!(deserialize(tx_bytes.as_slice()));
+    let secret = unwrap!(op.extract_secret());
 }
