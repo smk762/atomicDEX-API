@@ -87,7 +87,7 @@ impl SwapOps for TestCoin {
         maker_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
-    ) -> TransactionFut {
+    ) -> TransactionDetailsFut {
         unimplemented!()
     }
 

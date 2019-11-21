@@ -881,7 +881,7 @@ impl SwapOps for UtxoCoin {
         maker_pub: &EcPubkey,
         priv_bn_hash: &[u8],
         amount: BigDecimal,
-    ) -> TransactionFut {
+    ) -> TransactionDetailsFut {
         let redeem_script = payment_script(
             time_lock,
             priv_bn_hash,
@@ -911,7 +911,8 @@ impl SwapOps for UtxoCoin {
                 ))
             }
         };
-        Box::new(send_fut)
+        let coin = self.clone();
+        Box::new(send_fut.and_then(move |tx| coin.tx_details_by_hash(&tx.tx_hash())))
     }
 
     fn send_maker_spends_taker_payment(

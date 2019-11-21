@@ -845,7 +845,7 @@ impl SwapOps for TezosCoin {
         maker_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
-    ) -> TransactionFut {
+    ) -> TransactionDetailsFut {
         let maker_addr = TezosAddress {
             prefix: [4, 177, 1],
             hash: blake2b_160(&maker_pub.bytes),
@@ -879,8 +879,23 @@ impl SwapOps for TezosCoin {
         let coin = self.clone();
         let fut = Box::pin(async move {
             let dest = coin.swap_contract_address.clone();
-            sign_and_send_operation(&coin, amount, &dest, Some(args)).await
-        }).compat().map(|tx| tx.into());
+            let tx = try_s!(sign_and_send_operation(&coin, amount, &dest, Some(args)).await);
+            Ok(TransactionDetails {
+                block_height: 0,
+                coin: coin.ticker.clone(),
+                fee_details: None,
+                from: vec![],
+                internal_id: vec![].into(),
+                my_balance_change: 0.into(),
+                received_by_me: 0.into(),
+                spent_by_me: 0.into(),
+                timestamp: now_ms() / 1000,
+                to: vec![],
+                tx_hash: coin.tx_hash_to_string(&tx.tx_hash()),
+                total_amount: 0.into(),
+                tx_hex: tx.tx_hex().into(),
+            })
+        }).compat();
         Box::new(fut)
     }
 

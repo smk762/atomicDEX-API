@@ -729,9 +729,9 @@ impl TakerSwap {
             &self.r().secret_hash.0,
             self.r().data.taker_coin_start_block,
         );
-        let transaction = match f.compat().await {
+        let tx_details = match f.compat().await {
             Ok(res) => match res {
-                Some(tx) => tx,
+                Some(tx) => unwrap!(self.taker_coin.tx_details_by_hash(&tx.tx_hash()).compat().await),
                 None => {
                     let payment_fut = self.taker_coin.send_taker_payment(
                         &[],
@@ -756,20 +756,7 @@ impl TakerSwap {
             ))
         };
 
-        let hash = transaction.tx_hash();
-        log!({"Taker payment tx hash {:02x}", hash});
-        // we can attempt to get the details in loop here as transaction was already sent and
-        // is present on blockchain so only transport errors are expected to happen
-        let tx_details = loop {
-            match self.taker_coin.tx_details_by_hash(&hash).compat().await {
-                Ok(details) => break details,
-                Err(e) => {
-                    log!({"Error {} getting tx details of {:02x}", e, hash});
-                    Timer::sleep(30.).await;
-                    continue;
-                }
-            }
-        };
+        log!("Taker payment tx hash " (tx_details.tx_hash));
 
         Ok((
             Some(TakerSwapCommand::WaitForTakerPaymentSpend),

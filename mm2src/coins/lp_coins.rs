@@ -129,7 +129,7 @@ pub trait SwapOps {
         maker_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
-    ) -> TransactionFut;
+    ) -> TransactionDetailsFut;
 
     fn send_maker_spends_taker_payment(
         &self,

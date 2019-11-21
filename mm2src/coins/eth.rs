@@ -476,16 +476,16 @@ impl SwapOps for EthCoin {
         maker_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
-    ) -> TransactionFut {
+    ) -> TransactionDetailsFut {
         let maker_addr = try_fus!(addr_from_ec_pubkey(maker_pub));
-
+        let coin = self.clone();
         Box::new(self.send_hash_time_locked_payment(
             self.etomic_swap_id(time_lock, secret_hash),
             try_fus!(wei_from_big_decimal(&amount, self.decimals)),
             time_lock,
             secret_hash,
             maker_addr,
-        ).map(TransactionEnum::from))
+        ).and_then(move |tx| coin.tx_details_by_hash(&tx.tx_hash())))
     }
 
     fn send_maker_spends_taker_payment(
