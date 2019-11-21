@@ -41,7 +41,10 @@ use futures::compat::Future01CompatExt;
 use gstuff::{slurp};
 use http::Response;
 use rpc::v1::types::{Bytes as BytesJson};
+use serde::{Serialize, Serializer, Deserialize};
+use serde::de::{Deserializer, Visitor};
 use serde_json::{self as json, Value as Json};
+use serialization::{Deserializable, deserialize, Reader, Serializable, serialize, Stream};
 use std::borrow::Cow;
 use std::collections::hash_map::{HashMap, RawEntryMut};
 use std::fmt::Debug;
@@ -69,7 +72,7 @@ use self::utxo::{utxo_coin_from_conf_and_request, UtxoCoin, UtxoFeeDetails, Utxo
 pub mod test_coin;
 pub use self::test_coin::TestCoin;
 
-pub trait Transaction: Debug + 'static {
+pub trait Transaction: Debug + Send + Sync + 'static {
     /// Raw transaction bytes of the transaction
     fn tx_hex(&self) -> Vec<u8>;
     fn extract_secret(&self) -> Result<Vec<u8>, String>;
@@ -98,6 +101,7 @@ impl Deref for TransactionEnum {
 }   }   }
 
 pub type TransactionFut = Box<dyn Future<Item=TransactionEnum, Error=String> + Send>;
+pub type TransactionDetailsFut = Box<dyn Future<Item=TransactionDetails, Error=String> + Send>;
 
 #[derive(Debug, PartialEq)]
 pub enum FoundSwapTxSpend {
@@ -107,21 +111,22 @@ pub enum FoundSwapTxSpend {
 
 /// Swap operations (mostly based on the Hash/Time locked transactions implemented by coin wallets).
 pub trait SwapOps {
-    fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut;
+    fn send_taker_fee(&self, fee_pubkey: &EcPubkey, amount: BigDecimal) -> TransactionDetailsFut;
 
     fn send_maker_payment(
         &self,
+        uuid: &[u8],
         time_lock: u32,
-        taker_pub: &[u8],
+        taker_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
-    ) -> TransactionFut;
+    ) -> TransactionDetailsFut;
 
     fn send_taker_payment(
         &self,
         uuid: &[u8],
         time_lock: u32,
-        maker_pub: &[u8],
+        maker_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> TransactionFut;
@@ -131,15 +136,16 @@ pub trait SwapOps {
         uuid: &[u8],
         taker_payment_tx: &[u8],
         time_lock: u32,
-        taker_pub: &[u8],
+        taker_pub: &EcPubkey,
         secret: &[u8],
     ) -> TransactionFut;
 
     fn send_taker_spends_maker_payment(
         &self,
+        uuid: &[u8],
         maker_payment_tx: &[u8],
         time_lock: u32,
-        maker_pub: &[u8],
+        maker_pub: &EcPubkey,
         secret: &[u8],
     ) -> TransactionFut;
 
@@ -147,7 +153,7 @@ pub trait SwapOps {
         &self,
         taker_payment_tx: &[u8],
         time_lock: u32,
-        maker_pub: &[u8],
+        maker_pub: &EcPubkey,
         secret_hash: &[u8],
     ) -> TransactionFut;
 
@@ -155,14 +161,14 @@ pub trait SwapOps {
         &self,
         maker_payment_tx: &[u8],
         time_lock: u32,
-        taker_pub: &[u8],
+        taker_pub: &EcPubkey,
         secret_hash: &[u8],
     ) -> TransactionFut;
 
     fn validate_fee(
         &self,
         fee_tx: &TransactionEnum,
-        fee_addr: &[u8],
+        fee_pub_key: &EcPubkey,
         amount: &BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send>;
 
@@ -170,8 +176,8 @@ pub trait SwapOps {
         &self,
         payment_tx: &[u8],
         time_lock: u32,
-        maker_pub: &[u8],
-        priv_bn_hash: &[u8],
+        maker_pub: &EcPubkey,
+        secret_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send>;
 
@@ -179,15 +185,15 @@ pub trait SwapOps {
         &self,
         payment_tx: &[u8],
         time_lock: u32,
-        taker_pub: &[u8],
-        priv_bn_hash: &[u8],
+        taker_pub: &EcPubkey,
+        secret_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send>;
 
     fn check_if_my_payment_sent(
         &self,
         time_lock: u32,
-        other_pub: &[u8],
+        other_pub: &EcPubkey,
         secret_hash: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send>;
@@ -195,7 +201,7 @@ pub trait SwapOps {
     fn search_for_swap_tx_spend_my(
         &self,
         time_lock: u32,
-        other_pub: &[u8],
+        other_pub: &EcPubkey,
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
@@ -204,7 +210,7 @@ pub trait SwapOps {
     fn search_for_swap_tx_spend_other(
         &self,
         time_lock: u32,
-        other_pub: &[u8],
+        other_pub: &EcPubkey,
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
@@ -239,6 +245,10 @@ pub trait MarketCoinOps {
     fn current_block(&self) -> Box<dyn Future<Item=u64, Error=String> + Send>;
 
     fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String>;
+
+    fn tx_hash_to_string(&self, hash: &[u8]) -> String;
+
+    fn get_pubkey(&self) -> EcPubkey;
 }
 
 #[derive(Deserialize)]
@@ -285,36 +295,36 @@ impl Into<TxFeeDetails> for UtxoFeeDetails {
 }
 
 /// Transaction details
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct TransactionDetails {
     /// Raw bytes of signed transaction in hexadecimal string, this should be sent as is to send_raw_transaction RPC to broadcast the transaction
     pub tx_hex: BytesJson,
     /// Transaction hash in coin specific format
-    tx_hash: String,
+    pub tx_hash: String,
     /// Coins are sent from these addresses
-    from: Vec<String>,
+    pub from: Vec<String>,
     /// Coins are sent to these addresses
-    to: Vec<String>,
+    pub to: Vec<String>,
     /// Total tx amount
-    total_amount: BigDecimal,
+    pub total_amount: BigDecimal,
     /// The amount spent from "my" address
-    spent_by_me: BigDecimal,
+    pub spent_by_me: BigDecimal,
     /// The amount received by "my" address
-    received_by_me: BigDecimal,
+    pub received_by_me: BigDecimal,
     /// Resulting "my" balance change
-    my_balance_change: BigDecimal,
+    pub my_balance_change: BigDecimal,
     /// Block height
-    block_height: u64,
+    pub block_height: u64,
     /// Transaction timestamp
-    timestamp: u64,
+    pub timestamp: u64,
     /// Every coin can has specific fee details:
     /// In UTXO tx fee is paid with the coin itself (e.g. 1 BTC and 0.0001 BTC fee).
     /// But for ERC20 token transfer fee is paid with another coin: ETH, because it's ETH smart contract function call that requires gas to be burnt.
-    fee_details: Option<TxFeeDetails>,
+    pub fee_details: Option<TxFeeDetails>,
     /// The coin transaction belongs to
-    coin: String,
+    pub coin: String,
     /// Internal MM2 id used for internal transaction identification, for some coins it might be equal to transaction hash
-    internal_id: BytesJson,
+    pub internal_id: BytesJson,
 }
 
 pub enum TradeInfo {
@@ -693,4 +703,89 @@ pub async fn set_required_confirmations(ctx: MmArc, req: Json) -> Result<Respons
         }
     })));
     Ok(try_s!(Response::builder().body(res)))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CurveType {
+    SECP256K1,
+    ED25519,
+    P256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EcPubkey {
+    pub curve_type: CurveType,
+    pub bytes: Vec<u8>,
+}
+
+impl Default for EcPubkey {
+    fn default() -> EcPubkey {
+        EcPubkey {
+            curve_type: CurveType::SECP256K1,
+            bytes: vec![],
+        }
+    }
+}
+
+impl Serializable for EcPubkey {
+    fn serialize(&self, s: &mut Stream) {
+        let tag: u8 = match self.curve_type {
+            CurveType::SECP256K1 => 0,
+            CurveType::ED25519 => 1,
+            CurveType::P256 => 2,
+        };
+        s.append(&tag);
+        s.append_slice(&self.bytes);
+    }
+}
+
+impl Deserializable for EcPubkey {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        let tag: u8 = reader.read()?;
+        let (curve_type, len) = match tag {
+            0 => (CurveType::SECP256K1, 33),
+            1 => (CurveType::ED25519, 32),
+            2 => (CurveType::P256, 33),
+            _ => return Err(serialization::Error::MalformedData)
+        };
+        let mut bytes = vec![0; len];
+        reader.read_slice(&mut bytes)?;
+        Ok(EcPubkey {
+            curve_type,
+            bytes
+        })
+    }
+}
+
+impl Serialize for EcPubkey {
+    fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        let bytes = serialize(self).take();
+        s.serialize_str(&hex::encode(&bytes))
+    }
+}
+
+impl<'de> Deserialize<'de> for EcPubkey {
+    fn deserialize<D>(d: D) -> Result<EcPubkey, D::Error> where D: Deserializer<'de> {
+        struct EcPubkeyVisitor;
+
+        impl<'de> Visitor<'de> for EcPubkeyVisitor {
+            type Value = EcPubkey;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a string containing EcPubkey data")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+            {
+                let bytes = hex::decode(v).map_err(E::custom)?;
+                deserialize(bytes.as_slice()).map_err(|e| E::custom(fomat!([e])))
+            }
+        }
+
+        d.deserialize_any(EcPubkeyVisitor)
+    }
 }

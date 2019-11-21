@@ -156,9 +156,14 @@ fn send_and_refund_erc20_payment() {
         required_confirmations: 1.into(),
     }));
 
+    let taker_pub = EcPubkey {
+        curve_type: CurveType::SECP256K1,
+        bytes: unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
+    };
     let payment = coin.send_maker_payment(
+        &[],
         (now_ms() / 1000) as u32 - 200,
-        &unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
+        &taker_pub,
         &[1; 20],
         "0.001".parse().unwrap(),
     ).wait().unwrap();
@@ -167,10 +172,12 @@ fn send_and_refund_erc20_payment() {
 
     thread::sleep(Duration::from_secs(60));
 
+
+
     let refund = coin.send_maker_refunds_payment(
-        &payment.tx_hex(),
+        &payment.tx_hex,
         (now_ms() / 1000) as u32 - 200,
-        &unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
+        &taker_pub,
         &[1; 20],
     ).wait().unwrap();
 
@@ -200,9 +207,15 @@ fn send_and_refund_eth_payment() {
         required_confirmations: 1.into(),
     }));
 
+    let taker_pub = EcPubkey {
+        curve_type: CurveType::SECP256K1,
+        bytes: unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
+    };
+
     let payment = coin.send_maker_payment(
+        &[],
         (now_ms() / 1000) as u32 - 200,
-        &unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
+        &taker_pub,
         &[1; 20],
         "0.001".parse().unwrap(),
     ).wait().unwrap();
@@ -212,9 +225,9 @@ fn send_and_refund_eth_payment() {
     thread::sleep(Duration::from_secs(60));
 
     let refund = coin.send_maker_refunds_payment(
-        &payment.tx_hex(),
+        &payment.tx_hex,
         (now_ms() / 1000) as u32 - 200,
-        &unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
+        &taker_pub,
         &[1; 20],
     ).wait().unwrap();
 

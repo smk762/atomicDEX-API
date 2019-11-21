@@ -58,11 +58,11 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, TransactionEnum};
+use coins::{lp_coinfind, TransactionEnum, EcPubkey};
 use common::{block_on, read_dir, rpc_response, slurp, write, HyRes};
 use common::mm_ctx::{from_ctx, MmArc};
 use http::Response;
-use primitives::hash::{H160, H264};
+use primitives::hash::{H160, H256, H264};
 use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
 use std::collections::{HashSet, HashMap};
@@ -298,8 +298,9 @@ pub fn dex_fee_amount(base: &str, rel: &str, trade_amount: &BigDecimal) -> BigDe
 struct SwapNegotiationData {
     started_at: u64,
     payment_locktime: u64,
-    secret_hash: H160,
-    persistent_pubkey: H264,
+    secret_hash: H256,
+    maker_coin_persistent_pub: EcPubkey,
+    taker_coin_persistent_pub: EcPubkey,
 }
 
 fn my_swaps_dir(ctx: &MmArc) -> PathBuf {

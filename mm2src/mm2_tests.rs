@@ -41,13 +41,17 @@ fn enable_coins(mm: &MarketMakerIt) -> Vec<(&'static str, Json)> {
     replies
 }
 
-async fn enable_coins_eth_electrum(mm: &MarketMakerIt, eth_urls: Vec<&str>) -> HashMap<&'static str, Json> {
+async fn enable_coins_eth_electrum_dune(mm: &MarketMakerIt, eth_urls: Vec<&str>, dune_urls: Vec<&str>) -> HashMap<&'static str, Json> {
     let mut replies = HashMap::new();
+    /*
     replies.insert ("BEER", enable_electrum (mm, "BEER", vec!["test1.cipig.net:10022","test2.cipig.net:10022"]) .await);
     replies.insert ("PIZZA", enable_electrum (mm, "PIZZA", vec!["test1.cipig.net:10024","test2.cipig.net:10024"]) .await);
     replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["test1.cipig.net:10025","test2.cipig.net:10025"]) .await);
     replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()) .await);
     replies.insert ("JST", enable_native (mm, "JST", eth_urls) .await);
+    */
+    replies.insert ("DUNETEST", enable_native (mm, "DUNETEST", dune_urls.clone()) .await);
+    replies.insert ("DUNETESTERC", enable_native (mm, "DUNETESTERC", dune_urls) .await);
     replies
 }
 
@@ -249,7 +253,7 @@ fn alice_can_see_the_active_order_after_connection() {
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["http://195.201.0.6:8545"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_dune (&mm_bob, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
     // issue sell request on Bob side by setting base/rel price
     log!("Issue bob sell request");
     let rc = unwrap! (block_on (mm_bob.rpc (json! ({
@@ -301,7 +305,7 @@ fn alice_can_see_the_active_order_after_connection() {
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8545"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum_dune (&mm_alice, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
 
     for _ in 0..2 {
         // Alice should be able to see the order no later than 10 seconds after connecting to bob
@@ -459,7 +463,7 @@ fn test_check_balance_on_order_post() {
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     // Enable coins. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm, vec!["http://195.201.0.6:8565"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_dune (&mm, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]))});
     // issue sell request by setting base/rel price
 
     // Expect error as PIZZA balance is 0
@@ -690,15 +694,17 @@ async fn check_recent_swaps(
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
 /// Trades few pairs concurrently to speed up the process and also act like "load" test
 async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
-    let bob_passphrase = unwrap! (get_passphrase (&".env.seed", "BOB_PASSPHRASE"));
-    let alice_passphrase = unwrap! (get_passphrase (&".env.client", "ALICE_PASSPHRASE"));
+    let bob_passphrase = "0x0760b6189e10610d3800d75d14ffe2f0abb35f8bf612a9510b5598d978f83f7a";
+    let alice_passphrase = "spice describe gravity federal blast come thank unfair canal monkey style afraid";
 
     let coins = json! ([
         {"coin":"BEER","asset":"BEER"},
         {"coin":"PIZZA","asset":"PIZZA"},
         {"coin":"ETOMIC","asset":"ETOMIC"},
         {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
+        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"},
+        {"coin":"DUNETEST","name":"dunetestnet","ed25519_addr_prefix":[4,177,1],"secp256k1_addr_prefix":[4,177,3],"p256_addr_prefix":[4,177,6],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
+        {"coin":"DUNETESTERC","name":"dunetesterc","ed25519_addr_prefix":[4,177,1],"protocol":{"platform":"TEZOS","token_type":"ERC20","contract_address":"KT1HZYpwunBqUH4xfrdmP9m6LvhRxzH2yW5c"},"mm2":1},
     ]);
 
     let mut mm_bob = unwrap! (MarketMakerIt::start (
@@ -756,10 +762,10 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
     wait_log_re! (mm_alice, 22., ">>>>>>>>> DEX stats ");
 
     // Enable coins on Bob side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum (&mm_bob, vec!["http://195.201.0.6:8565"]) .await;
+    let rc = enable_coins_eth_electrum_dune (&mm_bob, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]) .await;
     log! ({"enable_coins (bob): {:?}", rc});
     // Enable coins on Alice side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8565"]) .await;
+    let rc = enable_coins_eth_electrum_dune (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]) .await;
     log! ({"enable_coins (alice): {:?}", rc});
 
     // unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
@@ -775,7 +781,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
             "base": base,
             "rel": rel,
             "price": 1,
-            "volume": 0.1
+            "volume": 1
         })) .await);
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     }
@@ -791,7 +797,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
             "method": "buy",
             "base": base,
             "rel": rel,
-            "volume": 0.1,
+            "volume": 1,
             "price": 2
         })) .await);
         assert!(rc.0.is_success(), "!buy: {}", rc.1);
@@ -902,7 +908,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
 #[cfg(feature = "native")]
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    block_on(trade_base_rel_electrum(vec![("ETH", "JST")]));
+    block_on(trade_base_rel_electrum(vec![("DUNETEST", "DUNETESTERC")]));
 }
 
 #[cfg(not(feature = "native"))]
@@ -1195,7 +1201,7 @@ fn test_withdraw_and_send() {
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
     // Enable coins. Print the replies in case we need the address.
-    let enable_res = block_on (enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8565"]));
+    let enable_res = block_on (enable_coins_eth_electrum_dune (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]));
     log! ("enable_coins (alice): " [enable_res]);
     withdraw_and_send(&mm_alice, "PIZZA", "RJTYiYeJ8eVvJ53n2YbrVmxWNNMVZjDGLh", &enable_res, "-0.00101");
     // dev chain gas price is 0 so ETH expected balance change doesn't include the fee
@@ -1509,7 +1515,7 @@ fn test_cancel_order() {
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum (&mm_bob, vec!["http://195.201.0.6:8545"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_dune (&mm_bob, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
 
     log!("Issue sell request on Bob side by setting base/rel price…");
     let rc = unwrap! (block_on (mm_bob.rpc (json! ({
@@ -1546,7 +1552,7 @@ fn test_cancel_order() {
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum (&mm_alice, vec!["http://195.201.0.6:8545"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum_dune (&mm_alice, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
 
     log!("Give Alice 15 seconds to import the order…");
     thread::sleep(Duration::from_secs(15));

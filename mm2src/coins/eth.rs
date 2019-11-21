@@ -56,14 +56,16 @@ use std::time::Duration;
 use web3::{ self, Web3 };
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
-use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TradeInfo,
-            TransactionFut, TransactionEnum, Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
+use super::{CoinsContext, CurveType, EcPubkey, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
+            MmCoin, SwapOps, TradeFee, TradeInfo, TransactionFut, TransactionEnum,
+            Transaction, TransactionDetails, WithdrawFee, WithdrawRequest};
 
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 pub use rlp;
 
 mod web3_transport;
 use self::web3_transport::Web3Transport;
+use crate::TransactionDetailsFut;
 
 #[cfg(test)]
 mod eth_tests;
@@ -436,42 +438,46 @@ pub struct EthCoin(Arc<EthCoinImpl>);
 impl Deref for EthCoin {type Target = EthCoinImpl; fn deref (&self) -> &EthCoinImpl {&*self.0}}
 
 impl SwapOps for EthCoin {
-    fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
-        let address = try_fus!(addr_from_raw_pubkey(fee_addr));
-
+    fn send_taker_fee(&self, fee_pubkey: &EcPubkey, amount: BigDecimal) -> TransactionDetailsFut {
+        let address = try_fus!(addr_from_ec_pubkey(fee_pubkey));
+        let coin = self.clone();
         Box::new(self.send_to_address(
             address,
             try_fus!(wei_from_big_decimal(&amount, self.decimals)),
-        ).map(TransactionEnum::from))
+        ).and_then(move |tx|
+            coin.tx_details_by_hash(&tx.hash)
+        ))
     }
 
     fn send_maker_payment(
         &self,
+        _uuid: &[u8],
         time_lock: u32,
-        taker_pub: &[u8],
+        taker_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
-    ) -> TransactionFut {
-        let taker_addr = try_fus!(addr_from_raw_pubkey(taker_pub));
+    ) -> TransactionDetailsFut {
+        let taker_addr = try_fus!(addr_from_ec_pubkey(taker_pub));
 
+        let coin = self.clone();
         Box::new(self.send_hash_time_locked_payment(
             self.etomic_swap_id(time_lock, secret_hash),
             try_fus!(wei_from_big_decimal(&amount, self.decimals)),
             time_lock,
             secret_hash,
             taker_addr,
-        ).map(TransactionEnum::from))
+        ).and_then(move |tx| coin.tx_details_by_hash(&tx.hash)))
     }
 
     fn send_taker_payment(
         &self,
         _uuid: &[u8],
         time_lock: u32,
-        maker_pub: &[u8],
+        maker_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> TransactionFut {
-        let maker_addr = try_fus!(addr_from_raw_pubkey(maker_pub));
+        let maker_addr = try_fus!(addr_from_ec_pubkey(maker_pub));
 
         Box::new(self.send_hash_time_locked_payment(
             self.etomic_swap_id(time_lock, secret_hash),
@@ -487,7 +493,7 @@ impl SwapOps for EthCoin {
         _uuid: &[u8],
         taker_payment_tx: &[u8],
         _time_lock: u32,
-        _taker_pub: &[u8],
+        _taker_pub: &EcPubkey,
         secret: &[u8],
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(taker_payment_tx));
@@ -498,9 +504,10 @@ impl SwapOps for EthCoin {
 
     fn send_taker_spends_maker_payment(
         &self,
+        _uuid: &[u8],
         maker_payment_tx: &[u8],
         _time_lock: u32,
-        _maker_pub: &[u8],
+        _maker_pub: &EcPubkey,
         secret: &[u8],
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(maker_payment_tx));
@@ -512,7 +519,7 @@ impl SwapOps for EthCoin {
         &self,
         taker_payment_tx: &[u8],
         _time_lock: u32,
-        _maker_pub: &[u8],
+        _maker_pub: &EcPubkey,
         _secret_hash: &[u8],
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(taker_payment_tx));
@@ -525,7 +532,7 @@ impl SwapOps for EthCoin {
         &self,
         maker_payment_tx: &[u8],
         _time_lock: u32,
-        _taker_pub: &[u8],
+        _taker_pub: &EcPubkey,
         _secret_hash: &[u8],
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(maker_payment_tx));
@@ -537,7 +544,7 @@ impl SwapOps for EthCoin {
     fn validate_fee(
         &self,
         fee_tx: &TransactionEnum,
-        fee_addr: &[u8],
+        fee_addr: &EcPubkey,
         amount: &BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let selfi = self.clone();
@@ -545,7 +552,10 @@ impl SwapOps for EthCoin {
             TransactionEnum::SignedEthTx(t) => t.clone(),
             _ => panic!(),
         };
-        let fee_addr = try_fus!(addr_from_raw_pubkey(fee_addr));
+        let fee_addr = match fee_addr.curve_type {
+            CurveType::SECP256K1 => try_fus!(addr_from_raw_pubkey(&fee_addr.bytes)),
+            _ => return Box::new(futures01::future::err(ERRL!("Unsupported pubkey type"))),
+        };
         let amount = amount.clone();
 
         let fut = async move {
@@ -598,7 +608,7 @@ impl SwapOps for EthCoin {
         &self,
         payment_tx: &[u8],
         time_lock: u32,
-        maker_pub: &[u8],
+        maker_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
@@ -615,7 +625,7 @@ impl SwapOps for EthCoin {
         &self,
         payment_tx: &[u8],
         time_lock: u32,
-        taker_pub: &[u8],
+        taker_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
@@ -631,7 +641,7 @@ impl SwapOps for EthCoin {
     fn check_if_my_payment_sent(
         &self,
         time_lock: u32,
-        _other_pub: &[u8],
+        _other_pub: &EcPubkey,
         secret_hash: &[u8],
         from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
@@ -663,7 +673,7 @@ impl SwapOps for EthCoin {
     fn search_for_swap_tx_spend_my(
         &self,
         _time_lock: u32,
-        _other_pub: &[u8],
+        _other_pub: &EcPubkey,
         _secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
@@ -674,7 +684,7 @@ impl SwapOps for EthCoin {
     fn search_for_swap_tx_spend_other(
         &self,
         _time_lock: u32,
-        _other_pub: &[u8],
+        _other_pub: &EcPubkey,
         _secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
@@ -842,6 +852,13 @@ impl MarketCoinOps for EthCoin {
         let addr = try_s!(addr_from_raw_pubkey(&pubkey_bytes));
         Ok(format!("{:#02x}", addr))
     }
+
+    fn tx_hash_to_string(&self, hash: &[u8]) -> String {
+        let hash = H256::from(hash);
+        format!("{:#02x}", hash)
+    }
+
+    fn get_pubkey(&self) -> EcPubkey { unimplemented!() }
 }
 
 pub fn signed_eth_tx_from_bytes(bytes: &[u8]) -> Result<SignedEthTx, String> {
@@ -1191,13 +1208,13 @@ impl EthCoin {
         &self,
         payment_tx: &[u8],
         time_lock: u32,
-        sender_pub: &[u8],
+        sender_pub: &EcPubkey,
         secret_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let unsigned: UnverifiedTransaction = try_fus!(rlp::decode(payment_tx));
         let tx = try_fus!(SignedEthTx::new(unsigned));
-        let sender = try_fus!(addr_from_raw_pubkey(sender_pub));
+        let sender = try_fus!(addr_from_ec_pubkey(sender_pub));
         let expected_value = try_fus!(wei_from_big_decimal(&amount, self.decimals));
         let selfi = self.clone();
         let secret_hash = secret_hash.to_vec();
@@ -1932,6 +1949,17 @@ fn addr_from_raw_pubkey(pubkey: &[u8]) -> Result<Address, String> {
     let pubkey = try_s!(PublicKey::parse_slice(pubkey, None).map_err(|e| ERRL!("{:?}", e)));
     let eth_public = Public::from(&pubkey.serialize()[1..65]);
     Ok(public_to_address(&eth_public))
+}
+
+fn addr_from_ec_pubkey(pubkey: &EcPubkey) -> Result<Address, String> {
+    match &pubkey.curve_type {
+        CurveType::SECP256K1 => {
+            let pubkey = try_s!(PublicKey::parse_slice(&pubkey.bytes, None).map_err(|e| ERRL!("{:?}", e)));
+            let eth_public = Public::from(&pubkey.serialize()[1..65]);
+            Ok(public_to_address(&eth_public))
+        },
+        _ => ERR!("Unsupported curve type"),
+    }
 }
 
 fn display_u256_with_decimal_point(number: U256, decimals: u8) -> String {

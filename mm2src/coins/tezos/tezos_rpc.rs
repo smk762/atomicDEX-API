@@ -138,17 +138,35 @@ pub struct Transaction {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Reveal {
+    #[serde(deserialize_with = "big_uint_from_str")]
+    #[serde(serialize_with = "big_uint_to_string")]
+    pub counter: BigUint,
+    #[serde(deserialize_with = "big_uint_from_str")]
+    #[serde(serialize_with = "big_uint_to_string")]
+    pub fee: BigUint,
+    #[serde(deserialize_with = "big_uint_from_str")]
+    #[serde(serialize_with = "big_uint_to_string")]
+    pub gas_limit: BigUint,
+    pub public_key: String,
+    pub source: String,
+    #[serde(deserialize_with = "big_uint_from_str")]
+    #[serde(serialize_with = "big_uint_to_string")]
+    pub storage_limit: BigUint,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Endorsement {
     level: u64,
     metadata: Json,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
 #[serde(tag = "kind")]
 pub enum Operation {
+    endorsement(Endorsement),
+    reveal(Reveal),
     transaction(Transaction),
-    endorsement(Endorsement)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -187,6 +205,12 @@ pub struct TezosInputType {
 pub struct BigMapReq {
     pub r#type: TezosInputType,
     pub key: TezosValue,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ManagerKeyRes {
+    pub manager: String,
+    pub key: Option<String>,
 }
 
 impl TezosRpcClientImpl {
@@ -228,9 +252,27 @@ impl TezosRpcClientImpl {
         BigUint::from_str(&res).map_err(|e| ERRL!("{}", e))
     }
 
+    pub async fn forge_operations(&self, chain_id: &str, block_id: &str, req: ForgeOperationsRequest) -> Result<BytesJson, String> {
+        let path = format!("/chains/{}/blocks/{}/helpers/forge/operations", chain_id, block_id);
+        tezos_req(&self.uris, &path, http::Method::POST, req).await.map_err(|e| ERRL!("{:?}", e))
+    }
+
     pub async fn get_balance(&self, addr: &str) -> Result<BigDecimal, String> {
         let path = format!("/chains/main/blocks/head/context/contracts/{}/balance", addr);
         tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e))
+    }
+
+    pub async fn get_big_map<T: TryFrom<TezosValue>>(&self, addr: &str, req: BigMapReq) -> Result<Option<T>, String>
+        where T::Error: std::fmt::Display
+    {
+        let path = format!("/chains/main/blocks/head/context/contracts/{}/big_map_get", addr);
+        let value: Json = try_s!(tezos_req(&self.uris, &path, http::Method::POST, req).await.map_err(|e| ERRL!("{:?}", e)));
+        if value == Json::Null {
+            Ok(None)
+        } else {
+            let value: TezosValue = try_s!(json::from_value(value));
+            Ok(Some(try_s!(T::try_from(value))))
+        }
     }
 
     pub async fn get_storage<T: TryFrom<TezosValue>>(&self, addr: &str) -> Result<T, String>
@@ -241,23 +283,14 @@ impl TezosRpcClientImpl {
         Ok(try_s!(T::try_from(value)))
     }
 
-    pub async fn get_big_map<T: TryFrom<TezosValue>>(&self, addr: &str, req: BigMapReq) -> Result<T, String>
-        where T::Error: std::fmt::Display
-    {
-        let path = format!("/chains/main/blocks/head/context/contracts/{}/big_map_get", addr);
-        let value: TezosValue = try_s!(tezos_req(&self.uris, &path, http::Method::POST, req).await.map_err(|e| ERRL!("{:?}", e)));
-        Ok(try_s!(T::try_from(value)))
-    }
-
-    pub async fn forge_operations(&self, chain_id: &str, block_id: &str, req: ForgeOperationsRequest) -> Result<BytesJson, String> {
-        let path = format!("/chains/{}/blocks/{}/helpers/forge/operations", chain_id, block_id);
-        log!((json::to_string(&req).unwrap()));
-        tezos_req(&self.uris, &path, http::Method::POST, req).await.map_err(|e| ERRL!("{:?}", e))
-    }
-
     pub async fn inject_operation(&self, bytes: &str) -> Result<String, String> {
         let path = format!("/injection/operation");
         tezos_req(&self.uris, &path, http::Method::POST, bytes).await.map_err(|e| ERRL!("{:?}", e))
+    }
+
+    pub async fn manager_key(&self, contract_id: &str) -> Result<ManagerKeyRes, String> {
+        let path = format!("/chains/main/blocks/head/context/contracts/{}/manager_key", contract_id);
+        tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e))
     }
 
     pub async fn operation_hashes(&self, block_id: &str) -> Result<Vec<String>, String> {
