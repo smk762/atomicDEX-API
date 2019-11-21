@@ -734,7 +734,7 @@ impl TakerSwap {
                 Some(tx) => unwrap!(self.taker_coin.tx_details_by_hash(&tx.tx_hash()).compat().await),
                 None => {
                     let payment_fut = self.taker_coin.send_taker_payment(
-                        &[],
+                        self.uuid.as_bytes(),
                         self.r().data.taker_payment_lock as u32,
                         &self.r().other_persistent_pub_taker_coin,
                         &self.r().secret_hash.0,

@@ -628,6 +628,7 @@ impl MarketCoinOps for TezosCoin {
                             if path != vec![Or::R, Or::L] {
                                 return ERR!("Invalid entry path {:?}", path);
                             }
+                            log!([args]);
                             let (uuid, _) = args.split_and_read_value();
                             let bytes: BytesJson = try_s!(uuid.try_into());
                             let req = BigMapReq {
