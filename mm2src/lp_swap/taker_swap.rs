@@ -834,7 +834,7 @@ impl TakerSwap {
         };
 
         let hash = transaction.tx_hash();
-        log!({"Maker payment spend tx {:02x}", hash});
+        log!("Maker payment spend tx " (self.maker_coin.tx_hash_to_string(&hash)));
         // we can attempt to get the details in loop here as transaction was already sent and
         // is present on blockchain so only transport errors are expected to happen
         let tx_details = loop {
