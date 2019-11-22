@@ -781,7 +781,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
             "base": base,
             "rel": rel,
             "price": 1,
-            "volume": 1
+            "volume": "0.1",
         })) .await);
         assert!(rc.0.is_success(), "!setprice: {}", rc.1);
     }
@@ -797,7 +797,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
             "method": "buy",
             "base": base,
             "rel": rel,
-            "volume": 1,
+            "volume": "0.1",
             "price": 2
         })) .await);
         assert!(rc.0.is_success(), "!buy: {}", rc.1);

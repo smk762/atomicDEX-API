@@ -144,6 +144,7 @@ impl SwapOps for TestCoin {
 
     fn validate_maker_payment(
         &self,
+        uuid: &[u8],
         payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,

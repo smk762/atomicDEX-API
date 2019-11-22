@@ -307,7 +307,6 @@ impl TezosRpcClientImpl {
 
     pub async fn preapply_operations(&self, req: PreapplyOperationsRequest) -> Result<Json, String> {
         let path = "/chains/main/blocks/head/helpers/preapply/operations";
-        log!((json::to_string(&req).unwrap()));
         tezos_req(&self.uris, &path, http::Method::POST, req).await.map_err(|e| ERRL!("{:?}", e))
     }
 }

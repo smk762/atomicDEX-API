@@ -675,6 +675,7 @@ impl TakerSwap {
 
     async fn validate_maker_payment(&self) -> Result<(Option<TakerSwapCommand>, Vec<TakerSwapEvent>), String> {
         let validated_f = self.maker_coin.validate_maker_payment(
+            self.uuid.as_bytes(),
             &unwrap!(self.r().maker_payment.clone()).tx_hex,
             self.maker_payment_lock.load(Ordering::Relaxed) as u32,
             &self.r().other_persistent_pub_maker_coin,
@@ -689,7 +690,6 @@ impl TakerSwap {
                 vec![TakerSwapEvent::MakerPaymentValidateFailed(ERRL!("!validate maker payment: {}", e).into())]
             ));
         }
-        log!({"Before wait confirm"});
 
         let f = self.maker_coin.wait_for_confirmations(
             &unwrap!(self.r().maker_payment.clone()).tx_hex,
@@ -704,7 +704,6 @@ impl TakerSwap {
                 vec![TakerSwapEvent::MakerPaymentValidateFailed(ERRL!("!wait for maker payment confirmations: {}", err).into())]
             ));
         }
-        log!({"After wait confirm"});
 
         Ok((
             Some(TakerSwapCommand::SendTakerPayment),
@@ -787,7 +786,7 @@ impl TakerSwap {
         };
         drop(sending_f);
         let hash = tx.tx_hash();
-        log!({"Taker payment spend tx {:02x}", hash});
+        log!("Taker payment spend tx " (self.taker_coin.tx_hash_to_string(&hash)));
         // we can attempt to get the details in loop here as transaction was already sent and
         // is present on blockchain so only transport errors are expected to happen
         let tx_details = loop {
