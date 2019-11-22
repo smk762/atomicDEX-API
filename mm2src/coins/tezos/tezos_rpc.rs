@@ -16,7 +16,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
-use crate::tezos::TezosValue;
+use crate::tezos::{TezosValue, TezosUint};
 use num_bigint::BigUint;
 
 #[derive(Debug)]
@@ -116,49 +116,30 @@ fn big_uint_from_str<'de, D>(d: D) -> Result<BigUint, D::Error> where D: Deseria
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Transaction {
-    #[serde(deserialize_with = "big_uint_from_str")]
-    #[serde(serialize_with = "big_uint_to_string")]
-    pub amount: BigUint,
-    #[serde(deserialize_with = "big_uint_from_str")]
-    #[serde(serialize_with = "big_uint_to_string")]
-    pub counter: BigUint,
+    pub amount: TezosUint,
+    pub counter: TezosUint,
     pub destination: String,
-    #[serde(deserialize_with = "big_uint_from_str")]
-    #[serde(serialize_with = "big_uint_to_string")]
-    pub fee: BigUint,
-    #[serde(deserialize_with = "big_uint_from_str")]
-    #[serde(serialize_with = "big_uint_to_string")]
-    pub gas_limit: BigUint,
+    pub fee: TezosUint,
+    pub gas_limit: TezosUint,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<TezosValue>,
     pub source: String,
-    #[serde(deserialize_with = "big_uint_from_str")]
-    #[serde(serialize_with = "big_uint_to_string")]
-    pub storage_limit: BigUint,
+    pub storage_limit: TezosUint,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Reveal {
-    #[serde(deserialize_with = "big_uint_from_str")]
-    #[serde(serialize_with = "big_uint_to_string")]
-    pub counter: BigUint,
-    #[serde(deserialize_with = "big_uint_from_str")]
-    #[serde(serialize_with = "big_uint_to_string")]
-    pub fee: BigUint,
-    #[serde(deserialize_with = "big_uint_from_str")]
-    #[serde(serialize_with = "big_uint_to_string")]
-    pub gas_limit: BigUint,
+    pub counter: TezosUint,
+    pub fee: TezosUint,
+    pub gas_limit: TezosUint,
     pub public_key: String,
     pub source: String,
-    #[serde(deserialize_with = "big_uint_from_str")]
-    #[serde(serialize_with = "big_uint_to_string")]
-    pub storage_limit: BigUint,
+    pub storage_limit: TezosUint,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Endorsement {
     level: u64,
-    metadata: Json,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -171,11 +152,18 @@ pub enum Operation {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OperationResult {
+    #[serde(flatten)]
+    pub op: Operation,
+    pub metadata: OperationMetadata,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OperationsResult {
     protocol: String,
     chain_id: String,
     hash: String,
     pub branch: String,
-    pub contents: Vec<Operation>,
+    pub contents: Vec<OperationResult>,
     pub signature: String,
 }
 
@@ -211,6 +199,20 @@ pub struct BigMapReq {
 pub struct ManagerKeyRes {
     pub manager: String,
     pub key: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "status")]
+pub enum OperationStatus {
+    applied,
+    backtracked,
+    failed,
+    skipped,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OperationMetadata {
+    pub operation_result: Option<OperationStatus>,
 }
 
 impl TezosRpcClientImpl {
@@ -293,16 +295,20 @@ impl TezosRpcClientImpl {
         tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e))
     }
 
-    pub async fn operation_hashes(&self, block_id: &str) -> Result<Vec<String>, String> {
+    pub async fn operation_hashes(&self, block_id: &str) -> Result<Vec<Vec<String>>, String> {
         let mut path = format!("/chains/main/blocks/{}/operation_hashes", block_id);
-        let hashes: Vec<Vec<String>> = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
+        tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e))
+    }
+
+    pub async fn operations(&self, block_id: &str) -> Result<Vec<OperationsResult>, String> {
+        let mut path = format!("/chains/main/blocks/{}/operations", block_id);
+        let hashes: Vec<Vec<OperationsResult>> = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
         Ok(hashes.into_iter().flatten().collect())
     }
 
-    pub async fn operations(&self, block_id: &str) -> Result<Vec<OperationResult>, String> {
-        let mut path = format!("/chains/main/blocks/{}/operations", block_id);
-        let hashes: Vec<Vec<OperationResult>> = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
-        Ok(hashes.into_iter().flatten().collect())
+    pub async fn single_operation(&self, block_id: &str, validation: usize, offset: usize) -> Result<OperationsResult, String> {
+        let mut path = format!("/chains/main/blocks/{}/operations/{}/{}", block_id, validation, offset);
+        tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e))
     }
 
     pub async fn preapply_operations(&self, req: PreapplyOperationsRequest) -> Result<Json, String> {
