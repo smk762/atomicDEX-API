@@ -722,7 +722,8 @@ impl TakerSwap {
             ));
         }
 
-        let f = self.taker_coin.check_if_my_payment_sent(
+        let f = self.taker_coin.check_if_my_taker_payment_sent(
+            self.uuid.as_bytes(),
             self.r().data.taker_payment_lock as u32,
             &self.r().other_persistent_pub_taker_coin,
             &self.r().secret_hash.0,
@@ -965,7 +966,8 @@ impl TakerSwap {
         let taker_payment = match &self.r().taker_payment {
             Some(tx) => tx.tx_hex.0.clone(),
             None => {
-                let maybe_sent = try_s!(self.taker_coin.check_if_my_payment_sent(
+                let maybe_sent = try_s!(self.taker_coin.check_if_my_taker_payment_sent(
+                    self.uuid.as_bytes(),
                     self.r().data.taker_payment_lock as u32,
                     &self.r().other_persistent_pub_taker_coin,
                     &self.r().secret_hash.0,
@@ -1129,7 +1131,7 @@ mod taker_swap_tests {
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
 
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
-        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
+        TestCoin::check_if_my_taker_payment_sent.mock_safe(|_, _, _, _, _, _| {
             unsafe { MY_PAYMENT_SENT_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(Some(eth_tx_for_test().into()))))
         });
@@ -1170,7 +1172,7 @@ mod taker_swap_tests {
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
 
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
-        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
+        TestCoin::check_if_my_taker_payment_sent.mock_safe(|_, _, _, _, _, _| {
             unsafe { MY_PAYMENT_SENT_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(Some(eth_tx_for_test().into()))))
         });

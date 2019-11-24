@@ -24,12 +24,14 @@ type atomic_swap =
     amount: tez;
     amount_nat: nat;
     contract_address: address option;
+    created_at: timestamp;
     lock_time: timestamp;
     receiver: address;
     secret_hash: bytes;
     sender: address;
+    spent_at: timestamp option;
     state: swap_state;
-    uuid: bytes 
+    uuid: bytes;
   }
 type storage = {
   swaps: (bytes, atomic_swap) big_map;
@@ -52,10 +54,12 @@ let%entry init_tezos_swap (uuid, lock_time, secret_hash, receiver) storage =
         amount = Current.amount ();
         amount_nat = 0p;
         contract_address = None;
+        created_at = Current.time ();
         lock_time;
         receiver;
         secret_hash;
         sender = Current.source ();
+        spent_at = None;
         state = Initialized;
         uuid;
       }
@@ -77,10 +81,12 @@ let%entry init_erc_swap (uuid, lock_time, secret_hash, receiver, amount, contrac
         amount = Current.amount ();
         amount_nat = amount;
         contract_address = (Some contract_addr);
+        created_at = Current.time ();
         lock_time;
         receiver;
         secret_hash;
         sender = Current.source ();
+        spent_at = None;
         state = Initialized;
         uuid;
       }
@@ -111,8 +117,10 @@ let%entry receiver_spends (uuid, secret, send_to) storage =
     failwith "Tx must be sent from receiver address";
   if Crypto.sha256 secret <> swap.secret_hash then
     failwith "Invalid secret";
-
+  let timestamp = Current.time () in
   let swap = swap.state <- ReceiverSpent in
+  let swap = swap.spent_at <- (Some timestamp) in
+
   let op = match swap.contract_address with
     | None -> Account.transfer ~dest:send_to ~amount:swap.amount
     | Some contract_addr -> match (Contract.at contract_addr : ERC.instance option) with
@@ -134,13 +142,16 @@ let%entry sender_refunds (uuid, send_to) storage =
       | _ -> failwith "Swap must be in initialized state"
   in
 
-  if Current.time () <= swap.lock_time then
+  let timestamp = Current.time () in
+  if  timestamp <= swap.lock_time then
     failwith "Too early to refund";
 
   if Current.source () <> swap.sender then
     failwith "Tx must be sent from sender address";
 
   let swap = swap.state <- SenderRefunded in
+  let swap = swap.spent_at <- (Some timestamp) in
+
   let op = match swap.contract_address with
     | None -> Account.transfer ~dest:send_to ~amount:swap.amount
     | Some contract_addr -> match (Contract.at contract_addr : ERC.instance option) with

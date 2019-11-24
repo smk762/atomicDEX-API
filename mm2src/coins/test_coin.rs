@@ -156,6 +156,7 @@ impl SwapOps for TestCoin {
 
     fn validate_taker_payment(
         &self,
+        uuid: &[u8],
         payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
@@ -165,8 +166,20 @@ impl SwapOps for TestCoin {
         unimplemented!()
     }
 
-    fn check_if_my_payment_sent(
+    fn check_if_my_maker_payment_sent(
         &self,
+        uuid: &[u8],
+        time_lock: u32,
+        other_pub: &EcPubkey,
+        secret_hash: &[u8],
+        search_from_block: u64,
+    ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
+        unimplemented!()
+    }
+
+    fn check_if_my_taker_payment_sent(
+        &self,
+        uuid: &[u8],
         time_lock: u32,
         other_pub: &EcPubkey,
         secret_hash: &[u8],

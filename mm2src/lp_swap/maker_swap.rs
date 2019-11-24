@@ -434,7 +434,8 @@ impl MakerSwap {
             ));
         }
 
-        let transaction_f = self.maker_coin.check_if_my_payment_sent(
+        let transaction_f = self.maker_coin.check_if_my_maker_payment_sent(
+            self.uuid.as_bytes(),
             self.r().data.maker_payment_lock as u32,
             &self.r().other_persistent_pub_maker_coin,
             &*sha256(&self.r().data.secret.0),
@@ -531,10 +532,11 @@ impl MakerSwap {
         let wait_taker_payment = self.r().data.started_at + wait_duration;
 
         let validated_f = self.taker_coin.validate_taker_payment(
+            self.uuid.as_bytes(),
             &unwrap!(self.r().taker_payment.clone()).tx_hex,
             self.taker_payment_lock.load(Ordering::Relaxed) as u32,
             &self.r().other_persistent_pub_taker_coin,
-            &*dhash160(&self.r().data.secret.0),
+            &*sha256(&self.r().data.secret.0),
             self.taker_amount.clone(),
         ).compat();
 
@@ -696,7 +698,8 @@ impl MakerSwap {
         let maker_payment = match &self.r().maker_payment {
             Some(tx) => tx.tx_hex.0.clone(),
             None => {
-                let maybe_maker_payment = try_s!(self.maker_coin.check_if_my_payment_sent(
+                let maybe_maker_payment = try_s!(self.maker_coin.check_if_my_maker_payment_sent(
+                    self.uuid.as_bytes(),
                     self.r().data.maker_payment_lock as u32,
                     &self.r().other_persistent_pub_maker_coin,
                     &*dhash160(&self.r().data.secret.0),
@@ -1007,7 +1010,7 @@ mod maker_swap_tests {
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
-        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
+        TestCoin::check_if_my_maker_payment_sent.mock_safe(|_, _, _, _, _, _| {
             unsafe { MY_PAYMENT_SENT_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(Some(eth_tx_for_test().into()))))
         });
@@ -1109,7 +1112,7 @@ mod maker_swap_tests {
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
-        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
+        TestCoin::check_if_my_maker_payment_sent.mock_safe(|_, _, _, _, _, _| {
             unsafe { MY_PAYMENT_SENT_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(Some(eth_tx_for_test().into()))))
         });
@@ -1133,7 +1136,7 @@ mod maker_swap_tests {
 
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
         static mut MY_PAYMENT_SENT_CALLED: bool = false;
-        TestCoin::check_if_my_payment_sent.mock_safe(|_, _, _, _, _| {
+        TestCoin::check_if_my_maker_payment_sent.mock_safe(|_, _, _, _, _, _| {
             unsafe { MY_PAYMENT_SENT_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(None)))
         });

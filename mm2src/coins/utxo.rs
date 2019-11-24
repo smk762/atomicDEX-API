@@ -790,6 +790,57 @@ impl UtxoCoin {
             (unsigned, data)
         }))
     }
+
+    fn check_if_my_payment_sent(
+        &self,
+        time_lock: u32,
+        other_pub: &EcPubkey,
+        secret_hash: &[u8],
+    ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
+        let script = payment_script(
+            time_lock,
+            secret_hash,
+            self.key_pair.public(),
+            &try_fus!(utxo_public_from_ec_pubkey(other_pub)),
+        );
+        let hash = dhash160(&script);
+        let p2sh = Builder::build_p2sh(&hash);
+        let script_hash = electrum_script_hash(&p2sh);
+        let selfi = self.clone();
+        let fut = async move {
+            match &selfi.rpc_client {
+                UtxoRpcClientEnum::Electrum(client) => {
+                    let history = try_s!(client.scripthash_get_history(&hex::encode(script_hash)).compat().await);
+                    match history.first() {
+                        Some(item) => {
+                            let tx_bytes = try_s!(client.get_transaction_bytes(item.tx_hash.clone()).compat().await);
+                            let tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+                            Ok(Some(tx.into()))
+                        },
+                        None => Ok(None),
+                    }
+                },
+                UtxoRpcClientEnum::Native(client) => {
+                    let target_addr = Address {
+                        t_addr_prefix: selfi.p2sh_t_addr_prefix,
+                        prefix: selfi.p2sh_addr_prefix,
+                        hash,
+                        checksum_type: selfi.checksum_type,
+                    }.to_string();
+                    let received_by_addr = try_s!(client.list_received_by_address(0, true, true).compat().await);
+                    for item in received_by_addr {
+                        if item.address == target_addr && !item.txids.is_empty() {
+                            let tx_bytes = try_s!(client.get_transaction_bytes(item.txids[0].clone()).compat().await);
+                            let tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+                            return Ok(Some(tx.into()))
+                        }
+                    }
+                    Ok(None)
+                },
+            }
+        };
+        Box::new(fut.boxed().compat())
+    }
 }
 
 pub fn compressed_key_pair_from_bytes(raw: &[u8], prefix: u8, checksum_type: ChecksumType) -> Result<KeyPair, String> {
@@ -1173,10 +1224,11 @@ impl SwapOps for UtxoCoin {
 
     fn validate_taker_payment(
         &self,
+        _uuid: &[u8],
         payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        priv_bn_hash: &[u8],
+        secret_hash: &[u8],
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         self.validate_payment(
@@ -1184,61 +1236,39 @@ impl SwapOps for UtxoCoin {
             time_lock,
             &try_fus!(utxo_public_from_ec_pubkey(taker_pub)),
             self.key_pair.public(),
-            priv_bn_hash,
+            secret_hash,
             amount
         )
     }
 
-    fn check_if_my_payment_sent(
+    fn check_if_my_maker_payment_sent(
         &self,
+        _uuid: &[u8],
         time_lock: u32,
         other_pub: &EcPubkey,
         secret_hash: &[u8],
         _from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
-        let script = payment_script(
+        self.check_if_my_payment_sent(
             time_lock,
+            other_pub,
             secret_hash,
-            self.key_pair.public(),
-            &try_fus!(utxo_public_from_ec_pubkey(other_pub)),
-        );
-        let hash = dhash160(&script);
-        let p2sh = Builder::build_p2sh(&hash);
-        let script_hash = electrum_script_hash(&p2sh);
-        let selfi = self.clone();
-        let fut = async move {
-            match &selfi.rpc_client {
-                UtxoRpcClientEnum::Electrum(client) => {
-                    let history = try_s!(client.scripthash_get_history(&hex::encode(script_hash)).compat().await);
-                    match history.first() {
-                        Some(item) => {
-                            let tx_bytes = try_s!(client.get_transaction_bytes(item.tx_hash.clone()).compat().await);
-                            let tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-                            Ok(Some(tx.into()))
-                        },
-                        None => Ok(None),
-                    }
-                },
-                UtxoRpcClientEnum::Native(client) => {
-                    let target_addr = Address {
-                        t_addr_prefix: selfi.p2sh_t_addr_prefix,
-                        prefix: selfi.p2sh_addr_prefix,
-                        hash,
-                        checksum_type: selfi.checksum_type,
-                    }.to_string();
-                    let received_by_addr = try_s!(client.list_received_by_address(0, true, true).compat().await);
-                    for item in received_by_addr {
-                        if item.address == target_addr && !item.txids.is_empty() {
-                            let tx_bytes = try_s!(client.get_transaction_bytes(item.txids[0].clone()).compat().await);
-                            let tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-                            return Ok(Some(tx.into()))
-                        }
-                    }
-                    Ok(None)
-                },
-            }
-        };
-        Box::new(fut.boxed().compat())
+        )
+    }
+
+    fn check_if_my_taker_payment_sent(
+        &self,
+        _uuid: &[u8],
+        time_lock: u32,
+        other_pub: &EcPubkey,
+        secret_hash: &[u8],
+        _from_block: u64,
+    ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
+        self.check_if_my_payment_sent(
+            time_lock,
+            other_pub,
+            secret_hash,
+        )
     }
 
     fn search_for_swap_tx_spend_my(
