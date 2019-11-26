@@ -66,8 +66,8 @@ pub use chain::Transaction as UtxoTx;
 
 use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumClientImpl, EstimateFeeMethod, NativeClient, UtxoRpcClientEnum, UnspentInfo };
 use super::{CoinsContext, CurveType, EcPubkey, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
-            SwapOps, TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut, TransactionDetails,
-            WithdrawFee, WithdrawRequest};
+            SwapOps, TradeFee, TradeInfo, Transaction, TransactionEnum, TransactionFut,
+            TransactionDetails, WithdrawFee, WithdrawRequest};
 use crate::utxo::rpc_clients::{NativeClientImpl, UtxoRpcClientOps, ElectrumRpcRequest};
 use crate::{TransactionDetailsFut};
 
@@ -1064,6 +1064,7 @@ impl SwapOps for UtxoCoin {
 
     fn send_taker_refunds_payment(
         &self,
+        _uuid: &[u8],
         taker_payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
@@ -1110,6 +1111,7 @@ impl SwapOps for UtxoCoin {
 
     fn send_maker_refunds_payment(
         &self,
+        _uuid: &[u8],
         maker_payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,

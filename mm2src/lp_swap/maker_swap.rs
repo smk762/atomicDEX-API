@@ -6,7 +6,7 @@ use bitcrypto::{sha256, dhash160};
 use common::executor::Timer;
 use common::{bits256, now_ms, now_float, slurp, write, MM_VERSION};
 use common::mm_ctx::MmArc;
-use coins::{CurveType, EcPubkey, FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
+use coins::{CurveType, EcPubkey, FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails, TradeActor};
 use crc::crc32;
 use futures::compat::Future01CompatExt;
 use futures::future::Either;
@@ -618,6 +618,7 @@ impl MakerSwap {
         }
 
         let spend_fut = self.maker_coin.send_maker_refunds_payment(
+            self.uuid.as_bytes(),
             &unwrap!(self.r().maker_payment.clone()).tx_hex,
             self.r().data.maker_payment_lock as u32,
             &self.r().other_persistent_pub_maker_coin,
@@ -729,6 +730,7 @@ impl MakerSwap {
             return ERR!("Too early to refund, wait until {}", self.r().data.maker_payment_lock + 3700);
         }
         let transaction = try_s!(self.maker_coin.send_maker_refunds_payment(
+            self.uuid.as_bytes(),
             &maker_payment,
             self.r().data.maker_payment_lock as u32,
             &self.r().other_persistent_pub_maker_coin,
@@ -1016,7 +1018,7 @@ mod maker_swap_tests {
         });
 
         static mut MAKER_REFUND_CALLED: bool = false;
-        TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _| {
+        TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _, _| {
             unsafe { MAKER_REFUND_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(eth_tx_for_test().into())))
         });
@@ -1046,7 +1048,7 @@ mod maker_swap_tests {
         TestCoin::ticker.mock_safe(|_| MockResult::Return("ticker"));
         static mut MAKER_REFUND_CALLED: bool = false;
 
-        TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _| {
+        TestCoin::send_maker_refunds_payment.mock_safe(|_, _, _, _, _, _| {
             unsafe { MAKER_REFUND_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(eth_tx_for_test().into())))
         });

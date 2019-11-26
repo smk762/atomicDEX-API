@@ -175,6 +175,7 @@ fn send_and_refund_erc20_payment() {
 
 
     let refund = coin.send_maker_refunds_payment(
+        &[],
         &payment.tx_hex,
         (now_ms() / 1000) as u32 - 200,
         &taker_pub,
@@ -225,6 +226,7 @@ fn send_and_refund_eth_payment() {
     thread::sleep(Duration::from_secs(60));
 
     let refund = coin.send_maker_refunds_payment(
+        &[],
         &payment.tx_hex,
         (now_ms() / 1000) as u32 - 200,
         &taker_pub,

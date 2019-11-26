@@ -517,6 +517,7 @@ impl SwapOps for EthCoin {
 
     fn send_taker_refunds_payment(
         &self,
+        _uuid: &[u8],
         taker_payment_tx: &[u8],
         _time_lock: u32,
         _maker_pub: &EcPubkey,
@@ -530,6 +531,7 @@ impl SwapOps for EthCoin {
 
     fn send_maker_refunds_payment(
         &self,
+        _uuid: &[u8],
         maker_payment_tx: &[u8],
         _time_lock: u32,
         _taker_pub: &EcPubkey,
@@ -648,29 +650,7 @@ impl SwapOps for EthCoin {
         secret_hash: &[u8],
         from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
-        let id = self.etomic_swap_id(time_lock, secret_hash);
-        let selfi = self.clone();
-        let fut = async move {
-            let status = try_s!(selfi.payment_status(Token::FixedBytes(id.clone())).compat().await);
-            if status == PAYMENT_STATE_UNINITIALIZED.into() {
-                return Ok(None);
-            };
-            let events = try_s!(selfi.payment_sent_events(from_block).compat().await);
-
-            let found = events.iter().find(|event| &event.data.0[..32] == id.as_slice());
-
-            match found {
-                Some(event) => {
-                    let transaction = try_s!(selfi.web3.eth().transaction(TransactionId::Hash(event.transaction_hash.unwrap())).compat().await);
-                    match transaction {
-                        Some(t) => Ok(Some(try_s!(signed_tx_from_web3_tx(t)).into())),
-                        None => Ok(None),
-                    }
-                },
-                None => Ok(None)
-            }
-        };
-        Box::new(fut.boxed().compat())
+        self.check_if_my_payment_sent(time_lock, secret_hash, from_block)
     }
 
     fn check_if_my_taker_payment_sent(
@@ -681,29 +661,7 @@ impl SwapOps for EthCoin {
         secret_hash: &[u8],
         from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
-        let id = self.etomic_swap_id(time_lock, secret_hash);
-        let selfi = self.clone();
-        let fut = async move {
-            let status = try_s!(selfi.payment_status(Token::FixedBytes(id.clone())).compat().await);
-            if status == PAYMENT_STATE_UNINITIALIZED.into() {
-                return Ok(None);
-            };
-            let events = try_s!(selfi.payment_sent_events(from_block).compat().await);
-
-            let found = events.iter().find(|event| &event.data.0[..32] == id.as_slice());
-
-            match found {
-                Some(event) => {
-                    let transaction = try_s!(selfi.web3.eth().transaction(TransactionId::Hash(event.transaction_hash.unwrap())).compat().await);
-                    match transaction {
-                        Some(t) => Ok(Some(try_s!(signed_tx_from_web3_tx(t)).into())),
-                        None => Ok(None),
-                    }
-                },
-                None => Ok(None)
-            }
-        };
-        Box::new(fut.boxed().compat())
+        self.check_if_my_payment_sent(time_lock, secret_hash, from_block)
     }
 
     fn search_for_swap_tx_spend_my(
@@ -1802,6 +1760,33 @@ impl EthCoin {
                 thread::sleep(Duration::from_secs(2));
             }
         }
+    }
+
+    fn check_if_my_payment_sent(&self, time_lock: u32, secret_hash: &[u8], from_block: u64)
+        -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
+        let id = self.etomic_swap_id(time_lock, secret_hash);
+        let selfi = self.clone();
+        let fut = async move {
+            let status = try_s!(selfi.payment_status(Token::FixedBytes(id.clone())).compat().await);
+            if status == PAYMENT_STATE_UNINITIALIZED.into() {
+                return Ok(None);
+            };
+            let events = try_s!(selfi.payment_sent_events(from_block).compat().await);
+
+            let found = events.iter().find(|event| &event.data.0[..32] == id.as_slice());
+
+            match found {
+                Some(event) => {
+                    let transaction = try_s!(selfi.web3.eth().transaction(TransactionId::Hash(event.transaction_hash.unwrap())).compat().await);
+                    match transaction {
+                        Some(t) => Ok(Some(try_s!(signed_tx_from_web3_tx(t)).into())),
+                        None => Ok(None),
+                    }
+                },
+                None => Ok(None)
+            }
+        };
+        Box::new(fut.boxed().compat())
     }
 }
 

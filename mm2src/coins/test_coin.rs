@@ -5,7 +5,8 @@ use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest, TransactionDetailsFut}
 use futures01::Future;
 use mocktopus::macros::*;
 use std::borrow::Cow;
-use super::{EcPubkey, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee, TransactionDetails, TransactionEnum, TransactionFut};
+use super::{EcPubkey, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeActor, TradeFee,
+            TransactionDetails, TransactionEnum, TransactionFut};
 
 /// Dummy coin struct used in tests which functions are unimplemented but then mocked
 /// in specific test to emulate the required behavior
@@ -115,6 +116,7 @@ impl SwapOps for TestCoin {
 
     fn send_taker_refunds_payment(
         &self,
+        _uuid: &[u8],
         taker_payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
@@ -125,6 +127,7 @@ impl SwapOps for TestCoin {
 
     fn send_maker_refunds_payment(
         &self,
+        _uuid: &[u8],
         maker_payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,

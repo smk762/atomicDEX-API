@@ -5,7 +5,7 @@ use bigdecimal::BigDecimal;
 use common::executor::Timer;
 use common::{bits256, now_ms, now_float, slurp, write, MM_VERSION};
 use common::mm_ctx::MmArc;
-use coins::{CurveType, EcPubkey, FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
+use coins::{CurveType, EcPubkey, FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails, TradeActor};
 use crc::crc32;
 use futures::compat::Future01CompatExt;
 use futures::future::Either;
@@ -863,6 +863,7 @@ impl TakerSwap {
             Timer::sleep(10.).await;
         }
         let refund_fut = self.taker_coin.send_taker_refunds_payment(
+            self.uuid.as_bytes(),
             &self.r().taker_payment.clone().unwrap().tx_hex.0,
             self.r().data.taker_payment_lock as u32,
             &self.r().other_persistent_pub_maker_coin,
@@ -1034,6 +1035,7 @@ impl TakerSwap {
                 }
 
                 let transaction = try_s!(self.taker_coin.send_taker_refunds_payment(
+                    self.uuid.as_bytes(),
                     &taker_payment,
                     self.r().data.taker_payment_lock as u32,
                     &self.r().other_persistent_pub_taker_coin,
@@ -1143,7 +1145,7 @@ mod taker_swap_tests {
         });
 
         static mut TAKER_PAYMENT_REFUND_CALLED: bool = false;
-        TestCoin::send_taker_refunds_payment.mock_safe(|_, _, _, _, _| {
+        TestCoin::send_taker_refunds_payment.mock_safe(|_, _, _, _, _, _| {
             unsafe { TAKER_PAYMENT_REFUND_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(eth_tx_for_test().into())))
         });
@@ -1222,7 +1224,7 @@ mod taker_swap_tests {
         });
 
         static mut REFUND_CALLED: bool = false;
-        TestCoin::send_taker_refunds_payment.mock_safe(|_, _, _, _, _| {
+        TestCoin::send_taker_refunds_payment.mock_safe(|_, _, _, _, _, _| {
             unsafe { REFUND_CALLED = true };
             MockResult::Return(Box::new(futures01::future::ok(eth_tx_for_test().into())))
         });

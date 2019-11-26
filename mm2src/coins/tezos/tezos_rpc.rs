@@ -1,6 +1,5 @@
 use bigdecimal::BigDecimal;
 use chrono::prelude::*;
-use common::block_on;
 use common::executor::Timer;
 use common::wio::slurp_reqʹ;
 use futures::future::{select, Either};
@@ -8,11 +7,10 @@ use gstuff::binprint;
 use http;
 use http::request::Builder;
 use rpc::v1::types::{Bytes as BytesJson};
-use serde::{Serialize, Serializer};
-use serde::de::{Deserializer, DeserializeOwned, Visitor};
+use serde::{Serialize};
+use serde::de::{DeserializeOwned};
 use serde_json::{self as json, Value as Json};
 use std::convert::TryFrom;
-use std::fmt;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -89,29 +87,17 @@ pub struct BlockHeader {
     signature: String,
 }
 
-fn big_uint_to_string<S>(num: &BigUint, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
-    s.serialize_str(&num.to_string())
-}
-
-fn big_uint_from_str<'de, D>(d: D) -> Result<BigUint, D::Error> where D: Deserializer<'de> {
-    struct BigUintStringVisitor;
-
-    impl<'de> Visitor<'de> for BigUintStringVisitor {
-        type Value = BigUint;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a string containing json data")
-        }
-
-        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-        {
-            BigUint::from_str(v).map_err(E::custom)
-        }
-    }
-
-    d.deserialize_any(BigUintStringVisitor)
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Origination {
+    pub balance: TezosUint,
+    pub counter: TezosUint,
+    pub delegatable: bool,
+    pub fee: TezosUint,
+    pub gas_limit: TezosUint,
+    pub manager_pubkey: String,
+    pub source: String,
+    pub spendable: bool,
+    pub storage_limit: TezosUint,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -138,6 +124,12 @@ pub struct Reveal {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ActivateAccount {
+    pkh: String,
+    secret: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Endorsement {
     level: u64,
 }
@@ -145,8 +137,10 @@ pub struct Endorsement {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind")]
 pub enum Operation {
+    activate_account(ActivateAccount),
     endorsement(Endorsement),
     reveal(Reveal),
+    origination(Origination),
     transaction(Transaction),
 }
 
@@ -296,18 +290,18 @@ impl TezosRpcClientImpl {
     }
 
     pub async fn operation_hashes(&self, block_id: &str) -> Result<Vec<Vec<String>>, String> {
-        let mut path = format!("/chains/main/blocks/{}/operation_hashes", block_id);
+        let path = format!("/chains/main/blocks/{}/operation_hashes", block_id);
         tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e))
     }
 
     pub async fn operations(&self, block_id: &str) -> Result<Vec<OperationsResult>, String> {
-        let mut path = format!("/chains/main/blocks/{}/operations", block_id);
+        let path = format!("/chains/main/blocks/{}/operations", block_id);
         let hashes: Vec<Vec<OperationsResult>> = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
         Ok(hashes.into_iter().flatten().collect())
     }
 
     pub async fn single_operation(&self, block_id: &str, validation: usize, offset: usize) -> Result<OperationsResult, String> {
-        let mut path = format!("/chains/main/blocks/{}/operations/{}/{}", block_id, validation, offset);
+        let path = format!("/chains/main/blocks/{}/operations/{}/{}", block_id, validation, offset);
         tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e))
     }
 
@@ -349,7 +343,4 @@ fn test_build_url_params_string() {
     let expected = "?param=value&param1=value";
     let actual = build_url_params_string(params);
     assert_eq!(expected, actual);
-
-    let bytes = [28, 203, 245, 206, 14, 136, 243, 42, 74, 60, 66, 250, 245, 205, 120, 89, 241, 51, 209, 159, 122, 250, 220, 196, 210, 201, 106, 35, 109, 127, 132, 89, 8, 0, 0, 41, 105, 115, 114, 48, 189, 94, 166, 15, 99, 43, 82, 119, 121, 129, 228, 58, 37, 208, 105, 160, 141, 6, 219, 4, 128, 234, 48, 224, 212, 3, 192, 132, 61, 1, 25, 33, 9, 71, 111, 25, 74, 96, 57, 130, 193, 207, 192, 40, 181, 250, 214, 91, 120, 145, 0, 255, 0, 0, 0, 118, 0, 5, 5, 7, 7, 10, 0, 0, 0, 1, 37, 7, 7, 1, 0, 0, 0, 20, 49, 57, 55, 48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 90, 7, 7, 10, 0, 0, 0, 32, 102, 104, 122, 173, 248, 98, 189, 119, 108, 143, 193, 139, 142, 159, 142, 32, 8, 151, 20, 133, 110, 226, 51, 179, 144, 42, 89, 29, 13, 95, 41, 37, 1, 0, 0, 0, 36, 100, 110, 49, 75, 117, 116, 102, 104, 52, 101, 119, 116, 78, 120, 117, 57, 70, 99, 119, 68, 72, 102, 122, 55, 88, 52, 83, 87, 117, 87, 90, 100, 82, 71, 121, 112];
-    log!((bytes.len()));
 }

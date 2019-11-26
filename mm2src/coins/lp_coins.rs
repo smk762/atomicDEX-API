@@ -151,6 +151,7 @@ pub trait SwapOps {
 
     fn send_taker_refunds_payment(
         &self,
+        uuid: &[u8],
         taker_payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
@@ -159,6 +160,7 @@ pub trait SwapOps {
 
     fn send_maker_refunds_payment(
         &self,
+        uuid: &[u8],
         maker_payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
@@ -800,4 +802,9 @@ impl<'de> Deserialize<'de> for EcPubkey {
 
         d.deserialize_any(EcPubkeyVisitor)
     }
+}
+
+pub enum TradeActor {
+    Maker,
+    Taker,
 }
