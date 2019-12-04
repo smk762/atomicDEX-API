@@ -178,6 +178,7 @@ pub trait AtomicSwap: Send + Sync {
 
 struct SwapsContext {
     running_swaps: Mutex<Vec<Weak<dyn AtomicSwap>>>,
+    banned_pubkeys: Mutex<HashSet<H256>>,
 }
 
 impl SwapsContext {
@@ -186,9 +187,22 @@ impl SwapsContext {
         Ok (try_s! (from_ctx (&ctx.swaps_ctx, move || {
             Ok (SwapsContext {
                 running_swaps: Mutex::new(vec![]),
+                banned_pubkeys: Mutex::new(HashSet::new()),
             })
         })))
     }
+}
+
+pub fn ban_pubkey(ctx: &MmArc, pubkey: H256) {
+    let ctx = unwrap!(SwapsContext::from_ctx(ctx));
+    let mut banned = unwrap!(ctx.banned_pubkeys.lock());
+    banned.insert(pubkey);
+}
+
+pub fn is_pubkey_banned(ctx: &MmArc, pubkey: &H256) -> bool {
+    let ctx = unwrap!(SwapsContext::from_ctx(ctx));
+    let banned = unwrap!(ctx.banned_pubkeys.lock());
+    banned.contains(pubkey)
 }
 
 /// Get total amount of selected coin locked by all currently ongoing swaps
