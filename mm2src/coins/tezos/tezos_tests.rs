@@ -426,7 +426,7 @@ fn test_check_if_my_maker_payment_sent() {
 
 #[test]
 fn test_wait_for_tx_spend() {
-    let coin = tezos_coin_for_test();
+    let coin = tezos_erc_coin_for_test();
     let tx = unwrap!(hex::decode("a5a3da0a35a3722035f916879e71d8f420e0bbc59821ee5b48f91e88e9c8111c080000dfea0bdd3adff1b8072ea45beea66b00c9cbd918a08d06950a80ea30e0d4030001a1b26740e4d3d718c06a5ed58a59ba27d29b6ef500ff000000ce000508050507070a0000002565383063303832652d646135392d346165382d383064322d3839616261393461636163620107070100000014323031392d31312d32355431333a32373a30395a07070a00000020b795e8c0c862d82136c0b23a913453fe5dcccce5161fa248c2c22209b8890f4307070100000024646e314b75746668346577744e7875394663774448667a375834535775575a645247797007070080dac40901000000244b5431485a597077756e4271554834786672646d50396d364c766852787a48327957356389799e22c430f2b24deb5d949b4f249ad1b4e0110528253faf1122a8a4f1d84dfffdcd25829cfdead36987f67c16cfcd1b92d8f91ac3e74e274c84a1d9855103"));
     let spend = unwrap!(coin.wait_for_tx_spend(
         &tx,
@@ -438,7 +438,7 @@ fn test_wait_for_tx_spend() {
 
 #[test]
 fn test_search_for_swap_spend_tx_my() {
-    let coin = tezos_coin_for_test();
+    let coin = tezos_erc_coin_for_test();
     let tx = unwrap!(hex::decode("a5a3da0a35a3722035f916879e71d8f420e0bbc59821ee5b48f91e88e9c8111c080000dfea0bdd3adff1b8072ea45beea66b00c9cbd918a08d06950a80ea30e0d4030001a1b26740e4d3d718c06a5ed58a59ba27d29b6ef500ff000000ce000508050507070a0000002565383063303832652d646135392d346165382d383064322d3839616261393461636163620107070100000014323031392d31312d32355431333a32373a30395a07070a00000020b795e8c0c862d82136c0b23a913453fe5dcccce5161fa248c2c22209b8890f4307070100000024646e314b75746668346577744e7875394663774448667a375834535775575a645247797007070080dac40901000000244b5431485a597077756e4271554834786672646d50396d364c766852787a48327957356389799e22c430f2b24deb5d949b4f249ad1b4e0110528253faf1122a8a4f1d84dfffdcd25829cfdead36987f67c16cfcd1b92d8f91ac3e74e274c84a1d9855103"));
     let spend_tx = unwrap!(coin.search_for_swap_tx_spend_my(
         0,
@@ -446,7 +446,7 @@ fn test_search_for_swap_spend_tx_my() {
         &[],
         &tx,
         202994,
-    ));
+    ).wait());
     let spend_tx = unwrap!(spend_tx);
     match spend_tx {
         FoundSwapTxSpend::Spent(spend_tx) => assert_eq!("onehiS6GMdSAwcVKnxKf2SaFUbYiuFiKVcKD1oJMzueHNVCkMtN", coin.tx_hash_to_string(&spend_tx.tx_hash())),
@@ -462,7 +462,7 @@ fn test_address_from_ec_pubkey() {
         bytes: unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
     };
     let address = coin.address_from_ec_pubkey(&fee_addr_pub_key).unwrap();
-    log!((address));
+    assert_eq!("dn2GbmbWjNVwwBbaT8CTPjn1wyWWSsv479dZ", address.to_string());
 }
 
 #[test]

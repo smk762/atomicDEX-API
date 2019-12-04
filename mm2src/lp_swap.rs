@@ -388,7 +388,7 @@ impl SavedSwap {
         }
     }
 
-    fn recover_funds(self, ctx: MmArc) -> Result<RecoveredSwap, String> {
+    async fn recover_funds(self, ctx: MmArc) -> Result<RecoveredSwap, String> {
         let maker_ticker = try_s!(self.maker_coin_ticker());
         let maker_coin = match lp_coinfind(&ctx, &maker_ticker) {
             Ok(Some(c)) => c,
@@ -405,11 +405,11 @@ impl SavedSwap {
         match self {
             SavedSwap::Maker(saved) => {
                 let (maker_swap, _) = try_s!(MakerSwap::load_from_saved(ctx, maker_coin, taker_coin, saved));
-                Ok(try_s!(maker_swap.recover_funds()))
+                Ok(try_s!(maker_swap.recover_funds().await))
             },
             SavedSwap::Taker(saved) => {
                 let (taker_swap, _) = try_s!(TakerSwap::load_from_saved(ctx, maker_coin, taker_coin, saved));
-                Ok(try_s!(taker_swap.recover_funds()))
+                Ok(try_s!(taker_swap.recover_funds().await))
             },
         }
     }
@@ -695,7 +695,7 @@ pub async fn recover_funds_of_swap(ctx: MmArc, req: Json) -> Result<Response<Vec
 
     let swap: SavedSwap = try_s!(json::from_slice(&content));
 
-    let recover_data = try_s!(swap.recover_funds(ctx));
+    let recover_data = try_s!(swap.recover_funds(ctx).await);
     let res = try_s!(json::to_vec(&json!({
         "result": {
             "action": recover_data.action,

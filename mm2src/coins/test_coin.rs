@@ -198,7 +198,7 @@ impl SwapOps for TestCoin {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String> {
+    ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
         unimplemented!()
     }
 
@@ -209,7 +209,7 @@ impl SwapOps for TestCoin {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String> {
+    ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
         unimplemented!()
     }
 }

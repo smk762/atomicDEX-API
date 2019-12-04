@@ -36,7 +36,6 @@ mod docker_tests {
     use serde_json::{self as json, Value as Json};
     use std::env;
     use std::io::{BufRead, BufReader};
-    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::Mutex;
     use std::thread;
@@ -251,17 +250,18 @@ mod docker_tests {
         let tx = coin.send_taker_payment(
             &[],
             time_lock,
-            &*coin.my_public_key(),
+            &coin.get_pubkey(),
             &[0; 20],
             1.into(),
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout, 1, 0).wait());
+        unwrap!(coin.wait_for_confirmations(&tx.tx_hex, 1, timeout, 1, 0).wait());
 
         let refund_tx = coin.send_taker_refunds_payment(
-            &tx.tx_hex(),
+            &[],
+            &tx.tx_hex,
             time_lock,
-            &*coin.my_public_key(),
+            &coin.get_pubkey(),
             &[0; 20],
         ).wait().unwrap();
 
@@ -269,11 +269,11 @@ mod docker_tests {
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
-            &*coin.my_public_key(),
+            &coin.get_pubkey(),
             &[0; 20],
-            &tx.tx_hex(),
+            &tx.tx_hex,
             0,
-        )));
+        ).wait()));
         assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
     }
 
@@ -287,18 +287,18 @@ mod docker_tests {
         let tx = coin.send_taker_payment(
             &[],
             time_lock,
-            &*coin.my_public_key(),
+            &coin.get_pubkey(),
             &*dhash160(&secret),
             1.into(),
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, timeout, 1, 0).wait());
+        unwrap!(coin.wait_for_confirmations(&tx.tx_hex, 1, timeout, 1, 0).wait());
 
         let spend_tx = coin.send_maker_spends_taker_payment(
             &[],
-            &tx.tx_hex(),
+            &tx.tx_hex,
             time_lock,
-            &*coin.my_public_key(),
+            &coin.get_pubkey(),
             &secret,
         ).wait().unwrap();
 
@@ -306,11 +306,11 @@ mod docker_tests {
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
-            &*coin.my_public_key(),
+            &coin.get_pubkey(),
             &*dhash160(&secret),
-            &tx.tx_hex(),
+            &tx.tx_hex,
             0,
-        )));
+        ).wait()));
         assert_eq!(FoundSwapTxSpend::Spent(spend_tx), found);
     }
 

@@ -219,7 +219,7 @@ pub trait SwapOps {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String>;
+    ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send>;
 
     fn search_for_swap_tx_spend_other(
         &self,
@@ -228,7 +228,7 @@ pub trait SwapOps {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String>;
+    ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send>;
 }
 
 /// Operations that coins have independently from the MarketMaker.

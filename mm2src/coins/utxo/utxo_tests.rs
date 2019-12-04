@@ -301,7 +301,7 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
         &unwrap!(hex::decode("954f5a3f3b5de4410e5e1a82949410de95a4b6ba")),
         &payment_tx_bytes,
         0
-    )));
+    ).wait()));
     assert_eq!(FoundSwapTxSpend::Spent(spend_tx), found);
 }
 
@@ -319,12 +319,12 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
 
     let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend(
         1565692879,
-        coin.key_pair.public(),
+        &unwrap!(Public::from_slice(&unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")))),
         &unwrap!(Public::from_slice(&unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")))),
         &unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),
         &payment_tx_bytes,
         0
-    )));
+    ).wait()));
     assert_eq!(FoundSwapTxSpend::Refunded(spend_tx), found);
 }
 

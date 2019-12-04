@@ -246,48 +246,6 @@ impl UtxoCoinImpl {
         satoshi as f64 / 10f64.powf(self.decimals as f64)
     }
 
-    fn search_for_swap_tx_spend(
-        &self,
-        time_lock: u32,
-        first_pub: &Public,
-        second_pub: &Public,
-        secret_hash: &[u8],
-        tx: &[u8],
-        search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String> {
-        let tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
-        let script = payment_script(time_lock, secret_hash, first_pub, second_pub);
-        let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script)).to_bytes();
-        if tx.outputs[0].script_pubkey != expected_script_pubkey {
-            return ERR!("Transaction {:?} output 0 script_pubkey doesn't match expected {:?}", tx, expected_script_pubkey);
-        }
-
-        let spend = try_s!(self.rpc_client.find_output_spend(&tx, 0, search_from_block).wait());
-        match spend {
-            Some(tx) => {
-                let script: Script = tx.inputs[0].script_sig.clone().into();
-                match script.iter().nth(2) {
-                    Some(instruction) => match instruction {
-                        Ok(ref i) if i.opcode == Opcode::OP_0 => return Ok(Some(FoundSwapTxSpend::Spent(tx.into()))),
-                        _ => (),
-                    },
-                    None => (),
-                };
-
-                match script.iter().nth(1) {
-                    Some(instruction) => match instruction {
-                        Ok(ref i) if i.opcode == Opcode::OP_1 => return Ok(Some(FoundSwapTxSpend::Refunded(tx.into()))),
-                        _ => (),
-                    },
-                    None => (),
-                };
-
-                ERR!("Couldn't find required instruction in script_sig of input 0 of tx {:?}", tx)
-            },
-            None => Ok(None),
-        }
-    }
-
     pub fn my_public_key(&self) -> &Public {
         self.key_pair.public()
     }
@@ -315,7 +273,7 @@ fn payment_script(
         .push_opcode(Opcode::OP_SIZE)
         .push_bytes(&[32])
         .push_opcode(Opcode::OP_EQUALVERIFY)
-        .push_opcode(Opcode::OP_SHA256)
+        .push_opcode(Opcode::OP_HASH160)
         .push_bytes(secret_hash)
         .push_opcode(Opcode::OP_EQUALVERIFY)
         .push_bytes(pub_1)
@@ -850,6 +808,52 @@ impl UtxoCoin {
         };
         Box::new(fut.boxed().compat())
     }
+
+    fn search_for_swap_tx_spend(
+        &self,
+        time_lock: u32,
+        first_pub: &Public,
+        second_pub: &Public,
+        secret_hash: &[u8],
+        tx: &[u8],
+        search_from_block: u64,
+    ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
+        let tx: UtxoTx = try_fus!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
+        let script = payment_script(time_lock, secret_hash, first_pub, second_pub);
+        let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script)).to_bytes();
+        let coin = self.clone();
+        let fut = async move {
+            if tx.outputs[0].script_pubkey != expected_script_pubkey {
+                return ERR!("Transaction {:?} output 0 script_pubkey doesn't match expected {:?}", tx, expected_script_pubkey);
+            }
+
+            let spend = try_s!(coin.rpc_client.find_output_spend(&tx, 0, search_from_block).compat().await);
+            match spend {
+                Some(tx) => {
+                    let script: Script = tx.inputs[0].script_sig.clone().into();
+                    match script.iter().nth(2) {
+                        Some(instruction) => match instruction {
+                            Ok(ref i) if i.opcode == Opcode::OP_0 => return Ok(Some(FoundSwapTxSpend::Spent(tx.into()))),
+                            _ => (),
+                        },
+                        None => (),
+                    };
+
+                    match script.iter().nth(1) {
+                        Some(instruction) => match instruction {
+                            Ok(ref i) if i.opcode == Opcode::OP_1 => return Ok(Some(FoundSwapTxSpend::Refunded(tx.into()))),
+                            _ => (),
+                        },
+                        None => (),
+                    };
+
+                    ERR!("Couldn't find required instruction in script_sig of input 0 of tx {:?}", tx)
+                },
+                None => Ok(None),
+            }
+        };
+        Box::new(Box::pin(fut).compat())
+    }
 }
 
 pub fn compressed_key_pair_from_bytes(raw: &[u8], prefix: u8, checksum_type: ChecksumType) -> Result<KeyPair, String> {
@@ -1293,11 +1297,11 @@ impl SwapOps for UtxoCoin {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String> {
+    ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
         self.search_for_swap_tx_spend(
             time_lock,
             self.key_pair.public(),
-            &try_s!(utxo_public_from_ec_pubkey(other_pub)),
+            &try_fus!(utxo_public_from_ec_pubkey(other_pub)),
             secret_hash,
             tx,
             search_from_block
@@ -1311,10 +1315,10 @@ impl SwapOps for UtxoCoin {
         secret_hash: &[u8],
         tx: &[u8],
         search_from_block: u64,
-    ) -> Result<Option<FoundSwapTxSpend>, String> {
+    ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
         self.search_for_swap_tx_spend(
             time_lock,
-            &try_s!(utxo_public_from_ec_pubkey(other_pub)),
+            &try_fus!(utxo_public_from_ec_pubkey(other_pub)),
             self.key_pair.public(),
             secret_hash,
             tx,
