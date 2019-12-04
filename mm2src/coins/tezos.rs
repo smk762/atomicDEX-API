@@ -1422,7 +1422,52 @@ impl SwapOps for TezosCoin {
                                             current_block += 1;
                                         }
                                     },
-                                    TezosAtomicSwapState::SenderRefunded => return ERR!("Swap payment was refunded"),
+                                    TezosAtomicSwapState::SenderRefunded => {
+                                        let mut current_block = search_from_block;
+                                        loop {
+                                            let operations = try_s!(coin.rpc_client.operations(&current_block.to_string()).await);
+                                            for operation in operations {
+                                                for transaction in operation.contents {
+                                                    match transaction.op {
+                                                        Operation::transaction(tx) => {
+                                                            if tx.destination == coin.swap_contract_address.to_string() {
+                                                                match tx.parameters {
+                                                                    Some(ref params) => {
+                                                                        let (path, args) = read_function_call(vec![], params.clone());
+                                                                        let (tx_uuid, _) = args.split_and_read_value();
+                                                                        if path == [Or::R, Or::R, Or::R] && tx_uuid == uuid {
+                                                                            let branch = unwrap!(TezosBlockHash::from_str(&operation.branch));
+                                                                            let signature = unwrap!(TezosSignature::from_str(&operation.signature));
+                                                                            let destination = unwrap!(TezosAddress::from_str(&tx.destination));
+                                                                            let source = unwrap!(TezosAddress::from_str(&tx.source));
+                                                                            let operation = TezosOperation {
+                                                                                branch: branch.hash,
+                                                                                signature: Some(H512::from(signature.sig.to_bytes())),
+                                                                                op: TezosOperationEnum::Transaction(TezosTransaction {
+                                                                                    amount: tx.amount.into(),
+                                                                                    counter: tx.counter.into(),
+                                                                                    destination: unwrap!(coin.address_to_contract_id(&destination)),
+                                                                                    source: unwrap!(coin.address_to_contract_id(&source)),
+                                                                                    fee: tx.fee.into(),
+                                                                                    gas_limit: tx.gas_limit.into(),
+                                                                                    storage_limit: tx.storage_limit.into(),
+                                                                                    parameters: tx.parameters,
+                                                                                })
+                                                                            };
+                                                                            return Ok(Some(FoundSwapTxSpend::Refunded(operation.into())))
+                                                                        }
+                                                                    },
+                                                                    None => continue,
+                                                                }
+                                                            }
+                                                        },
+                                                        _ => continue,
+                                                    }
+                                                }
+                                            }
+                                            current_block += 1;
+                                        }
+                                    },
                                     TezosAtomicSwapState::Initialized => return Ok(None),
                                 }
                             }

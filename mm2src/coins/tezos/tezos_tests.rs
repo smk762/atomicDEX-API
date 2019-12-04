@@ -437,7 +437,7 @@ fn test_wait_for_tx_spend() {
 }
 
 #[test]
-fn test_search_for_swap_spend_tx_my() {
+fn test_search_for_swap_spend_tx_my_spent() {
     let coin = tezos_erc_coin_for_test();
     let tx = unwrap!(hex::decode("a5a3da0a35a3722035f916879e71d8f420e0bbc59821ee5b48f91e88e9c8111c080000dfea0bdd3adff1b8072ea45beea66b00c9cbd918a08d06950a80ea30e0d4030001a1b26740e4d3d718c06a5ed58a59ba27d29b6ef500ff000000ce000508050507070a0000002565383063303832652d646135392d346165382d383064322d3839616261393461636163620107070100000014323031392d31312d32355431333a32373a30395a07070a00000020b795e8c0c862d82136c0b23a913453fe5dcccce5161fa248c2c22209b8890f4307070100000024646e314b75746668346577744e7875394663774448667a375834535775575a645247797007070080dac40901000000244b5431485a597077756e4271554834786672646d50396d364c766852787a48327957356389799e22c430f2b24deb5d949b4f249ad1b4e0110528253faf1122a8a4f1d84dfffdcd25829cfdead36987f67c16cfcd1b92d8f91ac3e74e274c84a1d9855103"));
     let spend_tx = unwrap!(coin.search_for_swap_tx_spend_my(
@@ -451,6 +451,25 @@ fn test_search_for_swap_spend_tx_my() {
     match spend_tx {
         FoundSwapTxSpend::Spent(spend_tx) => assert_eq!("onehiS6GMdSAwcVKnxKf2SaFUbYiuFiKVcKD1oJMzueHNVCkMtN", coin.tx_hash_to_string(&spend_tx.tx_hash())),
         FoundSwapTxSpend::Refunded(_) => panic!("Must be FoundSwapTxSpend::Spent"),
+    };
+}
+
+#[test]
+fn test_search_for_swap_spend_tx_my_refunded() {
+    let coin = tezos_erc_coin_for_test();
+
+    let tx = unwrap!(hex::decode("33779e4012ca4ec683bd4ef207545283590e5072ac7a229ab94d18ad60f4cc2c0800002969737230bd5ea60f632b52777981e43a25d069a08d06850680ea30e0d4030001a1b26740e4d3d718c06a5ed58a59ba27d29b6ef500ff000000b7000508050507070a00000011eeefb15feb274d129281b91e9252cb6d0007070100000014313937302d30312d30315430303a30303a30305a07070a0000002066687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f292507070100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779700707000101000000244b5431427a71326d50765a6b366a646d537a765679535872516859727962506e6e78795ab842a6fe7213e14de5d0818aab8be261400342aaa039c86550fb5b1e9682e8f844ed1057c6ac6df161ffc5829991c44a7facba11cbf4d8b20bc14cb93462c60a"));
+    let spend_tx = unwrap!(coin.search_for_swap_tx_spend_my(
+        0,
+        &coin.get_pubkey(),
+        &[],
+        &tx,
+        228393,
+    ).wait());
+    let spend_tx = unwrap!(spend_tx);
+    match spend_tx {
+        FoundSwapTxSpend::Spent(_) => panic!("Must be FoundSwapTxSpend::Refunded"),
+        FoundSwapTxSpend::Refunded(spend_tx) => assert_eq!("oowh3N1N1ftS2iJnB8EAaPHzLnQnLFvosHQx8KA6GAoHHeXM3hm", coin.tx_hash_to_string(&spend_tx.tx_hash())),
     };
 }
 
