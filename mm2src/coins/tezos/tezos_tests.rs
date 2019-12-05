@@ -301,10 +301,12 @@ fn operation_hash_from_op_bytes() {
 
 #[test]
 fn key_pair_get_address() {
-    let key_pair: TezosKeyPair = unwrap!("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ".parse());
+    let secret: TezosSecret = unwrap!("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ".parse());
+    let key_pair = unwrap!(TezosKeyPair::from_bytes(&*secret.data));
+
     let expected = TezosAddress {
         prefix: [6, 161, 159],
-        hash: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
+        data: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
     };
 
     assert_eq!(expected, key_pair.get_address([6, 161, 159]));
@@ -314,7 +316,7 @@ fn key_pair_get_address() {
 fn tezos_address_from_to_string() {
     let address = TezosAddress {
         prefix: [6, 161, 159],
-        hash: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
+        data: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
     };
 
     assert_eq!("tz1faswCTDciRzE4oJ9jn2Vm2dvjeyA9fUzU", address.to_string());
@@ -325,7 +327,7 @@ fn tezos_address_from_to_string() {
 fn tezos_pubkey_from_to_string() {
     let pubkey = TezosPubkey {
         prefix: [13, 15, 37, 217],
-        bytes: vec![166, 202, 119, 231, 228, 189, 30, 242, 46, 204, 159, 12, 12, 218, 180, 41, 168, 96, 249, 96, 99, 204, 81, 186, 149, 15, 209, 40, 198, 67, 175, 141],
+        data: vec![166, 202, 119, 231, 228, 189, 30, 242, 46, 204, 159, 12, 12, 218, 180, 41, 168, 96, 249, 96, 99, 204, 81, 186, 149, 15, 209, 40, 198, 67, 175, 141],
     };
 
     assert_eq!(pubkey, unwrap!(TezosPubkey::from_str("edpkuugPN19icgASNMSTiVFeF4F1htia8YwA67ZANiMUEFTEzMZ4dQ")));
@@ -336,7 +338,7 @@ fn tezos_pubkey_from_to_string() {
 fn tezos_block_hash_from_to_string() {
     let block_hash = TezosBlockHash {
         prefix: [1, 52],
-        hash: H256::from([179, 210, 18, 192, 241, 185, 183, 107, 195, 238, 140, 247, 125, 33, 193, 145, 186, 39, 80, 186, 231, 132, 73, 236, 217, 134, 218, 226, 45, 91, 94, 180]),
+        data: H256::from([179, 210, 18, 192, 241, 185, 183, 107, 195, 238, 140, 247, 125, 33, 193, 145, 186, 39, 80, 186, 231, 132, 73, 236, 217, 134, 218, 226, 45, 91, 94, 180]),
     };
 
     assert_eq!("BM5UcRC5rLiajhwDNEmF3mF152f2Uiaqsj9CFTr4WyQvCsaY4pm", block_hash.to_string());
@@ -347,7 +349,7 @@ fn tezos_block_hash_from_to_string() {
 fn dune_address_from_to_string() {
     let address = TezosAddress {
         prefix: [4, 177, 1],
-        hash: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
+        data: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
     };
 
     assert_eq!("dn1c5mt3XTbLo5mKBpaTqidP6bSzUVD9T5By", address.to_string());
@@ -355,7 +357,7 @@ fn dune_address_from_to_string() {
 
     let address = TezosAddress {
         prefix: [4, 177, 3],
-        hash: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
+        data: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
     };
 
     assert_eq!("dn2QkyrG831hiqQBTzdJWMbdeAhzzNcD1qE6", address.to_string());
@@ -363,7 +365,7 @@ fn dune_address_from_to_string() {
 
     let address = TezosAddress {
         prefix: [4, 177, 6],
-        hash: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
+        data: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
     };
 
     assert_eq!("dn3cmnob1u9F7TrUtFhZWK41TXbWmCnHRWw9", address.to_string());
@@ -371,7 +373,7 @@ fn dune_address_from_to_string() {
 
     let address = TezosAddress {
         prefix: [2, 90, 121],
-        hash: H160::from([26, 143, 122, 34, 221, 133, 45, 28, 133, 66, 215, 149, 234, 227, 176, 148, 167, 198, 41, 170]),
+        data: H160::from([26, 143, 122, 34, 221, 133, 45, 28, 133, 66, 215, 149, 234, 227, 176, 148, 167, 198, 41, 170]),
     };
 
     assert_eq!(address, unwrap!(TezosAddress::from_str("KT1B1D1iVrVyrABRRp6PxPU894dzWghvt4mf")));
@@ -379,18 +381,14 @@ fn dune_address_from_to_string() {
 }
 
 #[test]
-fn tezos_key_pair_from_to_string() {
-    let key_pair = TezosKeyPair::ED25519(EdKeypair {
-        secret: unwrap!(EdSecretKey::from_bytes(&[197, 109, 203, 119, 241, 255, 240, 13, 26, 31, 83, 48, 167, 122, 159, 31, 49, 207, 112, 250, 122, 214, 145, 162, 43, 94, 194, 140, 219, 35, 35, 80])),
-        public: unwrap!(EdPublicKey::from_bytes(&[107, 106, 160, 0, 4, 28, 170, 101, 209, 223, 114, 53, 77, 50, 155, 234, 226, 167, 130, 197, 144, 33, 242, 92, 111, 64, 191, 74, 136, 120, 28, 27])),
-    });
+fn tezos_secret_from_to_string() {
+    let secret = TezosSecret {
+        prefix: ED_SK_PREFIX,
+        data: [197, 109, 203, 119, 241, 255, 240, 13, 26, 31, 83, 48, 167, 122, 159, 31, 49, 207, 112, 250, 122, 214, 145, 162, 43, 94, 194, 140, 219, 35, 35, 80].into(),
+    };
 
-    assert_eq!("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ", key_pair.to_string());
-    assert_eq!(key_pair, unwrap!(TezosKeyPair::from_str("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ")));
-
-    let key_pair: TezosKeyPair = "edsk2j9jaipLSH77rtwZFroZqEoSkr5fFUzcPqhphBH3BKudQU9rtw".parse().unwrap();
-    log!([key_pair]);
-    log!((hex::encode([7, 96, 182, 24, 158, 16, 97, 13, 56, 0, 215, 93, 20, 255, 226, 240, 171, 179, 95, 139, 246, 18, 169, 81, 11, 85, 152, 217, 120, 248, 63, 122])));
+    assert_eq!(secret, unwrap!(TezosSecret::from_str("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ")));
+    assert_eq!("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ", secret.to_string());
 }
 
 #[test]
@@ -490,5 +488,5 @@ fn test_rpc_operation_result_deserialization() {
     let ops: Vec<Vec<OperationsResult>> = unwrap!(json::from_str(json_str));
 
     let json_str = r#"[[{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"ooHLZQ8gtAh8BNNKkvesjykH4rSp19Z2jXBazbbyFQFhfSYDogC","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"endorsement","level":206532,"metadata":{"balance_updates":[{"kind":"contract","contract":"dn1MLnf3qjGsnaStSg1jMmsdgXKz9hteWE9i","change":"-128000000"},{"kind":"freezer","category":"deposits","delegate":"dn1MLnf3qjGsnaStSg1jMmsdgXKz9hteWE9i","cycle":100,"change":"128000000"},{"kind":"freezer","category":"rewards","delegate":"dn1MLnf3qjGsnaStSg1jMmsdgXKz9hteWE9i","cycle":100,"change":"4000000"}],"delegate":"dn1MLnf3qjGsnaStSg1jMmsdgXKz9hteWE9i","slots":[22,20]}}],"signature":"sigfVodD7NY5AEP6Gt7Jv7eeKNuud9AVv1g6xAxg6BoVivPciu2nsPXr7Lv5PBPqY5GMRkBV32y5dkHa726aPSynZd1ZNpdp"},{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"oohsux3n4cDarf4uQ26A1Hjp72Nu8vvy2QtUrvimK1oySWvDd3N","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"endorsement","level":206532,"metadata":{"balance_updates":[{"kind":"contract","contract":"dn1dXN68hzaNBVDrj2WHS2jrbWc3iamjxoaH","change":"-128000000"},{"kind":"freezer","category":"deposits","delegate":"dn1dXN68hzaNBVDrj2WHS2jrbWc3iamjxoaH","cycle":100,"change":"128000000"},{"kind":"freezer","category":"rewards","delegate":"dn1dXN68hzaNBVDrj2WHS2jrbWc3iamjxoaH","cycle":100,"change":"4000000"}],"delegate":"dn1dXN68hzaNBVDrj2WHS2jrbWc3iamjxoaH","slots":[17,4]}}],"signature":"sigWiqsgkhJdMU3ao3DERjhYhEHcED1ecHgMt8iNTTb7S27kEJN56jahjJR5vLrUZPav4wNSMFmtD987JAS3WTAcaxfjQmFj"},{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"opDRfuGQ9JwNfAifni9ZeCzPgACgwJg8wGGb6gouxC6tnPAAjJm","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"endorsement","level":206532,"metadata":{"balance_updates":[{"kind":"contract","contract":"dn1PgwzYhTWGCzfXwRfMzRTbATUUADSq4Xgc","change":"-640000000"},{"kind":"freezer","category":"deposits","delegate":"dn1PgwzYhTWGCzfXwRfMzRTbATUUADSq4Xgc","cycle":100,"change":"640000000"},{"kind":"freezer","category":"rewards","delegate":"dn1PgwzYhTWGCzfXwRfMzRTbATUUADSq4Xgc","cycle":100,"change":"20000000"}],"delegate":"dn1PgwzYhTWGCzfXwRfMzRTbATUUADSq4Xgc","slots":[31,27,25,23,21,16,13,6,3,2]}}],"signature":"sigs1oXAAUDviwsY8JhttTS9kTVNwJxWKNc3Aq6s81Qdjkq479pvzSivw9dsz7CBktDNcLWn1onCFN4A8SmED1ZYFHJbxFSc"},{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"ooKKxJtmJ3L1xoZL3c5BK77x5W4WtsPz2wYw3VAwTpUvWgU2LNg","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"endorsement","level":206532,"metadata":{"balance_updates":[{"kind":"contract","contract":"dn1Yx2o6zeRHkfS6Zng25HzqD4yGkesZepGZ","change":"-320000000"},{"kind":"freezer","category":"deposits","delegate":"dn1Yx2o6zeRHkfS6Zng25HzqD4yGkesZepGZ","cycle":100,"change":"320000000"},{"kind":"freezer","category":"rewards","delegate":"dn1Yx2o6zeRHkfS6Zng25HzqD4yGkesZepGZ","cycle":100,"change":"10000000"}],"delegate":"dn1Yx2o6zeRHkfS6Zng25HzqD4yGkesZepGZ","slots":[29,18,11,10,9]}}],"signature":"sigfbhnnTytJTpWir5HCrXfi9ZuKCJaroviVNjCdUPehuzH6NSfX6cvUCWw7VJEKJgxNa4uQsEmfKnEXxtVfz8hw3LbdqXDP"},{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"ooSivyWDBsYgBFUWm8zJtvU5FEPUptzPgUTuZ5pJJcDHcTkZtt8","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"endorsement","level":206532,"metadata":{"balance_updates":[{"kind":"contract","contract":"dn1YJhqRgFWHKsaYE1JL8xyCrS8eeqXTusuu","change":"-832000000"},{"kind":"freezer","category":"deposits","delegate":"dn1YJhqRgFWHKsaYE1JL8xyCrS8eeqXTusuu","cycle":100,"change":"832000000"},{"kind":"freezer","category":"rewards","delegate":"dn1YJhqRgFWHKsaYE1JL8xyCrS8eeqXTusuu","cycle":100,"change":"26000000"}],"delegate":"dn1YJhqRgFWHKsaYE1JL8xyCrS8eeqXTusuu","slots":[30,28,26,24,19,15,14,12,8,7,5,1,0]}}],"signature":"sigX3Kxh9mcUdsLCYRk1WtCrpPa3ghDDe9p1DSZ8kNYi2yBzC32QvaX2dTDQpuYWShB1VfngxBLMr6gUJTASGkwhrJNF1vHB"}],[],[{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"onrJv1dFBo8Eks8ciNLwpZ62R8c17tHwNY21tc3f4rg5jScKQR9","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"activate_account","pkh":"dn1SdzZ9SkH4WddiXqRvvhWoUFX9WiVLyH8d","secret":"2cc153085b58580257a1dcea5b014cc491f9d33e","metadata":{"balance_updates":[{"kind":"contract","contract":"dn1SdzZ9SkH4WddiXqRvvhWoUFX9WiVLyH8d","change":"56678528777"}]}}],"signature":"sigddhNu7gbAkJgrULe2Wdjwxuxwp4hBUfWB7N5wE2rrncNKe9v7R7DpeqHMUu73DC1UkNwrqaYpNJgGGbQ1c9vc2c5RWG8r"}],[]]"#;
-    let ops: Vec<Vec<OperationsResult>> = unwrap!(json::from_str(json_str));
+    let _ops: Vec<Vec<OperationsResult>> = unwrap!(json::from_str(json_str));
 }

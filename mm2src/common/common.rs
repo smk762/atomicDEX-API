@@ -57,6 +57,8 @@ macro_rules! ifrom {
 }   }   }   }
 
 #[macro_use]
+pub mod base58_checksum_encoding;
+#[macro_use]
 pub mod jsonrpc_client;
 #[macro_use]
 pub mod log;

@@ -20,6 +20,7 @@ doctest = false
 arrayref = "0.3"
 atomic = "0.4"
 backtrace = "0.3"
+base58 = "0.1.0"
 bigdecimal = { version = "0.1", features = ["serde"] }
 bitcrypto = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 bytes = "0.4"

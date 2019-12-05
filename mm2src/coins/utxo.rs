@@ -1403,7 +1403,12 @@ impl MarketCoinOps for UtxoCoin {
         hex::encode(hash)
     }
 
-    fn get_pubkey(&self) -> EcPubkey { unimplemented!() }
+    fn get_pubkey(&self) -> EcPubkey {
+        EcPubkey {
+            curve_type: CurveType::SECP256K1,
+            bytes: self.key_pair.public().to_vec(),
+        }
+    }
 }
 
 async fn withdraw_impl(coin: UtxoCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
