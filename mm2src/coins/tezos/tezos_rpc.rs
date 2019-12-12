@@ -101,6 +101,12 @@ pub struct Origination {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TransactionParameters {
+    pub entrypoint: String,
+    pub value: TezosValue,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Transaction {
     pub amount: TezosUint,
     pub counter: TezosUint,
@@ -108,7 +114,7 @@ pub struct Transaction {
     pub fee: TezosUint,
     pub gas_limit: TezosUint,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<TezosValue>,
+    pub parameters: Option<TransactionParameters>,
     pub source: String,
     pub storage_limit: TezosUint,
 }

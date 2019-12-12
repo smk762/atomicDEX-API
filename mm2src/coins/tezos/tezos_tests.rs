@@ -1,13 +1,14 @@
 use super::*;
 use crate::tezos::tezos_rpc::OperationsResult;
+use bitcrypto::sha256;
 
 fn tezos_coin_for_test() -> TezosCoin {
     let conf = json!({
-        "coin": "DUNETEST",
-        "name": "dunetestnet",
-        "ed25519_addr_prefix": [4, 177, 1],
-        "secp256k1_addr_prefix": [4, 177, 3],
-        "p256_addr_prefix": [4, 177, 6],
+        "coin": "TEZOS",
+        "name": "tezosbabylonnet",
+        "ed25519_addr_prefix": TZ1_ADDR_PREFIX,
+        "secp256k1_addr_prefix": TZ2_ADDR_PREFIX,
+        "p256_addr_prefix": TZ3_ADDR_PREFIX,
         "protocol": {
           "platform": "TEZOS",
           "token_type": "TEZOS"
@@ -16,14 +17,14 @@ fn tezos_coin_for_test() -> TezosCoin {
     });
     let req = json!({
         "method": "enable",
-        "coin": "DUNETEST",
+        "coin": "TEZOS",
         "urls": [
-            "https://testnet-node.dunscan.io"
+            "https://tezos-dev.cryptonomic-infra.tech"
         ],
         "mm2":1
     });
-    let priv_key = hex::decode("0760b6189e10610d3800d75d14ffe2f0abb35f8bf612a9510b5598d978f83f7a").unwrap();
-    let coin = block_on(tezos_coin_from_conf_and_request("DUNETEST", &conf, &req, &priv_key)).unwrap();
+    let priv_key = hex::decode("3dc9187936e4bf40daf1aebdf4c58b7cb9665102c03640b9d696a260d87b1da5").unwrap();
+    let coin = block_on(tezos_coin_from_conf_and_request("TEZOS", &conf, &req, &priv_key)).unwrap();
     coin
 }
 
@@ -31,9 +32,9 @@ fn tezos_erc_coin_for_test() -> TezosCoin {
     let conf = json!({
         "coin": "DUNETESTERC",
         "name": "dunetesterc",
-        "ed25519_addr_prefix": [4, 177, 1],
-        "secp256k1_addr_prefix": [4, 177, 3],
-        "p256_addr_prefix": [4, 177, 6],
+        "ed25519_addr_prefix": TZ1_ADDR_PREFIX,
+        "secp256k1_addr_prefix": TZ2_ADDR_PREFIX,
+        "p256_addr_prefix": TZ3_ADDR_PREFIX,
         "protocol": {
             "platform": "TEZOS",
             "token_type": "ERC20",
@@ -180,6 +181,18 @@ fn test_operation_serde() {
     let op: TezosOperation = unwrap!(deserialize(tx_bytes.as_slice()));
     let serialized = serialize(&op).take();
     assert_eq!(tx_bytes, serialized);
+
+    let tx_hex = "153f0b9951baba428160f18453096732e426dee03651c3d63c5a6cf9ab4656dc6c00b365d13ec590bd135a6fd89eff97fe03530436f9a08d06b0d90880ea30e0d403c0843d01ee864ed14b5b3ed1b2f73e421831664bc953dfc400ff0000000085050507070a00000011f6fb2562faab4557a7bed5b0f138c38c0107070100000014313937302d30312d30315430303a30303a30305a07070a00000020e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8550100000024747a31627a6263724c35663255356341564d67435544315637574e344c3959503668706e104decd5049f0e3e5982e0d184b094004308523e88f69242f35a63278f56dd5fb3ae29e8187639cac3849611f68fc9cbd003d04d663d8745129f454ae2a3cb04";
+    let tx_bytes = hex::decode(tx_hex).unwrap();
+    let op: TezosOperation = unwrap!(deserialize(tx_bytes.as_slice()));
+    let serialized = serialize(&op).take();
+    assert_eq!(tx_bytes, serialized);
+
+    let tx_hex = "242521d18d9f9f304a7aafe31774903969e8debcdbf175d58fb3ee87d3eabb416c00b365d13ec590bd135a6fd89eff97fe03530436f9a08d06b1d90880ea30e0d403c0843d01ee864ed14b5b3ed1b2f73e421831664bc953dfc400ffff0f696e69745f74657a6f735f737761700000008307070a0000001196543e4cfefd474c9a6c6f152c06c7d50107070100000014313937302d30312d30315430303a30303a30305a07070a00000020e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8550100000024747a31627a6263724c35663255356341564d67435544315637574e344c3959503668706e6329a93d1da372dcc9da8ecebb09062b5fe19210aaaf660e43365214be06ffecc1ae1ce46dcf32cadd914887ca901677777e6a2fa86d92de7c93318edf72580c";
+    let tx_bytes = hex::decode(tx_hex).unwrap();
+    let op: TezosOperation = unwrap!(deserialize(tx_bytes.as_slice()));
+    let serialized = serialize(&op).take();
+    assert_eq!(tx_bytes, serialized);
 }
 
 #[test]
@@ -262,9 +275,7 @@ fn test_construct_function_call() {
 fn deserialize_erc_storage() {
     let json = r#"{"prim":"Pair","args":[[],{"prim":"Pair","args":[{"int":"1"},{"prim":"Pair","args":[{"int":"100000"},{"prim":"Pair","args":[{"int":"0"},{"prim":"Pair","args":[{"string":"TEST"},{"prim":"Pair","args":[{"string":"TEST"},{"string":"dn1Kutfh4ewtNxu9FcwDHfz7X4SWuWZdRGyp"}]}]}]}]}]}]}"#;
     let pair: TezosValue = json::from_str(&json).unwrap();
-    log!([pair]);
     let storage = unwrap!(TezosErcStorage::try_from(pair));
-    log!([storage]);
 }
 
 #[test]
@@ -384,11 +395,28 @@ fn dune_address_from_to_string() {
 fn tezos_secret_from_to_string() {
     let secret = TezosSecret {
         prefix: ED_SK_PREFIX,
-        data: [197, 109, 203, 119, 241, 255, 240, 13, 26, 31, 83, 48, 167, 122, 159, 31, 49, 207, 112, 250, 122, 214, 145, 162, 43, 94, 194, 140, 219, 35, 35, 80].into(),
+        data: vec![197, 109, 203, 119, 241, 255, 240, 13, 26, 31, 83, 48, 167, 122, 159, 31, 49, 207, 112, 250, 122, 214, 145, 162, 43, 94, 194, 140, 219, 35, 35, 80],
     };
 
     assert_eq!(secret, unwrap!(TezosSecret::from_str("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ")));
     assert_eq!("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ", secret.to_string());
+
+    let secret = TezosSecret {
+        prefix: [43, 246, 78, 7],
+        data: vec![61, 201, 24, 121, 54, 228, 191, 64, 218, 241, 174, 189, 244, 197, 139, 124, 185, 102, 81, 2, 192, 54, 64, 185, 214, 150, 162, 96, 216, 123, 29, 165, 142, 161, 192, 170, 205, 174, 219, 163, 231, 121, 0, 121, 201, 83, 211, 80, 128, 182, 202, 191, 220, 249, 57, 121, 194, 72, 41, 174, 166, 58, 21, 17],
+    };
+
+    assert_eq!(secret, unwrap!(TezosSecret::from_str("edskRk6cFnKSme2QuwCA3pCtqQYujU2P1mUWzFeDswm776jqMio7W2eYwV62y2nXfRhvqFw48H7Sf8Q24F2n8RuqCBXBdKxFCs")));
+    assert_eq!("edskRk6cFnKSme2QuwCA3pCtqQYujU2P1mUWzFeDswm776jqMio7W2eYwV62y2nXfRhvqFw48H7Sf8Q24F2n8RuqCBXBdKxFCs", secret.to_string());
+
+    let secret = TezosSecret {
+        prefix: ED_SK_PREFIX,
+        data: vec![61, 201, 24, 121, 54, 228, 191, 64, 218, 241, 174, 189, 244, 197, 139, 124, 185, 102, 81, 2, 192, 54, 64, 185, 214, 150, 162, 96, 216, 123, 29, 165],
+    };
+
+    log!((hex::encode(&secret.data)));
+    assert_eq!("edsk397WR2NimQ6WxgjQiPPkfJFC1YqM2RqA3sVhHuXtTvr2YGmQ5x", secret.to_string());
+    assert_eq!(secret, unwrap!(TezosSecret::from_str("edsk397WR2NimQ6WxgjQiPPkfJFC1YqM2RqA3sVhHuXtTvr2YGmQ5x")));
 }
 
 #[test]
@@ -489,4 +517,74 @@ fn test_rpc_operation_result_deserialization() {
 
     let json_str = r#"[[{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"ooHLZQ8gtAh8BNNKkvesjykH4rSp19Z2jXBazbbyFQFhfSYDogC","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"endorsement","level":206532,"metadata":{"balance_updates":[{"kind":"contract","contract":"dn1MLnf3qjGsnaStSg1jMmsdgXKz9hteWE9i","change":"-128000000"},{"kind":"freezer","category":"deposits","delegate":"dn1MLnf3qjGsnaStSg1jMmsdgXKz9hteWE9i","cycle":100,"change":"128000000"},{"kind":"freezer","category":"rewards","delegate":"dn1MLnf3qjGsnaStSg1jMmsdgXKz9hteWE9i","cycle":100,"change":"4000000"}],"delegate":"dn1MLnf3qjGsnaStSg1jMmsdgXKz9hteWE9i","slots":[22,20]}}],"signature":"sigfVodD7NY5AEP6Gt7Jv7eeKNuud9AVv1g6xAxg6BoVivPciu2nsPXr7Lv5PBPqY5GMRkBV32y5dkHa726aPSynZd1ZNpdp"},{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"oohsux3n4cDarf4uQ26A1Hjp72Nu8vvy2QtUrvimK1oySWvDd3N","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"endorsement","level":206532,"metadata":{"balance_updates":[{"kind":"contract","contract":"dn1dXN68hzaNBVDrj2WHS2jrbWc3iamjxoaH","change":"-128000000"},{"kind":"freezer","category":"deposits","delegate":"dn1dXN68hzaNBVDrj2WHS2jrbWc3iamjxoaH","cycle":100,"change":"128000000"},{"kind":"freezer","category":"rewards","delegate":"dn1dXN68hzaNBVDrj2WHS2jrbWc3iamjxoaH","cycle":100,"change":"4000000"}],"delegate":"dn1dXN68hzaNBVDrj2WHS2jrbWc3iamjxoaH","slots":[17,4]}}],"signature":"sigWiqsgkhJdMU3ao3DERjhYhEHcED1ecHgMt8iNTTb7S27kEJN56jahjJR5vLrUZPav4wNSMFmtD987JAS3WTAcaxfjQmFj"},{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"opDRfuGQ9JwNfAifni9ZeCzPgACgwJg8wGGb6gouxC6tnPAAjJm","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"endorsement","level":206532,"metadata":{"balance_updates":[{"kind":"contract","contract":"dn1PgwzYhTWGCzfXwRfMzRTbATUUADSq4Xgc","change":"-640000000"},{"kind":"freezer","category":"deposits","delegate":"dn1PgwzYhTWGCzfXwRfMzRTbATUUADSq4Xgc","cycle":100,"change":"640000000"},{"kind":"freezer","category":"rewards","delegate":"dn1PgwzYhTWGCzfXwRfMzRTbATUUADSq4Xgc","cycle":100,"change":"20000000"}],"delegate":"dn1PgwzYhTWGCzfXwRfMzRTbATUUADSq4Xgc","slots":[31,27,25,23,21,16,13,6,3,2]}}],"signature":"sigs1oXAAUDviwsY8JhttTS9kTVNwJxWKNc3Aq6s81Qdjkq479pvzSivw9dsz7CBktDNcLWn1onCFN4A8SmED1ZYFHJbxFSc"},{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"ooKKxJtmJ3L1xoZL3c5BK77x5W4WtsPz2wYw3VAwTpUvWgU2LNg","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"endorsement","level":206532,"metadata":{"balance_updates":[{"kind":"contract","contract":"dn1Yx2o6zeRHkfS6Zng25HzqD4yGkesZepGZ","change":"-320000000"},{"kind":"freezer","category":"deposits","delegate":"dn1Yx2o6zeRHkfS6Zng25HzqD4yGkesZepGZ","cycle":100,"change":"320000000"},{"kind":"freezer","category":"rewards","delegate":"dn1Yx2o6zeRHkfS6Zng25HzqD4yGkesZepGZ","cycle":100,"change":"10000000"}],"delegate":"dn1Yx2o6zeRHkfS6Zng25HzqD4yGkesZepGZ","slots":[29,18,11,10,9]}}],"signature":"sigfbhnnTytJTpWir5HCrXfi9ZuKCJaroviVNjCdUPehuzH6NSfX6cvUCWw7VJEKJgxNa4uQsEmfKnEXxtVfz8hw3LbdqXDP"},{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"ooSivyWDBsYgBFUWm8zJtvU5FEPUptzPgUTuZ5pJJcDHcTkZtt8","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"endorsement","level":206532,"metadata":{"balance_updates":[{"kind":"contract","contract":"dn1YJhqRgFWHKsaYE1JL8xyCrS8eeqXTusuu","change":"-832000000"},{"kind":"freezer","category":"deposits","delegate":"dn1YJhqRgFWHKsaYE1JL8xyCrS8eeqXTusuu","cycle":100,"change":"832000000"},{"kind":"freezer","category":"rewards","delegate":"dn1YJhqRgFWHKsaYE1JL8xyCrS8eeqXTusuu","cycle":100,"change":"26000000"}],"delegate":"dn1YJhqRgFWHKsaYE1JL8xyCrS8eeqXTusuu","slots":[30,28,26,24,19,15,14,12,8,7,5,1,0]}}],"signature":"sigX3Kxh9mcUdsLCYRk1WtCrpPa3ghDDe9p1DSZ8kNYi2yBzC32QvaX2dTDQpuYWShB1VfngxBLMr6gUJTASGkwhrJNF1vHB"}],[],[{"protocol":"Pt24m4xiPbLDhVgVfABUjirbmda3yohdN82Sp9FeuAXJ4eV9otd","chain_id":"NetXJr1E3KSpaPR","hash":"onrJv1dFBo8Eks8ciNLwpZ62R8c17tHwNY21tc3f4rg5jScKQR9","branch":"BMaA73D1hfdy5wsPZhGFyG8pez8xWNh34CVF7T3k1k3Hg9F8Kzt","contents":[{"kind":"activate_account","pkh":"dn1SdzZ9SkH4WddiXqRvvhWoUFX9WiVLyH8d","secret":"2cc153085b58580257a1dcea5b014cc491f9d33e","metadata":{"balance_updates":[{"kind":"contract","contract":"dn1SdzZ9SkH4WddiXqRvvhWoUFX9WiVLyH8d","change":"56678528777"}]}}],"signature":"sigddhNu7gbAkJgrULe2Wdjwxuxwp4hBUfWB7N5wE2rrncNKe9v7R7DpeqHMUu73DC1UkNwrqaYpNJgGGbQ1c9vc2c5RWG8r"}],[]]"#;
     let _ops: Vec<Vec<OperationsResult>> = unwrap!(json::from_str(json_str));
+}
+
+#[test]
+fn test_coin_from_conf_and_request() {
+    let conf = json!({
+        "coin": "TEZOS",
+        "name": "tezosbabylonnet",
+        "ed25519_addr_prefix": TZ1_ADDR_PREFIX,
+        "secp256k1_addr_prefix": TZ2_ADDR_PREFIX,
+        "p256_addr_prefix": TZ3_ADDR_PREFIX,
+        "protocol": {
+          "platform": "TEZOS",
+          "token_type": "TEZOS"
+        },
+        "mm2": 1
+    });
+    let req = json!({
+        "method": "enable",
+        "coin": "TEZOS",
+        "urls": [
+            "https://tezos-dev.cryptonomic-infra.tech"
+        ],
+        "mm2":1
+    });
+    let priv_key = hex::decode("3dc9187936e4bf40daf1aebdf4c58b7cb9665102c03640b9d696a260d87b1da5").unwrap();
+    let coin = block_on(tezos_coin_from_conf_and_request("TEZOS", &conf, &req, &priv_key)).unwrap();
+    assert_eq!(TZ1_ADDR_PREFIX, coin.addr_prefixes.ed25519);
+    assert_eq!(TZ2_ADDR_PREFIX, coin.addr_prefixes.secp256k1);
+    assert_eq!(TZ3_ADDR_PREFIX, coin.addr_prefixes.p256);
+}
+
+#[test]
+fn send_taker_payment() {
+    use common::new_uuid;
+    let coin = tezos_coin_for_test();
+    let block = coin.current_block().wait().unwrap();
+    let uuid = new_uuid();
+    let payment = coin.send_taker_payment(
+        uuid.as_bytes(),
+        (now_ms() / 1000) as u32 + 2000,
+        &coin.get_pubkey(),
+        &*sha256(&[]),
+        "0.1".parse().unwrap(),
+    ).wait().unwrap();
+    log!((payment.tx_hash));
+    coin.wait_for_confirmations(
+        &payment.tx_hex,
+        1,
+        now_ms() / 1000 + 2000,
+        10,
+        block,
+    ).wait().unwrap();
+
+    let refund = coin.send_taker_refunds_payment(
+        uuid.as_bytes(),
+        &payment.tx_hex,
+        (now_ms() / 1000) as u32 + 2000,
+        &coin.get_pubkey(),
+        &*sha256(&[]),
+    ).wait().unwrap();
+
+    log!((coin.tx_hash_to_string(&refund.tx_hash())));
+
+    coin.wait_for_confirmations(
+        &refund.tx_hex(),
+        1,
+        now_ms() / 1000 + 2000,
+        10,
+        block,
+    ).wait().unwrap();
 }

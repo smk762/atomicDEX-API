@@ -37,6 +37,8 @@ use super::{CurveType, EcPubkey, HistorySyncState, MarketCoinOps, MmCoin, SwapOp
             Transaction, TransactionDetails, TransactionDetailsFut, TransactionEnum, TransactionFut};
 use common::{block_on, now_ms};
 
+mod tezos_constants;
+use tezos_constants::*;
 mod tezos_rpc;
 
 macro_rules! tezos_func {
@@ -62,7 +64,7 @@ mod tezos_tests;
 
 use self::tezos_rpc::{BigMapReq, ForgeOperationsRequest, Operation, PreapplyOperation,
                       PreapplyOperationsRequest, TezosInputType, TezosRpcClient, Transaction as Tx};
-use crate::tezos::tezos_rpc::{Reveal, OperationStatus};
+use crate::tezos::tezos_rpc::{Reveal, OperationStatus, TransactionParameters};
 
 fn blake2b_256(input: &[u8]) -> H256 {
     let mut blake = unwrap!(VarBlake2b::new(32));
@@ -75,9 +77,6 @@ fn blake2b_160(input: &[u8]) -> H160 {
     blake.input(&input);
     H160::from(blake.vec_result().as_slice())
 }
-
-const ED_SK_PREFIX: [u8; 4] = [13, 15, 58, 7];
-const ED_SIG_PREFIX: [u8; 5] = [9, 245, 205, 134, 18];
 
 #[derive(Debug, Eq, PartialEq)]
 struct TezosSignature {
@@ -129,10 +128,10 @@ impl_base58_checksum_encoding!(TezosBlockHash, (2, 38));
 #[derive(Debug, PartialEq)]
 struct TezosSecret {
     prefix: [u8; 4],
-    data: H256,
+    data: Vec<u8>,
 }
 
-impl_base58_checksum_encoding!(TezosSecret, (4, 40));
+impl_base58_checksum_encoding!(TezosSecret, (4, 40), (4, 72));
 
 /// Represents possible elliptic curves keypairs supported by Tezos
 #[derive(Debug)]
@@ -309,11 +308,12 @@ impl TezosCoinImpl {
         &self,
         amount: BigUint,
         destination: &TezosAddress,
-        parameters: Option<TezosValue>
+        parameters: Option<TransactionParameters>
     ) -> Result<TezosOperation, String> {
         let mut operations = vec![];
         let mut counter = TezosUint(try_s!(self.rpc_client.counter(&self.my_address.to_string()).await) + BigUint::from(1u8));
         let head = try_s!(self.rpc_client.block_header("head").await);
+        /*
         let manager_key = try_s!(self.rpc_client.manager_key(&self.my_address.to_string()).await);
         match manager_key.key {
             Some(_) => (),
@@ -330,6 +330,7 @@ impl TezosCoinImpl {
                 counter = counter + TezosUint(BigUint::from(0u8));
             },
         };
+        */
         let op = Operation::transaction(Tx {
             amount: amount.into(),
             counter,
@@ -366,7 +367,9 @@ impl TezosCoinImpl {
         try_s!(self.rpc_client.preapply_operations(preapply_req).await);
         prefixed.extend_from_slice(&signature.data);
         prefixed.remove(0);
-        try_s!(self.rpc_client.inject_operation(&hex::encode(&prefixed)).await);
+        let hex_encoded = hex::encode(&prefixed);
+        log!((hex_encoded));
+        try_s!(self.rpc_client.inject_operation(&hex_encoded).await);
         Ok(deserialize(prefixed.as_slice()).unwrap())
     }
 
@@ -411,7 +414,7 @@ impl TezosCoinImpl {
                     TezosCoinType::ERC(ref token_addr) =>
                         init_tezos_erc_swap_call(uuid.into(), time_lock, secret_hash.into(), self.my_address.clone(), amount, token_addr),
                 };
-                if tx.parameters != Some(expected_params) {
+                if tx.parameters != Some(expected_params.value) {
                     return ERR!("Invalid transaction parameters");
                 };
                 Ok(())
@@ -444,7 +447,7 @@ impl TezosCoinImpl {
                                     if tx.destination == self.swap_contract_address.to_string() {
                                         match tx.parameters {
                                             Some(ref params) => {
-                                                let (path, args) = read_function_call(vec![], params.clone());
+                                                let (path, args) = read_function_call(vec![], params.value.clone());
                                                 let (tx_uuid, _) = args.split_and_read_value();
                                                 if (path == [Or::L] || path == [Or::R, Or::L]) && tx_uuid == uuid {
                                                     let branch = unwrap!(TezosBlockHash::from_str(&operation.branch));
@@ -462,7 +465,7 @@ impl TezosCoinImpl {
                                                             fee: tx.fee.into(),
                                                             gas_limit: tx.gas_limit.into(),
                                                             storage_limit: tx.storage_limit.into(),
-                                                            parameters: tx.parameters,
+                                                            parameters: tx.parameters.map(|p| p.value),
                                                         })
                                                     };
                                                     return Ok(Some(operation.into()))
@@ -503,7 +506,7 @@ impl TezosCoinImpl {
                             if tx.destination == dest {
                                 match tx.parameters {
                                     Some(ref params) => {
-                                        let (path, args) = read_function_call(vec![], params.clone());
+                                        let (path, args) = read_function_call(vec![], params.value.clone());
                                         let (tx_uuid, _) = args.split_and_read_value();
                                         if path == entry_path && tx_uuid == *uuid {
                                             let branch = unwrap!(TezosBlockHash::from_str(&operation.branch));
@@ -521,7 +524,7 @@ impl TezosCoinImpl {
                                                     fee: tx.fee.into(),
                                                     gas_limit: tx.gas_limit.into(),
                                                     storage_limit: tx.storage_limit.into(),
-                                                    parameters: tx.parameters,
+                                                    parameters: tx.parameters.map(|p| p.value),
                                                 })
                                             };
                                             return Ok(Some(operation))
@@ -1057,7 +1060,7 @@ impl SwapOps for TezosCoin {
                                 return ERR!("Invalid dex fee tx destination");
                             }
                             let expected_params = erc_transfer_call(&fee_addr, &amount);
-                            if tx.parameters != Some(expected_params) {
+                            if tx.parameters != Some(expected_params.value) {
                                 return ERR!("Invalid dex fee tx parameters");
                             }
                         },
@@ -1378,9 +1381,9 @@ pub async fn tezos_coin_from_conf_and_request(
 
     Ok(TezosCoin(Arc::new(TezosCoinImpl {
         addr_prefixes: AddressPrefixes {
-            ed25519: [4, 177, 1],
-            secp256k1: [4, 177, 3],
-            p256: [4, 177, 6],
+            ed25519: try_s!(json::from_value(conf["ed25519_addr_prefix"].clone())),
+            secp256k1: try_s!(json::from_value(conf["secp256k1_addr_prefix"].clone())),
+            p256: try_s!(json::from_value(conf["p256_addr_prefix"].clone())),
             originated: [2, 90, 121],
         },
         coin_type,
@@ -1389,7 +1392,7 @@ pub async fn tezos_coin_from_conf_and_request(
         my_address,
         required_confirmations: conf["required_confirmations"].as_u64().unwrap_or(1).into(),
         rpc_client,
-        swap_contract_address: "KT1PKk5L9vt2RB1FcWNN1mBJQD3diafPNAD7".parse().unwrap(),
+        swap_contract_address: "KT1WKyHJ8k4uti1Rjg2Jno1tu391dQWECRiB".parse().unwrap(),
         ticker: ticker.into(),
     })))
 }
@@ -1758,12 +1761,18 @@ impl Into<TezosValue> for DateTime<Utc> {
     }
 }
 
-fn erc_transfer_call(to: &TezosAddress, amount: &BigUint) -> TezosValue {
-    tezos_func!(&[Or::L], to, amount)
+fn erc_transfer_call(to: &TezosAddress, amount: &BigUint) -> TransactionParameters {
+    TransactionParameters {
+        entrypoint: "default".into(),
+        value: tezos_func!( & [Or::L], to, amount),
+    }
 }
 
-fn erc_approve_call(spender: &TezosAddress, amount: &BigUint) -> TezosValue {
-    tezos_func!(&[Or::R, Or::L], spender, amount)
+fn erc_approve_call(spender: &TezosAddress, amount: &BigUint) -> TransactionParameters {
+    TransactionParameters {
+        entrypoint: "default".into(),
+        value: tezos_func!(&[Or::R, Or::L], spender, amount)
+    }
 }
 
 fn init_tezos_swap_call(
@@ -1771,9 +1780,12 @@ fn init_tezos_swap_call(
     time_lock: u32,
     secret_hash: BytesJson,
     receiver: TezosAddress,
-) -> TezosValue {
+) -> TransactionParameters {
     let time_lock = DateTime::from_utc(NaiveDateTime::from_timestamp(time_lock as i64, 0), Utc);
-    tezos_func!(&[Or::L], id, time_lock, secret_hash, receiver)
+    TransactionParameters {
+        entrypoint: "init_tezos_swap".into(),
+        value: tezos_func!(&[], id, time_lock, secret_hash, receiver)
+    }
 }
 
 fn init_tezos_erc_swap_call(
@@ -1783,24 +1795,33 @@ fn init_tezos_erc_swap_call(
     receiver: TezosAddress,
     amount: BigUint,
     erc_addr: &TezosAddress,
-) -> TezosValue {
+) -> TransactionParameters {
     let time_lock = DateTime::from_utc(NaiveDateTime::from_timestamp(time_lock as i64, 0), Utc);
-    tezos_func!(&[Or::R, Or::L], id, time_lock, secret_hash, receiver, amount, erc_addr)
+    TransactionParameters {
+        entrypoint: "default".into(),
+        value: tezos_func!(&[Or::R, Or::L], id, time_lock, secret_hash, receiver, amount, erc_addr)
+    }
 }
 
 fn receiver_spends_call(
     id: BytesJson,
     secret: BytesJson,
     send_to: TezosAddress,
-) -> TezosValue {
-    tezos_func!(&[Or::R, Or::R, Or::L], id, secret, send_to)
+) -> TransactionParameters {
+    TransactionParameters {
+        entrypoint: "default".into(),
+        value: tezos_func!(&[Or::R, Or::R, Or::L], id, secret, send_to)
+    }
 }
 
 fn sender_refunds_call(
     id: BytesJson,
     send_to: &TezosAddress,
-) -> TezosValue {
-    tezos_func!(&[Or::R, Or::R, Or::R], id, send_to)
+) -> TransactionParameters {
+    TransactionParameters {
+        entrypoint: "default".into(),
+        value: tezos_func!(&[Or::R, Or::R, Or::R], id, send_to)
+    }
 }
 
 fn construct_function_call(func: &[Or], args: TezosValue) -> TezosValue {
@@ -1860,6 +1881,35 @@ struct PubkeyHash {
     hash: H160,
 }
 
+impl Serializable for PubkeyHash {
+    fn serialize(&self, s: &mut Stream) {
+        match self.curve_type {
+            CurveType::ED25519 => s.append(&0u8),
+            CurveType::SECP256K1 => s.append(&1u8),
+            CurveType::P256 => s.append(&2u8),
+        };
+        s.append(&self.hash);
+    }
+}
+
+impl Deserializable for PubkeyHash {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        let curve_tag: u8 = reader.read()?;
+        let curve_type = match curve_tag {
+            0 => CurveType::ED25519,
+            1 => CurveType::SECP256K1,
+            2 => CurveType::P256,
+            _ => return Err(serialization::Error::MalformedData),
+        };
+        Ok(PubkeyHash {
+            curve_type,
+            hash: reader.read()?,
+        })
+    }
+}
+
 /// http://tezos.gitlab.io/api/p2p.html#contract-id-22-bytes-8-bit-tag
 #[derive(Clone, Debug, PartialEq)]
 enum ContractId {
@@ -1872,12 +1922,7 @@ impl Serializable for ContractId {
         match self {
             ContractId::PubkeyHash(hash) => {
                 s.append(&0u8);
-                match hash.curve_type {
-                    CurveType::ED25519 => s.append(&0u8),
-                    CurveType::SECP256K1 => s.append(&1u8),
-                    CurveType::P256 => s.append(&2u8),
-                };
-                s.append(&hash.hash);
+                s.append(hash);
             },
             ContractId::Originated(hash) => {
                 s.append(&1u8);
@@ -1894,19 +1939,7 @@ impl Deserializable for ContractId {
     {
         let tag: u8 = reader.read()?;
         match tag {
-            0 => {
-                let curve_tag: u8 = reader.read()?;
-                let curve_type = match curve_tag {
-                    0 => CurveType::ED25519,
-                    1 => CurveType::SECP256K1,
-                    2 => CurveType::P256,
-                    _ => return Err(serialization::Error::MalformedData),
-                };
-                Ok(ContractId::PubkeyHash(PubkeyHash {
-                    curve_type,
-                    hash: reader.read()?,
-                }))
-            },
+            0 => Ok(ContractId::PubkeyHash(reader.read()?)),
             1 => {
                 let hash = reader.read()?;
                 let _padding: u8 = reader.read()?;
@@ -2029,6 +2062,24 @@ pub struct TezosTransaction {
     parameters: Option<TezosValue>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct BabylonTransactionParams {
+    entrypoint: EntrypointId,
+    params: TezosValue,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BabylonTransaction {
+    source: PubkeyHash,
+    fee: TezosUint,
+    counter: TezosUint,
+    gas_limit: TezosUint,
+    storage_limit: TezosUint,
+    amount: TezosUint,
+    destination: ContractId,
+    parameters: Option<BabylonTransactionParams>,
+}
+
 fn read_parameters<T>(reader: &mut Reader<T>) -> Result<Option<TezosValue>, serialization::Error>
     where T: std::io::Read {
     let has_parameters: u8 = reader.read()?;
@@ -2040,6 +2091,26 @@ fn read_parameters<T>(reader: &mut Reader<T>) -> Result<Option<TezosValue>, seri
             let mut bytes = vec![0; len];
             reader.read_slice(&mut bytes)?;
             deserialize(&bytes[1..]).map(|res| Some(res))
+        },
+        _ => Err(serialization::Error::MalformedData),
+    }
+}
+
+fn read_babylon_parameters<T>(reader: &mut Reader<T>) -> Result<Option<BabylonTransactionParams>, serialization::Error>
+    where T: std::io::Read {
+    let has_parameters: u8 = reader.read()?;
+    match has_parameters {
+        0 => Ok(None),
+        255 => {
+            let entrypoint: EntrypointId = reader.read()?;
+            let len: H32 = reader.read()?;
+            let len = u32::from_be_bytes(len.take()) as usize;
+            let mut bytes = vec![0; len];
+            reader.read_slice(&mut bytes)?;
+            Ok(Some(BabylonTransactionParams {
+                entrypoint,
+                params: deserialize(bytes.as_slice())?
+            }))
         },
         _ => Err(serialization::Error::MalformedData),
     }
@@ -2087,9 +2158,52 @@ impl Serializable for TezosTransaction {
     }
 }
 
+impl Serializable for BabylonTransaction {
+    fn serialize(&self, s: &mut Stream) {
+        s.append(&self.source);
+        s.append(&self.fee);
+        s.append(&self.counter);
+        s.append(&self.gas_limit);
+        s.append(&self.storage_limit);
+        s.append(&self.amount);
+        s.append(&self.destination);
+        match &self.parameters {
+            Some(params) => {
+                s.append(&255u8);
+                s.append(&params.entrypoint);
+                let bytes = serialize(&params.params).take();
+                let len = bytes.len() as u32;
+                s.append_slice(&len.to_be_bytes());
+                s.append_slice(&bytes);
+            },
+            None => {
+                s.append(&0u8);
+            },
+        }
+    }
+}
+
+impl Deserializable for BabylonTransaction {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        Ok(BabylonTransaction {
+            source: reader.read()?,
+            fee: reader.read()?,
+            counter: reader.read()?,
+            gas_limit: reader.read()?,
+            storage_limit: reader.read()?,
+            amount: reader.read()?,
+            destination: reader.read()?,
+            parameters: read_babylon_parameters(reader)?,
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TezosOperationEnum {
     Transaction(TezosTransaction),
+    BabylonTransaction(BabylonTransaction),
     Reveal,
 }
 
@@ -2109,6 +2223,9 @@ impl Deserializable for TezosOperation {
         let op = match tag {
             8 => {
                 TezosOperationEnum::Transaction(reader.read()?)
+            },
+            108 => {
+                TezosOperationEnum::BabylonTransaction(reader.read()?)
             },
             _ => unimplemented!(),
         };
@@ -2131,6 +2248,10 @@ impl Serializable for TezosOperation {
         match &self.op {
             TezosOperationEnum::Transaction(tx) => {
                 s.append(&8u8);
+                s.append(tx);
+            },
+            TezosOperationEnum::BabylonTransaction(tx) => {
+                s.append(&108u8);
                 s.append(tx);
             },
             _ => unimplemented!(),
@@ -2277,6 +2398,57 @@ impl<T: TryFrom<TezosValue>> TryFrom<TezosValue> for TezosOption<T>
             TezosValue::TezosPrim(TezosPrim::None) => Ok(TezosOption(None)),
             TezosValue::TezosPrim(TezosPrim::Some(value)) => Ok(TezosOption(Some(try_s!(T::try_from((*value[0]).clone()))))),
             _ => ERR!("TezosOption can be constructed only from TezosPrim::None or TezosPrim::Some, got {:?}", value),
+        }
+    }
+}
+
+/// https://tezos.gitlab.io/protocols/005_babylon.html#transactions-now-have-an-entrypoint
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EntrypointId {
+    Default,
+    Root,
+    Do,
+    SetDelegate,
+    RemoveDelegate,
+    Named(String),
+}
+
+impl Serializable for EntrypointId {
+    fn serialize(&self, s: &mut Stream) {
+        match self {
+            EntrypointId::Default => { s.append(&0u8); },
+            EntrypointId::Root => { s.append(&1u8); },
+            EntrypointId::Do => { s.append(&2u8); },
+            EntrypointId::SetDelegate => { s.append(&3u8); },
+            EntrypointId::RemoveDelegate => { s.append(&4u8); },
+            EntrypointId::Named(name) => {
+                s.append(&255u8);
+                s.append(&(name.len() as u8));
+                s.append_slice(name.as_bytes());
+            },
+        };
+    }
+}
+
+impl Deserializable for EntrypointId {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        let tag: u8 = reader.read()?;
+        match tag {
+            0 => Ok(EntrypointId::Default),
+            1 => Ok(EntrypointId::Root),
+            2 => Ok(EntrypointId::Do),
+            3 => Ok(EntrypointId::SetDelegate),
+            4 => Ok(EntrypointId::RemoveDelegate),
+            255 => {
+                let len: u8 = reader.read()?;
+                let mut bytes = vec![0; len as usize];
+                reader.read_slice(&mut bytes)?;
+                let name = std::str::from_utf8(&bytes).map_err(|_| serialization::Error::MalformedData)?;
+                Ok(EntrypointId::Named(name.into()))
+            },
+            _ => Err(serialization::Error::MalformedData),
         }
     }
 }
