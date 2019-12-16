@@ -4,6 +4,7 @@ use common::for_tests::wait_for_log;
 use futures::future::join_all;
 use super::*;
 use mocktopus::mocking::*;
+use ethabi::FixedBytes;
 
 fn check_sum(addr: &str, expected: &str) {
     let actual = checksum_address(addr);
@@ -134,11 +135,10 @@ fn test_wei_from_big_decimal() {
 }
 
 #[test]
-#[ignore]
 /// temporary ignore, will refactor later to use dev chain and properly check transaction statuses
 fn send_and_refund_erc20_payment() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-    let transport = Web3Transport::new(vec!["http://195.201.0.6:8545".into()]).unwrap();
+    let transport = Web3Transport::new(vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b".into()]).unwrap();
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let coin = EthCoin(Arc::new(EthCoinImpl {
@@ -146,8 +146,8 @@ fn send_and_refund_erc20_payment() {
         coin_type: EthCoinType::Erc20(Address::from("0xc0eb7AeD740E1796992A08962c15661bDEB58003")),
         my_address: key_pair.address(),
         key_pair,
-        swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
-        web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
+        swap_contract_address: Address::from("0x06964d4DAB22f96c1c382ef6f2b6b8324950f9FD"),
+        web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: false}],
         web3,
         decimals: 18,
         gas_station_url: None,
@@ -171,8 +171,6 @@ fn send_and_refund_erc20_payment() {
     log!([payment]);
 
     thread::sleep(Duration::from_secs(60));
-
-
 
     let refund = coin.send_maker_refunds_payment(
         &[],
@@ -186,20 +184,21 @@ fn send_and_refund_erc20_payment() {
 }
 
 #[test]
-#[ignore]
 /// temporary ignore, will refactor later to use dev chain and properly check transaction statuses
 fn send_and_refund_eth_payment() {
     let key_pair = KeyPair::from_secret_slice(&hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap()).unwrap();
-    let transport = Web3Transport::new(vec!["http://195.201.0.6:8545".into()]).unwrap();
+    let transport = Web3Transport::new(vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b".into()]).unwrap();
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
+    let secret = [0u8; 32];
+    let hash = sha256(&secret);
     let coin = EthCoin(Arc::new(EthCoinImpl {
         ticker: "ETH".into(),
         coin_type: EthCoinType::Eth,
         my_address: key_pair.address(),
         key_pair,
-        swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
-        web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
+        swap_contract_address: Address::from("0x06964d4DAB22f96c1c382ef6f2b6b8324950f9FD"),
+        web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: false}],
         web3,
         decimals: 18,
         gas_station_url: None,
@@ -208,29 +207,38 @@ fn send_and_refund_eth_payment() {
         required_confirmations: 1.into(),
     }));
 
+    let status = coin.payment_status(Token::FixedBytes(vec![1; 32])).wait().unwrap();
     let taker_pub = EcPubkey {
         curve_type: CurveType::SECP256K1,
         bytes: unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
     };
 
+    let block = coin.current_block().wait().unwrap();
+
     let payment = coin.send_maker_payment(
         &[],
         (now_ms() / 1000) as u32 - 200,
         &taker_pub,
-        &[1; 20],
+        &*hash,
         "0.001".parse().unwrap(),
     ).wait().unwrap();
 
     log!([payment]);
 
-    thread::sleep(Duration::from_secs(60));
+    coin.wait_for_confirmations(
+        &payment.tx_hex,
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait().unwrap();
 
     let refund = coin.send_maker_refunds_payment(
         &[],
         &payment.tx_hex,
         (now_ms() / 1000) as u32 - 200,
         &taker_pub,
-        &[1; 20],
+        &*hash,
     ).wait().unwrap();
 
     log!([refund]);
@@ -434,6 +442,16 @@ fn test_nonce_lock() {
     // but all transactions are sent successfully still
     // unwrap!(wait_for_log(&ctx.log, 1.1, &|line| line.contains("Waiting for NONCE_LOCK…")));
     unwrap!(wait_for_log(&ctx.log, 1.1, &|line| line.contains("get_addr_nonce…")));
+}
+
+#[test]
+fn test_get_pubkey() {
+    let (_, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()]);
+    let expected_pub = EcPubkey {
+        curve_type: CurveType::SECP256K1,
+        bytes: unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),
+    };
+    assert_eq!(expected_pub, coin.get_pubkey());
 }
 
 #[cfg(feature = "w-bindgen")]

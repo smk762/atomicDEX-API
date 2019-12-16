@@ -66,6 +66,7 @@ pub mod log;
 #[cfg(feature = "native")]
 pub mod for_c;
 pub mod custom_futures;
+pub mod crypto;
 pub mod iguana_utils;
 pub mod privkey;
 pub mod mm_ctx;

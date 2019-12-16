@@ -50,8 +50,8 @@ async fn enable_coins_eth_electrum_dune(mm: &MarketMakerIt, eth_urls: Vec<&str>,
     replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()) .await);
     replies.insert ("JST", enable_native (mm, "JST", eth_urls) .await);
     */
-    replies.insert ("DUNETEST", enable_native (mm, "DUNETEST", dune_urls.clone()) .await);
-    replies.insert ("DUNETESTERC", enable_native (mm, "DUNETESTERC", dune_urls) .await);
+    replies.insert ("TEZOS", enable_native (mm, "TEZOS", dune_urls.clone()) .await);
+    replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()) .await);
     replies
 }
 
@@ -694,7 +694,7 @@ async fn check_recent_swaps(
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
 /// Trades few pairs concurrently to speed up the process and also act like "load" test
 async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
-    let bob_passphrase = "0x0760b6189e10610d3800d75d14ffe2f0abb35f8bf612a9510b5598d978f83f7a";
+    let bob_passphrase = "0x3dc9187936e4bf40daf1aebdf4c58b7cb9665102c03640b9d696a260d87b1da5";
     let alice_passphrase = "spice describe gravity federal blast come thank unfair canal monkey style afraid";
 
     let coins = json! ([
@@ -703,8 +703,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
         {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
         {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
         {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"},
-        {"coin":"DUNETEST","name":"dunetestnet","ed25519_addr_prefix":[4,177,1],"secp256k1_addr_prefix":[4,177,3],"p256_addr_prefix":[4,177,6],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
-        {"coin":"DUNETESTERC","name":"dunetesterc","ed25519_addr_prefix":[4,177,1],"protocol":{"platform":"TEZOS","token_type":"ERC20","contract_address":"KT1HZYpwunBqUH4xfrdmP9m6LvhRxzH2yW5c"},"mm2":1},
+        {"coin":"TEZOS","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
     ]);
 
     let mut mm_bob = unwrap! (MarketMakerIt::start (
@@ -762,10 +761,10 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
     wait_log_re! (mm_alice, 22., ">>>>>>>>> DEX stats ");
 
     // Enable coins on Bob side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum_dune (&mm_bob, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]) .await;
+    let rc = enable_coins_eth_electrum_dune (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"], vec!["https://tezos-dev.cryptonomic-infra.tech"]) .await;
     log! ({"enable_coins (bob): {:?}", rc});
     // Enable coins on Alice side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum_dune (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]) .await;
+    let rc = enable_coins_eth_electrum_dune (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"], vec!["https://tezos-dev.cryptonomic-infra.tech"]) .await;
     log! ({"enable_coins (alice): {:?}", rc});
 
     // unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
@@ -908,7 +907,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
 #[cfg(feature = "native")]
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    block_on(trade_base_rel_electrum(vec![("DUNETEST", "DUNETESTERC")]));
+    block_on(trade_base_rel_electrum(vec![("TEZOS", "ETH")]));
 }
 
 #[cfg(not(feature = "native"))]
@@ -1913,6 +1912,69 @@ fn orderbook_should_display_rational_amounts() {
     let volume_in_orderbook: BigRational = unwrap!(json::from_value(asks[0]["max_volume_rat"].clone()));
     assert_eq!(price, price_in_orderbook);
     assert_eq!(volume, volume_in_orderbook);
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn orderbook_should_display_valid_address() {
+    let coins = json!([
+        {"coin":"RICK","asset":"RICK"},
+        {"coin":"MORTY","asset":"MORTY"},
+        {"coin":"XZT","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
+    ]);
+
+    let mut mm = unwrap! (MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "0x3dc9187936e4bf40daf1aebdf4c58b7cb9665102c03640b9d696a260d87b1da5",
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
+    ));
+    let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
+    log!({"Log path: {}", mm.log_path.display()});
+    unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+    block_on(enable_electrum(&mm, "MORTY", vec!["electrum3.cipig.net:10018", "electrum2.cipig.net:10018", "electrum1.cipig.net:10018"]));
+    block_on(enable_native(&mm, "XZT", vec!["https://tezos-dev.cryptonomic-infra.tech"]));
+
+    let price = BigRational::new(9.into(), 10.into());
+    let volume = BigRational::new(9.into(), 10.into());
+
+    // create order with rational amount and price
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "setprice",
+        "base": "XZT",
+        "rel": "MORTY",
+        "price": price,
+        "volume": volume,
+        "cancel_previous": false,
+    }))));
+    assert! (rc.0.is_success(), "!setprice: {}", rc.1);
+
+    thread::sleep(Duration::from_secs(12));
+    log!("Get XZT/MORTY orderbook");
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+            "userpass": mm.userpass,
+            "method": "orderbook",
+            "base": "XZT",
+            "rel": "MORTY",
+        }))));
+    assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+    let orderbook: Json = unwrap!(json::from_str(&rc.1));
+    log!("orderbook " [orderbook]);
+    let asks = orderbook["asks"].as_array().unwrap();
+    assert_eq!(asks.len(), 1, "XZT/MORTY orderbook must have exactly 1 ask");
+    let address_in_orderbook = asks[0]["address"].as_str().unwrap();
+    assert_eq!("tz1bzbcrL5f2U5cAVMgCUD1V7WN4L9YP6hpn", address_in_orderbook);
 }
 
 // HOWTO

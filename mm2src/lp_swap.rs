@@ -58,8 +58,9 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, TransactionEnum, EcPubkey};
+use coins::{lp_coinfind, TransactionEnum};
 use common::{block_on, read_dir, rpc_response, slurp, write, HyRes};
+use common::crypto::{EcPubkey};
 use common::mm_ctx::{from_ctx, MmArc};
 use http::Response;
 use primitives::hash::{H160, H256, H264};

@@ -27,6 +27,7 @@ use coins::{lp_coinfindᵃ, MmCoinEnum, TradeInfo};
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
 use common::{bits256, json_dir_entries, now_ms, new_uuid,
   remove_file, rpc_response, rpc_err_response, write, HyRes};
+use common::crypto::EcPubkey;
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_number::{from_dec_to_ratio, from_ratio_to_dec, MmNumber};
@@ -780,7 +781,7 @@ fn price_ping_sig_hash(timestamp: u32, pubsecp: &[u8], pubkey: &[u8], base: &[u8
 #[derive(Debug, Deserialize, Serialize)]
 struct PricePingRequest {
     method: String,
-    pubkey: String,
+    pubkey: EcPubkey,
     base: String,
     rel: String,
     price: BigDecimal,
@@ -797,7 +798,7 @@ struct PricePingRequest {
 }
 
 impl PricePingRequest {
-    fn new(ctx: &MmArc, order: &MakerOrder, balance: BigDecimal) -> Result<PricePingRequest, String> {
+    fn new(ctx: &MmArc, order: &MakerOrder, balance: BigDecimal, my_pubkey: EcPubkey) -> Result<PricePingRequest, String> {
         let public_id = try_s!(ctx.public_id());
 
         let price64 = (&order.price * BigDecimal::from(100000000)).to_u64().unwrap();
@@ -828,7 +829,7 @@ impl PricePingRequest {
 
         Ok(PricePingRequest {
             method: "postprice".into(),
-            pubkey: hex::encode(&public_id.bytes),
+            pubkey: my_pubkey,
             base: order.base.clone(),
             rel: order.rel.clone(),
             price64: price64.to_string(),
@@ -852,11 +853,10 @@ pub fn lp_post_price_recv(ctx: &MmArc, req: Json) -> HyRes {
         return rpc_err_response(400, &ERRL!("sender pubkey {} is banned", req.pubsecp));
     }
     let pub_secp = try_h!(Public::from_slice(&pubkey_bytes));
-    let pubkey = try_h!(hex::decode(&req.pubkey));
     let sig_hash = price_ping_sig_hash(
         req.timestamp as u32,
         &*pub_secp,
-        &pubkey,
+        &req.pubkey.bytes,
         req.base.as_bytes(),
         req.rel.as_bytes(),
         try_h!(req.price64.parse()),
@@ -866,7 +866,7 @@ pub fn lp_post_price_recv(ctx: &MmArc, req: Json) -> HyRes {
         // identify the order by first 16 bytes of node pubkey to keep backwards-compatibility
         // TODO remove this when all nodes are updated
         let mut bytes = [0; 16];
-        bytes.copy_from_slice(&pubkey[..16]);
+        bytes.copy_from_slice(&req.pubkey.bytes[..16]);
         let uuid = req.uuid.unwrap_or(Uuid::from_bytes(bytes));
         let ordermatch_ctx: Arc<OrdermatchContext> = try_h!(OrdermatchContext::from_ctx(ctx));
         let mut orderbook = try_h!(ordermatch_ctx.orderbook.lock());
@@ -1034,7 +1034,7 @@ pub async fn broadcast_my_maker_orders(ctx: &MmArc) -> Result<(), String> {
         };
 
         if balance >= "0.00777".parse().unwrap() {
-            let ping = match PricePingRequest::new(ctx, &order, balance) {
+            let ping = match PricePingRequest::new(ctx, &order, balance, base_coin.get_pubkey()) {
                 Ok(p) => p,
                 Err(e) => {
                     ctx.log.log("", &[&"broadcast_my_maker_orders", &order.base, &order.rel], &format!("ping request creation failed {}", e));
@@ -1060,7 +1060,7 @@ pub async fn broadcast_my_maker_orders(ctx: &MmArc) -> Result<(), String> {
         // TODO cancel means setting the volume to 0 as of now, should refactor
         order.max_base_vol = 0.into();
         order.max_base_vol_rat = BigRational::from_integer(0.into());
-        let ping = match PricePingRequest::new(ctx, &order, 0.into()) {
+        let ping = match PricePingRequest::new(ctx, &order, 0.into(), EcPubkey::default()) {
             Ok(p) => p,
             Err(e) => {
                 ctx.log.log("", &[&"broadcast_cancelled_orders", &order.base, &order.rel], &format! ("ping request creation failed {}", e));
@@ -1421,7 +1421,7 @@ pub struct OrderbookEntry {
     #[serde(rename="maxvolume")]
     max_volume: BigDecimal,
     max_volume_rat: BigRational,
-    pubkey: String,
+    pubkey: EcPubkey,
     age: i64,
     zcredits: u64,
 }

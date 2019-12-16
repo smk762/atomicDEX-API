@@ -33,6 +33,7 @@
 
 use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
+use common::crypto::EcPubkey;
 use common::duplex_mutex::DuplexMutex;
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_number::MmNumber;
@@ -41,10 +42,7 @@ use futures::compat::Future01CompatExt;
 use gstuff::{slurp};
 use http::Response;
 use rpc::v1::types::{Bytes as BytesJson};
-use serde::{Serialize, Serializer, Deserialize};
-use serde::de::{Deserializer, Visitor};
 use serde_json::{self as json, Value as Json};
-use serialization::{Deserializable, deserialize, Reader, Serializable, serialize, Stream};
 use std::borrow::Cow;
 use std::collections::hash_map::{HashMap, RawEntryMut};
 use std::fmt::Debug;
@@ -717,91 +715,6 @@ pub async fn set_required_confirmations(ctx: MmArc, req: Json) -> Result<Respons
         }
     })));
     Ok(try_s!(Response::builder().body(res)))
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CurveType {
-    SECP256K1,
-    ED25519,
-    P256,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EcPubkey {
-    pub curve_type: CurveType,
-    pub bytes: Vec<u8>,
-}
-
-impl Default for EcPubkey {
-    fn default() -> EcPubkey {
-        EcPubkey {
-            curve_type: CurveType::SECP256K1,
-            bytes: vec![],
-        }
-    }
-}
-
-impl Serializable for EcPubkey {
-    fn serialize(&self, s: &mut Stream) {
-        let tag: u8 = match self.curve_type {
-            CurveType::SECP256K1 => 0,
-            CurveType::ED25519 => 1,
-            CurveType::P256 => 2,
-        };
-        s.append(&tag);
-        s.append_slice(&self.bytes);
-    }
-}
-
-impl Deserializable for EcPubkey {
-    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
-        where Self: Sized, T: std::io::Read
-    {
-        let tag: u8 = reader.read()?;
-        let (curve_type, len) = match tag {
-            0 => (CurveType::SECP256K1, 33),
-            1 => (CurveType::ED25519, 32),
-            2 => (CurveType::P256, 33),
-            _ => return Err(serialization::Error::MalformedData)
-        };
-        let mut bytes = vec![0; len];
-        reader.read_slice(&mut bytes)?;
-        Ok(EcPubkey {
-            curve_type,
-            bytes
-        })
-    }
-}
-
-impl Serialize for EcPubkey {
-    fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
-        let bytes = serialize(self).take();
-        s.serialize_str(&hex::encode(&bytes))
-    }
-}
-
-impl<'de> Deserialize<'de> for EcPubkey {
-    fn deserialize<D>(d: D) -> Result<EcPubkey, D::Error> where D: Deserializer<'de> {
-        struct EcPubkeyVisitor;
-
-        impl<'de> Visitor<'de> for EcPubkeyVisitor {
-            type Value = EcPubkey;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a string containing EcPubkey data")
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
-            {
-                let bytes = hex::decode(v).map_err(E::custom)?;
-                deserialize(bytes.as_slice()).map_err(|e| E::custom(fomat!([e])))
-            }
-        }
-
-        d.deserialize_any(EcPubkeyVisitor)
-    }
 }
 
 pub enum TradeActor {

@@ -4,6 +4,7 @@ use bitcrypto::{dhash256};
 use blake2::{VarBlake2b};
 use blake2::digest::{Input, VariableOutput};
 use chrono::prelude::*;
+use common::crypto::{CurveType, EcPubkey};
 use common::executor::Timer;
 use common::impl_base58_checksum_encoding;
 use common::mm_ctx::MmArc;
@@ -33,7 +34,7 @@ use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use super::{CurveType, EcPubkey, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeActor, TradeFee,
+use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeActor, TradeFee,
             Transaction, TransactionDetails, TransactionDetailsFut, TransactionEnum, TransactionFut};
 use common::{block_on, now_ms};
 
@@ -264,6 +265,27 @@ impl TezosCoinImpl {
         }
     }
 
+    fn address_to_pubkey_hash(&self, addr: &TezosAddress) -> Result<PubkeyHash, String> {
+        if addr.prefix == self.addr_prefixes.ed25519 {
+            Ok(PubkeyHash {
+                curve_type: CurveType::ED25519,
+                hash: addr.data.clone(),
+            })
+        } else if addr.prefix == self.addr_prefixes.secp256k1 {
+            Ok(PubkeyHash {
+                curve_type: CurveType::SECP256K1,
+                hash: addr.data.clone(),
+            })
+        } else if addr.prefix == self.addr_prefixes.p256 {
+            Ok(PubkeyHash {
+                curve_type: CurveType::P256,
+                hash: addr.data.clone(),
+            })
+        } else {
+            ERR!("Address prefix {:?} doesn't match coin prefixes", addr.prefix)
+        }
+    }
+
     fn contract_id_to_addr(&self, contract_id: &ContractId) -> TezosAddress {
         match contract_id {
             ContractId::PubkeyHash(key_hash) => match key_hash.curve_type {
@@ -419,7 +441,31 @@ impl TezosCoinImpl {
                 };
                 Ok(())
             },
-            _ => ERR!("The payment must have Transaction type"),
+            TezosOperationEnum::BabylonTransaction(tx) => {
+                if tx.source != try_s!(self.address_to_pubkey_hash(&other_addr)) {
+                    return ERR!("Invalid transaction source");
+                };
+
+                if tx.destination != try_s!(self.address_to_contract_id(&self.swap_contract_address)) {
+                    return ERR!("Invalid transaction destination");
+                }
+                let amount = (amount * BigDecimal::from(10u64.pow(self.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+                let expected_params = match self.coin_type {
+                    TezosCoinType::Tezos => {
+                        if tx.amount.0 != amount {
+                            return ERR!("Invalid transaction amount");
+                        }
+                        init_tezos_swap_call(uuid.into(), time_lock, secret_hash.into(), self.my_address.clone())
+                    },
+                    TezosCoinType::ERC(ref token_addr) =>
+                        init_tezos_erc_swap_call(uuid.into(), time_lock, secret_hash.into(), self.my_address.clone(), amount, token_addr),
+                };
+                if tx.parameters.unwrap().params != expected_params.value {
+                    return ERR!("Invalid transaction parameters");
+                };
+                Ok(())
+            },
+            _ => ERR!("The payment must have Transaction or BabylonTransaction type"),
         }
     }
 

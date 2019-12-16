@@ -1,6 +1,7 @@
 use super::*;
 use crate::tezos::tezos_rpc::OperationsResult;
 use bitcrypto::sha256;
+use common::privkey::key_pair_from_seed;
 
 fn tezos_coin_for_test() -> TezosCoin {
     let conf = json!({
@@ -23,7 +24,7 @@ fn tezos_coin_for_test() -> TezosCoin {
         ],
         "mm2":1
     });
-    let priv_key = hex::decode("3dc9187936e4bf40daf1aebdf4c58b7cb9665102c03640b9d696a260d87b1da5").unwrap();
+    let priv_key = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
     let coin = block_on(tezos_coin_from_conf_and_request("TEZOS", &conf, &req, &priv_key)).unwrap();
     coin
 }
@@ -587,4 +588,48 @@ fn send_taker_payment() {
         10,
         block,
     ).wait().unwrap();
+}
+
+#[test]
+fn send_reveal() {
+    let coin = tezos_coin_for_test();
+    let mut operations = vec![];
+    let mut counter = TezosUint(unwrap!(block_on(coin.rpc_client.counter(&coin.my_address.to_string()))) + BigUint::from(1u8));
+    let head = unwrap!(block_on(coin.rpc_client.block_header("head")));
+    let reveal = Operation::reveal(Reveal {
+        counter: counter.clone(),
+        fee: BigUint::from(1269u32).into(),
+        gas_limit: BigUint::from(10000u32).into(),
+        public_key: coin.key_pair.get_pubkey().to_string(),
+        source: coin.my_address.to_string(),
+        storage_limit: BigUint::from(0u8).into(),
+    });
+    operations.push(reveal);
+    let forge_req = ForgeOperationsRequest {
+        branch: head.hash.clone(),
+        contents: operations.clone()
+    };
+    let mut tx_bytes = unwrap!(block_on(coin.rpc_client.forge_operations(&head.chain_id, &head.hash, forge_req)));
+    let mut prefixed = vec![3u8];
+    prefixed.append(&mut tx_bytes.0);
+    let sig_hash = blake2b_256(&prefixed);
+    let sig = match &coin.key_pair {
+        TezosKeyPair::ED25519(key_pair) => key_pair.sign::<Sha512>(&*sig_hash),
+        _ => unimplemented!(),
+    };
+    let signature = TezosSignature {
+        prefix: ED_SIG_PREFIX.to_vec(),
+        data: sig.to_bytes().to_vec(),
+    };
+    let preapply_req = PreapplyOperationsRequest(vec![PreapplyOperation {
+        branch: head.hash,
+        contents: operations,
+        protocol: head.protocol,
+        signature: format!("{}", signature),
+    }]);
+    unwrap!(block_on(coin.rpc_client.preapply_operations(preapply_req)));
+    prefixed.extend_from_slice(&signature.data);
+    prefixed.remove(0);
+    let hex_encoded = hex::encode(&prefixed);
+    log!((unwrap!(block_on(coin.rpc_client.inject_operation(&hex_encoded)))));
 }

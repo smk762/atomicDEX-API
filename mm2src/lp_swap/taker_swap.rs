@@ -2,10 +2,11 @@
 
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
+use common::crypto::{CurveType, EcPubkey};
 use common::executor::Timer;
 use common::{bits256, now_ms, now_float, slurp, write, MM_VERSION};
 use common::mm_ctx::MmArc;
-use coins::{CurveType, EcPubkey, FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails, TradeActor};
+use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails, TradeActor};
 use crc::crc32;
 use futures::compat::Future01CompatExt;
 use futures::future::Either;

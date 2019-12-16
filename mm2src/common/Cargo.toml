@@ -27,6 +27,7 @@ bytes = "0.4"
 # Using the `chrono` because the `time` formatting has serious limits, like the lack of subsecond support, IIRC.
 chrono = "0.4"
 crossbeam = "0.7"
+ed25519-dalek = { version = "0.9.1", features = ["nightly", "serde"] }
 fomat-macros = "0.2"
 futures01 = { version = "0.1", package = "futures" }
 futures = { version = ">=0.3.0-alpha.16, <0.4", package = "futures-preview", features = ["compat", "async-await", "nightly"] }
@@ -40,6 +41,7 @@ hyper-rustls = { version = "0.16", optional = true }
 keys = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 lazy_static = "1.2"
 libc = { version = "0.2", optional = true }
+libsecp256k1 = "0.2.2"
 num-bigint = { version = "0.2", features = ["serde", "std"] }
 num-rational = { version = "0.2", features = ["serde", "bigint", "bigint-std"] }
 num-traits = "0.2"
@@ -57,6 +59,8 @@ serde_bencode = "0.2"
 serde_bytes = "0.11"
 serde_derive = "1"
 serde_json = "1"
+serialization = { git = "https://github.com/artemii235/parity-bitcoin.git" }
+sha2 = "0.8"
 term = "0.5"
 tokio = { version = "0.1", optional = true }
 tokio-core = { version = "0.1", optional = true }
