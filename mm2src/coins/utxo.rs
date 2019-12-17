@@ -29,7 +29,7 @@ pub use bitcrypto::{dhash160, ChecksumType, sha256};
 use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
 use common::{first_char_to_upper, small_rng};
-use common::crypto::{CurveType, EcPubkey};
+use common::crypto::{CryptoOps, CurveType, EcPubkey};
 use common::custom_futures::join_all_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
@@ -1411,15 +1411,18 @@ impl MarketCoinOps for UtxoCoin {
         Ok(addr.to_string())
     }
 
-    fn tx_hash_to_string(&self, hash: &[u8]) -> String {
-        hex::encode(hash)
+    fn derive_address_from_ec_pubkey(&self, pubkey: &EcPubkey) -> Result<String, String> {
+        match pubkey.curve_type {
+            CurveType::SECP256K1 => {
+                let addr = try_s!(address_from_raw_pubkey(&pubkey.bytes, self.pub_addr_prefix, self.pub_t_addr_prefix, self.checksum_type));
+                Ok(addr.to_string())
+            },
+            _ => ERR!("Unsupported CurveType {:?}", pubkey.curve_type)
+        }
     }
 
-    fn get_pubkey(&self) -> EcPubkey {
-        EcPubkey {
-            curve_type: CurveType::SECP256K1,
-            bytes: self.key_pair.public().to_vec(),
-        }
+    fn tx_hash_to_string(&self, hash: &[u8]) -> String {
+        hex::encode(hash)
     }
 }
 
@@ -2109,4 +2112,32 @@ fn kmd_interest(height: u64, value: u64, lock_time: u64, current_time: u64) -> u
     // next 2 lines ported as is from Komodo codebase
     minutes -= 59;
     (value / 10512000) * minutes
+}
+
+impl CryptoOps for UtxoCoinImpl {
+    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+        Ok(EcPubkey {
+            curve_type: CurveType::SECP256K1,
+            bytes: self.key_pair.public().to_vec(),
+        })
+    }
+
+    fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
+        let msg: [u8; 32] = try_s!(msg.try_into());
+        self.key_pair.private().sign(&msg.into()).map(|sig| sig.to_vec()).map_err(|e| ERRL!("{:?}", e))
+    }
+}
+
+impl CryptoOps for UtxoCoin {
+    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+        Ok(EcPubkey {
+            curve_type: CurveType::SECP256K1,
+            bytes: self.key_pair.public().to_vec(),
+        })
+    }
+
+    fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
+        let msg: [u8; 32] = try_s!(msg.try_into());
+        self.key_pair.private().sign(&msg.into()).map(|sig| sig.to_vec()).map_err(|e| ERRL!("{:?}", e))
+    }
 }

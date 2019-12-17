@@ -298,8 +298,8 @@ impl MakerSwap {
             started_at: self.r().data.started_at,
             payment_locktime: self.r().data.maker_payment_lock,
             secret_hash: sha256(&self.r().data.secret.0),
-            maker_coin_persistent_pub: self.maker_coin.get_pubkey(),
-            taker_coin_persistent_pub: self.taker_coin.get_pubkey(),
+            maker_coin_persistent_pub: unwrap!(self.maker_coin.get_pubkey()),
+            taker_coin_persistent_pub: unwrap!(self.taker_coin.get_pubkey()),
         };
 
         let bytes = serialize(&maker_negotiation_data);

@@ -33,7 +33,7 @@
 
 use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
-use common::crypto::EcPubkey;
+use common::crypto::{CryptoOps, EcPubkey};
 use common::duplex_mutex::DuplexMutex;
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_number::MmNumber;
@@ -258,9 +258,9 @@ pub trait MarketCoinOps {
 
     fn address_from_pubkey_str(&self, pubkey: &str) -> Result<String, String>;
 
-    fn tx_hash_to_string(&self, hash: &[u8]) -> String;
+    fn derive_address_from_ec_pubkey(&self, pubkey: &EcPubkey) -> Result<String, String>;
 
-    fn get_pubkey(&self) -> EcPubkey;
+    fn tx_hash_to_string(&self, hash: &[u8]) -> String;
 }
 
 #[derive(Deserialize)]
@@ -353,7 +353,7 @@ pub struct TradeFee {
 }
 
 /// NB: Implementations are expected to follow the pImpl idiom, providing cheap reference-counted cloning and garbage collection.
-pub trait MmCoin: SwapOps + MarketCoinOps + Debug + Send + Sync + 'static {
+pub trait MmCoin: CryptoOps + SwapOps + MarketCoinOps + Debug + Send + Sync + 'static {
     // `MmCoin` is an extension fulcrum for something that doesn't fit the `MarketCoinOps`. Practical examples:
     // name (might be required for some APIs, CoinMarketCap for instance);
     // coin statistics that we might want to share with UI;

@@ -1,16 +1,84 @@
-use ed25519_dalek::{PublicKey as EdPublicKey, Signature as EdSignature};
-use secp256k1::{Message as SecpMessage, PublicKey as SecpPublicKey, Signature as SecpSignature,
-                verify as secp_verify_sig};
+use ed25519_dalek::{Keypair as EdKeypair, PublicKey as EdPublicKey, SecretKey as EdSecret,
+                    Signature as EdSignature};
+use secp256k1::{Message as SecpMessage, PublicKey as SecpPublicKey, SecretKey as SecpSecret,
+                sign as secp_sign, Signature as SecpSignature, verify as secp_verify_sig};
 use serialization::{Deserializable, deserialize, Reader, Serializable, serialize, Stream};
 use serde::{Serialize, Serializer, Deserialize};
 use serde::de::{Deserializer, Visitor};
 use sha2::{Sha512};
+
+pub trait CryptoOps {
+    fn get_pubkey(&self) -> Result<EcPubkey, String>;
+
+    fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String>;
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CurveType {
     SECP256K1,
     ED25519,
     P256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EcPrivkey {
+    curve_type: CurveType,
+    bytes: Vec<u8>,
+}
+
+impl EcPrivkey {
+    pub fn new(curve_type: CurveType, bytes: Vec<u8>) -> EcPrivkey {
+        EcPrivkey {
+            curve_type,
+            bytes,
+        }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn get_pubkey(&self) -> Result<EcPubkey, String> {
+        match self.curve_type {
+            CurveType::ED25519 => {
+                let secret = try_s!(EdSecret::from_bytes(&self.bytes));
+                let public = EdPublicKey::from_secret::<Sha512>(&secret);
+                Ok(EcPubkey {
+                    curve_type: CurveType::ED25519,
+                    bytes: public.as_bytes().to_vec()
+                })
+            },
+            CurveType::SECP256K1 => {
+                let secret = try_s!(SecpSecret::parse_slice(&self.bytes).map_err(|e| ERRL!("{:?}", e)));
+                let public = SecpPublicKey::from_secret_key(&secret);
+                Ok(EcPubkey {
+                    curve_type: CurveType::SECP256K1,
+                    bytes: public.serialize_compressed().to_vec(),
+                })
+            },
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
+        match self.curve_type {
+            CurveType::ED25519 => {
+                let secret = try_s!(EdSecret::from_bytes(&self.bytes));
+                let public = EdPublicKey::from_secret::<Sha512>(&secret);
+                let mut bytes = vec![];
+                bytes.extend_from_slice(secret.as_bytes());
+                bytes.extend_from_slice(public.as_bytes());
+                let key_pair = try_s!(EdKeypair::from_bytes(&bytes));
+                Ok(key_pair.sign::<Sha512>(msg).to_bytes().to_vec())
+            },
+            CurveType::SECP256K1 => {
+                let secret = try_s!(SecpSecret::parse_slice(&self.bytes).map_err(|e| ERRL!("{:?}", e)));
+                let msg = try_s!(SecpMessage::parse_slice(msg).map_err(|e| ERRL!("{:?}", e)));
+                secp_sign(&msg, &secret).map(|(sig, _)| sig.serialize().to_vec()).map_err(|e| ERRL!("{:?}", e))
+            },
+            _ => unimplemented!(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -21,7 +21,7 @@
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
 use common::{now_ms, slurp_url, small_rng};
-use common::crypto::{CurveType, EcPubkey};
+use common::crypto::{CryptoOps, CurveType, EcPrivkey, EcPubkey};
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
@@ -30,7 +30,7 @@ use secp256k1::PublicKey;
 use ethabi::{Contract, Token};
 use ethcore_transaction::{ Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
 use ethereum_types::{Address, U256, H160};
-use ethkey::{ KeyPair, Public, public_to_address };
+use ethkey::{ KeyPair, Public, public_to_address, Secret as EthSecret };
 use futures01::Future;
 use futures01::future::{Either};
 use futures::compat::Future01CompatExt;
@@ -127,7 +127,7 @@ enum EthCoinType {
 pub struct EthCoinImpl {  // pImpl idiom.
     ticker: String,
     coin_type: EthCoinType,
-    key_pair: KeyPair,
+    priv_key: EcPrivkey,
     my_address: Address,
     swap_contract_address: Address,
     web3: Web3<Web3Transport>,
@@ -407,7 +407,8 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
     let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
     let tx = UnSignedEthTx { nonce, value: eth_value, action: Action::Call(call_addr), data, gas, gas_price };
 
-    let signed = tx.sign(coin.key_pair.secret(), None);
+    let eth_secret = try_s!(EthSecret::from_slice(coin.priv_key.as_bytes()).ok_or("Invalid privkey"));
+    let signed = tx.sign(&eth_secret, None);
     let bytes = rlp::encode(&signed);
     let amount_decimal = try_s!(u256_to_big_decimal(wei_amount, coin.decimals));
     let mut spent_by_me = amount_decimal.clone();
@@ -862,17 +863,19 @@ impl MarketCoinOps for EthCoin {
         Ok(format!("{:#02x}", addr))
     }
 
+    fn derive_address_from_ec_pubkey(&self, pubkey: &EcPubkey) -> Result<String, String> {
+        match pubkey.curve_type {
+            CurveType::SECP256K1 => {
+                let addr = try_s!(addr_from_raw_pubkey(&pubkey.bytes));
+                Ok(format!("{:#02x}", addr))
+            },
+            _ => ERR!("Unsupported CurveType {:?}", pubkey.curve_type)
+        }
+    }
+
     fn tx_hash_to_string(&self, hash: &[u8]) -> String {
         let hash = H256::from(hash);
         format!("{:#02x}", hash)
-    }
-
-    fn get_pubkey(&self) -> EcPubkey {
-        let pub_key = unwrap!(PublicKey::parse_slice(&self.key_pair.public(), None).map_err(|e| ERRL!("{:?}", e)));
-        EcPubkey {
-            curve_type: CurveType::SECP256K1,
-            bytes: pub_key.serialize_compressed().to_vec(),
-        }
     }
 }
 
@@ -917,7 +920,8 @@ async fn sign_and_send_transaction_impl(
         gas,
         gas_price,
     };
-    let signed = tx.sign(coin.key_pair.secret(), None);
+    let eth_secret = try_s!(EthSecret::from_slice(coin.priv_key.as_bytes()).ok_or("Invalid privkey"));
+    let signed = tx.sign(&eth_secret, None);
     let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
     status.status(tags!(), "send_raw_transaction…");
     try_s!(coin.web3.eth().send_raw_transaction(bytes).map_err(|e| ERRL!("{}", e)).compat().await);
@@ -2227,7 +2231,7 @@ pub async fn eth_coin_from_conf_and_request(
         HistorySyncState::NotEnabled
     };
     let coin = EthCoinImpl {
-        key_pair,
+        priv_key: EcPrivkey::new(CurveType::SECP256K1, priv_key.to_vec()),
         my_address,
         coin_type,
         swap_contract_address,
@@ -2322,4 +2326,24 @@ fn get_addr_nonce(addr: Address, web3s: &Vec<Web3Instance>) -> Box<dyn Future<It
         }
     };
     Box::new(Box::pin(fut).compat())
+}
+
+impl CryptoOps for EthCoinImpl {
+    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+        self.priv_key.get_pubkey()
+    }
+
+    fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
+        self.priv_key.sign_message(msg)
+    }
+}
+
+impl CryptoOps for EthCoin {
+    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+        self.priv_key.get_pubkey()
+    }
+
+    fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
+        self.priv_key.sign_message(msg)
+    }
 }

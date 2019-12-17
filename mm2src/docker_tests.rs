@@ -26,6 +26,7 @@ fn main() {
 #[cfg(all(test, feature = "native"))]
 mod docker_tests {
     use common::block_on;
+    use common::crypto::CryptoOps;
     use common::for_tests::{enable_native, MarketMakerIt, mm_dump};
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
     use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
@@ -250,7 +251,7 @@ mod docker_tests {
         let tx = coin.send_taker_payment(
             &[],
             time_lock,
-            &coin.get_pubkey(),
+            &unwrap!(coin.get_pubkey()),
             &[0; 20],
             1.into(),
         ).wait().unwrap();
@@ -261,7 +262,7 @@ mod docker_tests {
             &[],
             &tx.tx_hex,
             time_lock,
-            &coin.get_pubkey(),
+            &unwrap!(coin.get_pubkey()),
             &[0; 20],
         ).wait().unwrap();
 
@@ -269,7 +270,7 @@ mod docker_tests {
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
-            &coin.get_pubkey(),
+            &unwrap!(coin.get_pubkey()),
             &[0; 20],
             &tx.tx_hex,
             0,
@@ -287,7 +288,7 @@ mod docker_tests {
         let tx = coin.send_taker_payment(
             &[],
             time_lock,
-            &coin.get_pubkey(),
+            &unwrap!(coin.get_pubkey()),
             &*dhash160(&secret),
             1.into(),
         ).wait().unwrap();
@@ -298,7 +299,7 @@ mod docker_tests {
             &[],
             &tx.tx_hex,
             time_lock,
-            &coin.get_pubkey(),
+            &unwrap!(coin.get_pubkey()),
             &secret,
         ).wait().unwrap();
 
@@ -306,7 +307,7 @@ mod docker_tests {
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
-            &coin.get_pubkey(),
+            &unwrap!(coin.get_pubkey()),
             &*dhash160(&secret),
             &tx.tx_hex,
             0,

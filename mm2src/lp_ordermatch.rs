@@ -27,7 +27,7 @@ use coins::{lp_coinfindᵃ, MmCoinEnum, TradeInfo};
 use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
 use common::{bits256, json_dir_entries, now_ms, new_uuid,
   remove_file, rpc_response, rpc_err_response, write, HyRes};
-use common::crypto::EcPubkey;
+use common::crypto::{EcPubkey};
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_number::{from_dec_to_ratio, from_ratio_to_dec, MmNumber};
@@ -798,7 +798,7 @@ struct PricePingRequest {
 }
 
 impl PricePingRequest {
-    fn new(ctx: &MmArc, order: &MakerOrder, balance: BigDecimal, my_pubkey: EcPubkey) -> Result<PricePingRequest, String> {
+    fn new(ctx: &MmArc, order: &MakerOrder, balance: BigDecimal, my_coin: &MmCoinEnum) -> Result<PricePingRequest, String> {
         let public_id = try_s!(ctx.public_id());
 
         let price64 = (&order.price * BigDecimal::from(100000000)).to_u64().unwrap();
@@ -806,13 +806,13 @@ impl PricePingRequest {
         let sig_hash = price_ping_sig_hash(
             timestamp as u32,
             &**ctx.secp256k1_key_pair().public(),
-            &public_id.bytes,
+            &try_s!(my_coin.get_pubkey()).bytes,
             order.base.as_bytes(),
             order.rel.as_bytes(),
             price64,
         );
 
-        let sig = try_s!(ctx.secp256k1_key_pair().private().sign(&sig_hash));
+        let sig = try_s!(my_coin.sign_message(&*sig_hash));
 
         let available_amount: BigRational = order.available_amount().into();
         let min_amount = BigRational::new(777.into(), 100000.into());
@@ -829,7 +829,7 @@ impl PricePingRequest {
 
         Ok(PricePingRequest {
             method: "postprice".into(),
-            pubkey: my_pubkey,
+            pubkey: try_s!(my_coin.get_pubkey()),
             base: order.base.clone(),
             rel: order.rel.clone(),
             price64: price64.to_string(),
@@ -861,7 +861,7 @@ pub fn lp_post_price_recv(ctx: &MmArc, req: Json) -> HyRes {
         req.rel.as_bytes(),
         try_h!(req.price64.parse()),
     );
-    let sig_check = try_h!(pub_secp.verify(&sig_hash, &signature));
+    let sig_check = try_h!(req.pubkey.verify_signature(&*sig_hash, &signature));
     if sig_check {
         // identify the order by first 16 bytes of node pubkey to keep backwards-compatibility
         // TODO remove this when all nodes are updated
@@ -1034,7 +1034,7 @@ pub async fn broadcast_my_maker_orders(ctx: &MmArc) -> Result<(), String> {
         };
 
         if balance >= "0.00777".parse().unwrap() {
-            let ping = match PricePingRequest::new(ctx, &order, balance, base_coin.get_pubkey()) {
+            let ping = match PricePingRequest::new(ctx, &order, balance, &base_coin) {
                 Ok(p) => p,
                 Err(e) => {
                     ctx.log.log("", &[&"broadcast_my_maker_orders", &order.base, &order.rel], &format!("ping request creation failed {}", e));
@@ -1053,6 +1053,8 @@ pub async fn broadcast_my_maker_orders(ctx: &MmArc) -> Result<(), String> {
             try_s!(ordermatch_ctx.my_cancelled_orders.lock()).insert(order.uuid, order);
         }
     }
+
+    /*
     // the difference of cancelled orders from maker orders that we broadcast the cancel request only once
     // cancelled record can be just dropped then
     let cancelled_orders: HashMap<_, _> = try_s!(ordermatch_ctx.my_cancelled_orders.lock()).drain().collect();
@@ -1073,7 +1075,7 @@ pub async fn broadcast_my_maker_orders(ctx: &MmArc) -> Result<(), String> {
             continue;
         }
     }
-
+    */
     Ok(())
 }
 
@@ -1465,7 +1467,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
             for (_, ask) in asks.iter() {
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.base.clone(),
-                    address: try_s!(base_coin.address_from_pubkey_str(&ask.pubsecp)),
+                    address: try_s!(base_coin.derive_address_from_ec_pubkey(&ask.pubkey)),
                     price: ask.price.clone(),
                     price_rat: ask.price_rat.as_ref().map(|p| p.clone()).unwrap_or(from_dec_to_ratio(ask.price.clone())),
                     max_volume: ask.balance.clone(),
@@ -1485,7 +1487,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
             for (_, ask) in asks.iter() {
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.rel.clone(),
-                    address: try_s!(rel_coin.address_from_pubkey_str(&ask.pubsecp)),
+                    address: try_s!(rel_coin.derive_address_from_ec_pubkey(&ask.pubkey)),
                     // NB: 1/x can not be represented as a decimal and introduces a rounding error
                     // cf. https://github.com/KomodoPlatform/atomicDEX-API/issues/495#issuecomment-516365682
                     price: BigDecimal::from (1) / &ask.price,

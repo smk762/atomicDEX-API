@@ -4,7 +4,7 @@ use bitcrypto::{dhash256};
 use blake2::{VarBlake2b};
 use blake2::digest::{Input, VariableOutput};
 use chrono::prelude::*;
-use common::crypto::{CurveType, EcPubkey};
+use common::crypto::{CryptoOps, CurveType, EcPrivkey, EcPubkey};
 use common::executor::Timer;
 use common::impl_base58_checksum_encoding;
 use common::mm_ctx::MmArc;
@@ -233,12 +233,19 @@ pub struct TezosCoinImpl {
     addr_prefixes: AddressPrefixes,
     coin_type: TezosCoinType,
     decimals: u8,
-    key_pair: TezosKeyPair,
+    priv_key: EcPrivkey,
     my_address: TezosAddress,
     required_confirmations: AtomicU64,
     rpc_client: TezosRpcClient,
     swap_contract_address: TezosAddress,
     ticker: String,
+}
+
+fn address_from_ec_pubkey(prefix: TezosAddrPrefix, pubkey: &EcPubkey) -> TezosAddress {
+    TezosAddress {
+        prefix,
+        data: blake2b_160(&pubkey.bytes),
+    }
 }
 
 impl TezosCoinImpl {
@@ -372,13 +379,10 @@ impl TezosCoinImpl {
         let mut prefixed = vec![3u8];
         prefixed.append(&mut tx_bytes.0);
         let sig_hash = blake2b_256(&prefixed);
-        let sig = match &self.key_pair {
-            TezosKeyPair::ED25519(key_pair) => key_pair.sign::<Sha512>(&*sig_hash),
-            _ => unimplemented!(),
-        };
+        let sig = try_s!(self.sign_message(&*sig_hash));
         let signature = TezosSignature {
             prefix: ED_SIG_PREFIX.to_vec(),
-            data: sig.to_bytes().to_vec(),
+            data: sig,
         };
         let preapply_req = PreapplyOperationsRequest(vec![PreapplyOperation {
             branch: head.hash,
@@ -401,10 +405,7 @@ impl TezosCoinImpl {
             CurveType::ED25519 => self.addr_prefixes.ed25519,
             CurveType::P256 => self.addr_prefixes.p256,
         };
-        Ok(TezosAddress {
-            prefix,
-            data: blake2b_160(&pubkey.bytes),
-        })
+        Ok(address_from_ec_pubkey(prefix, pubkey))
     }
 
     async fn validate_htlc_payment(
@@ -846,22 +847,16 @@ impl MarketCoinOps for TezosCoin {
         Ok(address.to_string())
     }
 
+    fn derive_address_from_ec_pubkey(&self, pubkey: &EcPubkey) -> Result<String, String> {
+        self.address_from_ec_pubkey(pubkey).map(|addr| addr.to_string())
+    }
+
     fn tx_hash_to_string(&self, hash: &[u8]) -> String {
         let data = H256::from(hash);
         OpHash {
             prefix: OP_HASH_PREFIX,
             data,
         }.to_string()
-    }
-
-    fn get_pubkey(&self) -> EcPubkey {
-        match &self.key_pair {
-            TezosKeyPair::ED25519(pair) =>  EcPubkey {
-                curve_type: CurveType::ED25519,
-                bytes: pair.public.as_bytes().to_vec(),
-            },
-            _ => unimplemented!(),
-        }
     }
 }
 
@@ -1308,13 +1303,10 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
     let mut prefixed = vec![3u8];
     prefixed.append(&mut tx_bytes.0);
     let sig_hash = blake2b_256(&prefixed);
-    let sig = match &coin.key_pair {
-        TezosKeyPair::ED25519(key_pair) => key_pair.sign::<Sha512>(&*sig_hash),
-        _ => unimplemented!(),
-    };
+    let sig = try_s!(coin.priv_key.sign_message(&*sig_hash));
     let signature = TezosSignature {
         prefix: ED_SIG_PREFIX.to_vec(),
-        data: sig.to_bytes().to_vec(),
+        data: sig,
     };
     let preapply_req = PreapplyOperationsRequest(vec![PreapplyOperation {
         branch: head.hash,
@@ -1402,9 +1394,15 @@ pub async fn tezos_coin_from_conf_and_request(
         return ERR!("Enable request for Tezos coin protocol must have at least 1 node URL");
     }
     let rpc_client = try_s!(TezosRpcClient::new(urls));
-    let key_pair = try_s!(TezosKeyPair::from_bytes(priv_key));
-    let ed25519_addr_prefix: TezosAddrPrefix = try_s!(json::from_value(conf["ed25519_addr_prefix"].clone()));
-    let my_address = key_pair.get_address(ed25519_addr_prefix);
+    let priv_key = EcPrivkey::new(CurveType::ED25519, priv_key.to_vec());
+    let addr_prefixes = AddressPrefixes {
+        ed25519: try_s!(json::from_value(conf["ed25519_addr_prefix"].clone())),
+        secp256k1: try_s!(json::from_value(conf["secp256k1_addr_prefix"].clone())),
+        p256: try_s!(json::from_value(conf["p256_addr_prefix"].clone())),
+        originated: [2, 90, 121],
+    };
+    let pubkey = try_s!(priv_key.get_pubkey());
+    let my_address = address_from_ec_pubkey(addr_prefixes.ed25519, &pubkey);
     let (decimals, coin_type) = match conf["protocol"]["token_type"].as_str().unwrap() {
         "TEZOS" => {
             let decimals = conf["decimals"].as_u64().unwrap_or (6) as u8;
@@ -1426,15 +1424,10 @@ pub async fn tezos_coin_from_conf_and_request(
     };
 
     Ok(TezosCoin(Arc::new(TezosCoinImpl {
-        addr_prefixes: AddressPrefixes {
-            ed25519: try_s!(json::from_value(conf["ed25519_addr_prefix"].clone())),
-            secp256k1: try_s!(json::from_value(conf["secp256k1_addr_prefix"].clone())),
-            p256: try_s!(json::from_value(conf["p256_addr_prefix"].clone())),
-            originated: [2, 90, 121],
-        },
+        addr_prefixes,
         coin_type,
         decimals,
-        key_pair,
+        priv_key,
         my_address,
         required_confirmations: conf["required_confirmations"].as_u64().unwrap_or(1).into(),
         rpc_client,
@@ -2496,5 +2489,25 @@ impl Deserializable for EntrypointId {
             },
             _ => Err(serialization::Error::MalformedData),
         }
+    }
+}
+
+impl CryptoOps for TezosCoinImpl {
+    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+        self.priv_key.get_pubkey()
+    }
+
+    fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
+        self.priv_key.sign_message(msg)
+    }
+}
+
+impl CryptoOps for TezosCoin {
+    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+        self.priv_key.get_pubkey()
+    }
+
+    fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
+        self.priv_key.sign_message(msg)
     }
 }

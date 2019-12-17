@@ -1,4 +1,5 @@
 use bigdecimal::BigDecimal;
+use common::crypto::CryptoOps;
 use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest, TransactionDetailsFut};
@@ -59,9 +60,11 @@ impl MarketCoinOps for TestCoin {
         unimplemented!()
     }
 
-    fn tx_hash_to_string(&self, hash: &[u8]) -> String { unimplemented!() }
+    fn derive_address_from_ec_pubkey(&self, pubkey: &EcPubkey) -> Result<String, String> {
+        unimplemented!()
+    }
 
-    fn get_pubkey(&self) -> EcPubkey { unimplemented!() }
+    fn tx_hash_to_string(&self, hash: &[u8]) -> String { unimplemented!() }
 }
 
 #[mockable]
@@ -258,6 +261,16 @@ impl MmCoin for TestCoin {
     }
 
     fn set_required_confirmations(&self, confirmations: u64) {
+        unimplemented!()
+    }
+}
+
+impl CryptoOps for TestCoin {
+    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+        unimplemented!()
+    }
+
+    fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
         unimplemented!()
     }
 }
