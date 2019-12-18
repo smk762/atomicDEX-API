@@ -558,8 +558,8 @@ impl TakerSwap {
             started_at: self.r().data.started_at,
             secret_hash: maker_data.secret_hash.clone(),
             payment_locktime: self.r().data.taker_payment_lock,
-            maker_coin_persistent_pub: unwrap!(self.maker_coin.get_pubkey()),
-            taker_coin_persistent_pub: unwrap!(self.taker_coin.get_pubkey()),
+            maker_coin_persistent_pub: self.maker_coin.get_pubkey(),
+            taker_coin_persistent_pub: self.taker_coin.get_pubkey(),
         };
         let bytes = serialize(&taker_data);
         let sending_f = match send!(self.ctx, self.maker, fomat!(("negotiation-reply") '@' (self.uuid)), 30, bytes.as_slice()) {

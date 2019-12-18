@@ -1394,14 +1394,14 @@ pub async fn tezos_coin_from_conf_and_request(
         return ERR!("Enable request for Tezos coin protocol must have at least 1 node URL");
     }
     let rpc_client = try_s!(TezosRpcClient::new(urls));
-    let priv_key = EcPrivkey::new(CurveType::ED25519, priv_key.to_vec());
+    let priv_key = try_s!(EcPrivkey::new(CurveType::ED25519, priv_key));
     let addr_prefixes = AddressPrefixes {
         ed25519: try_s!(json::from_value(conf["ed25519_addr_prefix"].clone())),
         secp256k1: try_s!(json::from_value(conf["secp256k1_addr_prefix"].clone())),
         p256: try_s!(json::from_value(conf["p256_addr_prefix"].clone())),
         originated: [2, 90, 121],
     };
-    let pubkey = try_s!(priv_key.get_pubkey());
+    let pubkey = priv_key.get_pubkey();
     let my_address = address_from_ec_pubkey(addr_prefixes.ed25519, &pubkey);
     let (decimals, coin_type) = match conf["protocol"]["token_type"].as_str().unwrap() {
         "TEZOS" => {
@@ -2493,7 +2493,7 @@ impl Deserializable for EntrypointId {
 }
 
 impl CryptoOps for TezosCoinImpl {
-    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+    fn get_pubkey(&self) -> EcPubkey {
         self.priv_key.get_pubkey()
     }
 
@@ -2503,7 +2503,7 @@ impl CryptoOps for TezosCoinImpl {
 }
 
 impl CryptoOps for TezosCoin {
-    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+    fn get_pubkey(&self) -> EcPubkey {
         self.priv_key.get_pubkey()
     }
 

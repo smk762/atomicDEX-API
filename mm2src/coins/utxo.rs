@@ -2115,11 +2115,11 @@ fn kmd_interest(height: u64, value: u64, lock_time: u64, current_time: u64) -> u
 }
 
 impl CryptoOps for UtxoCoinImpl {
-    fn get_pubkey(&self) -> Result<EcPubkey, String> {
-        Ok(EcPubkey {
+    fn get_pubkey(&self) -> EcPubkey {
+        EcPubkey {
             curve_type: CurveType::SECP256K1,
             bytes: self.key_pair.public().to_vec(),
-        })
+        }
     }
 
     fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
@@ -2129,11 +2129,11 @@ impl CryptoOps for UtxoCoinImpl {
 }
 
 impl CryptoOps for UtxoCoin {
-    fn get_pubkey(&self) -> Result<EcPubkey, String> {
-        Ok(EcPubkey {
+    fn get_pubkey(&self) -> EcPubkey {
+        EcPubkey {
             curve_type: CurveType::SECP256K1,
             bytes: self.key_pair.public().to_vec(),
-        })
+        }
     }
 
     fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {

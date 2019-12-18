@@ -407,7 +407,7 @@ async fn withdraw_impl(ctx: MmArc, coin: EthCoin, req: WithdrawRequest) -> Resul
     let nonce = try_s!(get_addr_nonce(coin.my_address, &coin.web3_instances).compat().await);
     let tx = UnSignedEthTx { nonce, value: eth_value, action: Action::Call(call_addr), data, gas, gas_price };
 
-    let eth_secret = try_s!(EthSecret::from_slice(coin.priv_key.as_bytes()).ok_or("Invalid privkey"));
+    let eth_secret = try_s!(EthSecret::from_slice(&coin.priv_key.get_bytes()).ok_or("Invalid privkey"));
     let signed = tx.sign(&eth_secret, None);
     let bytes = rlp::encode(&signed);
     let amount_decimal = try_s!(u256_to_big_decimal(wei_amount, coin.decimals));
@@ -920,7 +920,7 @@ async fn sign_and_send_transaction_impl(
         gas,
         gas_price,
     };
-    let eth_secret = try_s!(EthSecret::from_slice(coin.priv_key.as_bytes()).ok_or("Invalid privkey"));
+    let eth_secret = try_s!(EthSecret::from_slice(&coin.priv_key.get_bytes()).ok_or("Invalid privkey"));
     let signed = tx.sign(&eth_secret, None);
     let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
     status.status(tags!(), "send_raw_transaction…");
@@ -2231,7 +2231,7 @@ pub async fn eth_coin_from_conf_and_request(
         HistorySyncState::NotEnabled
     };
     let coin = EthCoinImpl {
-        priv_key: EcPrivkey::new(CurveType::SECP256K1, priv_key.to_vec()),
+        priv_key: try_s!(EcPrivkey::new(CurveType::SECP256K1, priv_key)),
         my_address,
         coin_type,
         swap_contract_address,
@@ -2329,7 +2329,7 @@ fn get_addr_nonce(addr: Address, web3s: &Vec<Web3Instance>) -> Box<dyn Future<It
 }
 
 impl CryptoOps for EthCoinImpl {
-    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+    fn get_pubkey(&self) -> EcPubkey {
         self.priv_key.get_pubkey()
     }
 
@@ -2339,7 +2339,7 @@ impl CryptoOps for EthCoinImpl {
 }
 
 impl CryptoOps for EthCoin {
-    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+    fn get_pubkey(&self) -> EcPubkey {
         self.priv_key.get_pubkey()
     }
 

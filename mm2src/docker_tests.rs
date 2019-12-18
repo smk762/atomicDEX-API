@@ -251,7 +251,7 @@ mod docker_tests {
         let tx = coin.send_taker_payment(
             &[],
             time_lock,
-            &unwrap!(coin.get_pubkey()),
+            &coin.get_pubkey(),
             &[0; 20],
             1.into(),
         ).wait().unwrap();
@@ -262,7 +262,7 @@ mod docker_tests {
             &[],
             &tx.tx_hex,
             time_lock,
-            &unwrap!(coin.get_pubkey()),
+            &coin.get_pubkey(),
             &[0; 20],
         ).wait().unwrap();
 
@@ -270,7 +270,7 @@ mod docker_tests {
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
-            &unwrap!(coin.get_pubkey()),
+            &coin.get_pubkey(),
             &[0; 20],
             &tx.tx_hex,
             0,
@@ -288,7 +288,7 @@ mod docker_tests {
         let tx = coin.send_taker_payment(
             &[],
             time_lock,
-            &unwrap!(coin.get_pubkey()),
+            &coin.get_pubkey(),
             &*dhash160(&secret),
             1.into(),
         ).wait().unwrap();
@@ -299,7 +299,7 @@ mod docker_tests {
             &[],
             &tx.tx_hex,
             time_lock,
-            &unwrap!(coin.get_pubkey()),
+            &coin.get_pubkey(),
             &secret,
         ).wait().unwrap();
 
@@ -307,7 +307,7 @@ mod docker_tests {
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
-            &unwrap!(coin.get_pubkey()),
+            &coin.get_pubkey(),
             &*dhash160(&secret),
             &tx.tx_hex,
             0,

@@ -23,7 +23,7 @@ fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCo
         gas_station_url: None,
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         my_address: key_pair.address(),
-        priv_key: EcPrivkey::new(CurveType::SECP256K1, secret_bytes),
+        priv_key: unwrap!(EcPrivkey::new(CurveType::SECP256K1, &secret_bytes)),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
@@ -146,7 +146,7 @@ fn send_and_refund_erc20_payment() {
         ticker: "ETH".into(),
         coin_type: EthCoinType::Erc20(Address::from("0xc0eb7AeD740E1796992A08962c15661bDEB58003")),
         my_address: key_pair.address(),
-        priv_key: EcPrivkey::new(CurveType::SECP256K1, secret_bytes),
+        priv_key: unwrap!(EcPrivkey::new(CurveType::SECP256K1, &secret_bytes)),
         swap_contract_address: Address::from("0x06964d4DAB22f96c1c382ef6f2b6b8324950f9FD"),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: false}],
         web3,
@@ -198,7 +198,7 @@ fn send_and_refund_eth_payment() {
         ticker: "ETH".into(),
         coin_type: EthCoinType::Eth,
         my_address: key_pair.address(),
-        priv_key: EcPrivkey::new(CurveType::SECP256K1, secret_bytes),
+        priv_key: unwrap!(EcPrivkey::new(CurveType::SECP256K1, &secret_bytes)),
         swap_contract_address: Address::from("0x06964d4DAB22f96c1c382ef6f2b6b8324950f9FD"),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: false}],
         web3,
@@ -265,7 +265,7 @@ fn test_nonce_several_urls() {
         ticker: "ETH".into(),
         coin_type: EthCoinType::Eth,
         my_address: key_pair.address(),
-        priv_key: EcPrivkey::new(CurveType::SECP256K1, secret_bytes),
+        priv_key: unwrap!(EcPrivkey::new(CurveType::SECP256K1, &secret_bytes)),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         web3_instances: vec![
             Web3Instance { web3: web3_infura.clone(), is_parity: false },
@@ -305,7 +305,7 @@ fn test_wait_for_payment_spend_timeout() {
         gas_station_url: None,
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         my_address: key_pair.address(),
-        priv_key: EcPrivkey::new(CurveType::SECP256K1, secret_bytes),
+        priv_key: unwrap!(EcPrivkey::new(CurveType::SECP256K1, &secret_bytes)),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
@@ -337,7 +337,7 @@ fn test_search_for_swap_tx_spend_was_spent() {
         gas_station_url: None,
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         my_address: key_pair.address(),
-        priv_key: EcPrivkey::new(CurveType::SECP256K1, secret_bytes),
+        priv_key: unwrap!(EcPrivkey::new(CurveType::SECP256K1, &secret_bytes)),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
@@ -373,7 +373,7 @@ fn test_search_for_swap_tx_spend_was_refunded() {
         gas_station_url: None,
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         my_address: key_pair.address(),
-        priv_key: EcPrivkey::new(CurveType::SECP256K1, secret_bytes),
+        priv_key: unwrap!(EcPrivkey::new(CurveType::SECP256K1, &secret_bytes)),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
@@ -457,7 +457,7 @@ fn test_get_pubkey() {
         curve_type: CurveType::SECP256K1,
         bytes: unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),
     };
-    assert_eq!(expected_pub, unwrap!(coin.get_pubkey()));
+    assert_eq!(expected_pub, coin.get_pubkey());
 }
 
 #[cfg(feature = "w-bindgen")]

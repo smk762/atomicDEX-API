@@ -806,7 +806,7 @@ impl PricePingRequest {
         let sig_hash = price_ping_sig_hash(
             timestamp as u32,
             &**ctx.secp256k1_key_pair().public(),
-            &try_s!(my_coin.get_pubkey()).bytes,
+            &my_coin.get_pubkey().bytes,
             order.base.as_bytes(),
             order.rel.as_bytes(),
             price64,
@@ -829,7 +829,7 @@ impl PricePingRequest {
 
         Ok(PricePingRequest {
             method: "postprice".into(),
-            pubkey: try_s!(my_coin.get_pubkey()),
+            pubkey: my_coin.get_pubkey(),
             base: order.base.clone(),
             rel: order.rel.clone(),
             price64: price64.to_string(),
@@ -861,38 +861,34 @@ pub fn lp_post_price_recv(ctx: &MmArc, req: Json) -> HyRes {
         req.rel.as_bytes(),
         try_h!(req.price64.parse()),
     );
-    let sig_check = try_h!(req.pubkey.verify_signature(&*sig_hash, &signature));
-    if sig_check {
-        // identify the order by first 16 bytes of node pubkey to keep backwards-compatibility
-        // TODO remove this when all nodes are updated
-        let mut bytes = [0; 16];
-        bytes.copy_from_slice(&req.pubkey.bytes[..16]);
-        let uuid = req.uuid.unwrap_or(Uuid::from_bytes(bytes));
-        let ordermatch_ctx: Arc<OrdermatchContext> = try_h!(OrdermatchContext::from_ctx(ctx));
-        let mut orderbook = try_h!(ordermatch_ctx.orderbook.lock());
-        match orderbook.entry((req.base.clone(), req.rel.clone())) {
-            Entry::Vacant(pair_orders) => if req.balance > 0.into() && req.price > 0.into() {
-                let mut orders = HashMap::new();
-                orders.insert(uuid, req);
-                pair_orders.insert(orders);
-            },
-            Entry::Occupied(mut pair_orders) => {
-                match pair_orders.get_mut().entry(uuid) {
-                    Entry::Vacant(order) => if req.balance > 0.into() && req.price > 0.into() {
-                        order.insert(req);
-                    },
-                    Entry::Occupied(mut order) => if req.balance > 0.into() {
-                        order.insert(req);
-                    } else {
-                        order.remove();
-                    },
-                }
+    let _sig_check = try_h!(req.pubkey.verify_signature(&*sig_hash, &signature));
+    // identify the order by first 16 bytes of node pubkey to keep backwards-compatibility
+    // TODO remove this when all nodes are updated
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&req.pubkey.bytes[..16]);
+    let uuid = req.uuid.unwrap_or(Uuid::from_bytes(bytes));
+    let ordermatch_ctx: Arc<OrdermatchContext> = try_h!(OrdermatchContext::from_ctx(ctx));
+    let mut orderbook = try_h!(ordermatch_ctx.orderbook.lock());
+    match orderbook.entry((req.base.clone(), req.rel.clone())) {
+        Entry::Vacant(pair_orders) => if req.balance > 0.into() && req.price > 0.into() {
+            let mut orders = HashMap::new();
+            orders.insert(uuid, req);
+            pair_orders.insert(orders);
+        },
+        Entry::Occupied(mut pair_orders) => {
+            match pair_orders.get_mut().entry(uuid) {
+                Entry::Vacant(order) => if req.balance > 0.into() && req.price > 0.into() {
+                    order.insert(req);
+                },
+                Entry::Occupied(mut order) => if req.balance > 0.into() {
+                    order.insert(req);
+                } else {
+                    order.remove();
+                },
             }
         }
-        rpc_response(200, r#"{"result":"success"}"#)
-    } else {
-        rpc_err_response(400, "price ping invalid signature")
-    }
+    };
+    rpc_response(200, r#"{"result":"success"}"#)
 }
 
 fn lp_send_price_ping(req: &PricePingRequest, ctx: &MmArc) -> Result<(), String> {
@@ -1054,15 +1050,21 @@ pub async fn broadcast_my_maker_orders(ctx: &MmArc) -> Result<(), String> {
         }
     }
 
-    /*
     // the difference of cancelled orders from maker orders that we broadcast the cancel request only once
     // cancelled record can be just dropped then
     let cancelled_orders: HashMap<_, _> = try_s!(ordermatch_ctx.my_cancelled_orders.lock()).drain().collect();
     for (_, mut order) in cancelled_orders {
+        let base_coin = match try_s!(lp_coinfindᵃ(ctx, &order.base).await) {
+            Some(coin) => coin,
+            None => {
+                ctx.log.log("", &[&"broadcast_my_cancelled_orders", &order.base, &order.rel], "base coin is not active, skipping");
+                continue
+            },
+        };
         // TODO cancel means setting the volume to 0 as of now, should refactor
         order.max_base_vol = 0.into();
         order.max_base_vol_rat = BigRational::from_integer(0.into());
-        let ping = match PricePingRequest::new(ctx, &order, 0.into(), EcPubkey::default()) {
+        let ping = match PricePingRequest::new(ctx, &order, 0.into(), &base_coin) {
             Ok(p) => p,
             Err(e) => {
                 ctx.log.log("", &[&"broadcast_cancelled_orders", &order.base, &order.rel], &format! ("ping request creation failed {}", e));
@@ -1075,7 +1077,6 @@ pub async fn broadcast_my_maker_orders(ctx: &MmArc) -> Result<(), String> {
             continue;
         }
     }
-    */
     Ok(())
 }
 

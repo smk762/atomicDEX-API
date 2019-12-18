@@ -266,7 +266,7 @@ impl MmCoin for TestCoin {
 }
 
 impl CryptoOps for TestCoin {
-    fn get_pubkey(&self) -> Result<EcPubkey, String> {
+    fn get_pubkey(&self) -> EcPubkey {
         unimplemented!()
     }
 
