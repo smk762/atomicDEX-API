@@ -24,7 +24,6 @@
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
 use coins::{lp_coinfindᵃ, MmCoinEnum, TradeInfo};
-use coins::utxo::{compressed_pub_key_from_priv_raw, ChecksumType};
 use common::{bits256, json_dir_entries, now_ms, new_uuid,
   remove_file, rpc_response, rpc_err_response, write, HyRes};
 use common::crypto::{EcPubkey};
@@ -320,8 +319,6 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
         alice.bytes = maker_match.request.sender_pubkey.0;
         let maker_amount = maker_match.reserved.get_base_amount().into();
         let taker_amount = maker_match.reserved.get_rel_amount().into();
-        let privkey = &ctx.secp256k1_key_pair().private().secret;
-        let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
         let uuid = maker_match.request.uuid.to_string();
 
         log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
@@ -332,7 +329,6 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
             taker_coin,
             maker_amount,
             taker_amount,
-            my_persistent_pub,
             uuid,
         );
         run_maker_swap(maker_swap, None).await;
@@ -367,8 +363,6 @@ fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
             }
         };
 
-        let privkey = &ctx.secp256k1_key_pair().private().secret;
-        let my_persistent_pub = unwrap!(compressed_pub_key_from_priv_raw(&privkey[..], ChecksumType::DSHA256));
         let maker_amount = taker_match.reserved.get_base_amount().into();
         let taker_amount = taker_match.reserved.get_rel_amount().into();
         let uuid = taker_match.reserved.taker_order_uuid.to_string();
@@ -381,7 +375,6 @@ fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
             taker_coin,
             maker_amount,
             taker_amount,
-            my_persistent_pub,
             uuid,
         );
         run_taker_swap(taker_swap, None).await

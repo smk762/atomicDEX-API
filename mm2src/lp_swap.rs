@@ -63,7 +63,7 @@ use common::{block_on, read_dir, rpc_response, slurp, write, HyRes};
 use common::crypto::{EcPubkey};
 use common::mm_ctx::{from_ctx, MmArc};
 use http::Response;
-use primitives::hash::{H160, H256, H264};
+use primitives::hash::{H256};
 use rpc::v1::types::{Bytes as BytesJson};
 use serde_json::{self as json, Value as Json};
 use std::collections::{HashSet, HashMap};

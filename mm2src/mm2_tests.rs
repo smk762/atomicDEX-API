@@ -14,6 +14,7 @@ use common::mm_ctx::MmArc;
 use http::StatusCode;
 #[cfg(feature = "native")]
 use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
+use lazy_static::lazy_static;
 use num_rational::BigRational;
 use peers;
 use serde_json::{self as json, Value as Json};
@@ -29,6 +30,19 @@ use super::lp_main;
 // "Tests in your src files should be unit tests, and tests in tests/ should be integration-style tests."
 // - https://doc.rust-lang.org/cargo/guide/tests.html
 
+lazy_static! {
+    static ref COINS_CONFIG: Json = json! ([
+        {"coin":"BEER","asset":"BEER","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"PIZZA","asset":"PIZZA","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
+        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"},
+        {"coin":"XTZ","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
+    ]);
+}
+
 /// Enables BEER, PIZZA, ETOMIC and ETH.
 /// Returns the RPC replies containing the corresponding wallet addresses.
 #[cfg(feature = "native")]
@@ -41,16 +55,13 @@ fn enable_coins(mm: &MarketMakerIt) -> Vec<(&'static str, Json)> {
     replies
 }
 
-async fn enable_coins_eth_electrum_dune(mm: &MarketMakerIt, eth_urls: Vec<&str>, dune_urls: Vec<&str>) -> HashMap<&'static str, Json> {
+async fn enable_coins_eth_electrum_xtz(mm: &MarketMakerIt, eth_urls: Vec<&str>, xtz_urls: Vec<&str>) -> HashMap<&'static str, Json> {
     let mut replies = HashMap::new();
-    /*
     replies.insert ("BEER", enable_electrum (mm, "BEER", vec!["test1.cipig.net:10022","test2.cipig.net:10022"]) .await);
     replies.insert ("PIZZA", enable_electrum (mm, "PIZZA", vec!["test1.cipig.net:10024","test2.cipig.net:10024"]) .await);
     replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["test1.cipig.net:10025","test2.cipig.net:10025"]) .await);
-    replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()) .await);
-    replies.insert ("JST", enable_native (mm, "JST", eth_urls) .await);
-    */
-    replies.insert ("TEZOS", enable_native (mm, "TEZOS", dune_urls.clone()) .await);
+    // replies.insert ("JST", enable_native (mm, "JST", eth_urls.clone()) .await);
+    replies.insert ("XTZ", enable_native (mm, "XTZ", xtz_urls.clone()) .await);
     replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()) .await);
     replies
 }
@@ -225,14 +236,6 @@ fn test_notify() {
 #[test]
 #[cfg(feature = "native")]
 fn alice_can_see_the_active_order_after_connection() {
-    let coins = json!([
-        {"coin":"BEER","asset":"BEER","rpcport":8923,"txversion":4},
-        {"coin":"PIZZA","asset":"PIZZA","rpcport":11608,"txversion":4},
-        {"coin":"ETOMIC","asset":"ETOMIC","rpcport":10271,"txversion":4},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
-        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
-    ]);
-
     // start bob and immediately place the order
     let mut mm_bob = unwrap! (MarketMakerIt::start (
         json! ({
@@ -242,7 +245,7 @@ fn alice_can_see_the_active_order_after_connection() {
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": "bob passphrase",
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "rpc_password": "pass",
             "i_am_seed": true,
         }),
@@ -253,7 +256,7 @@ fn alice_can_see_the_active_order_after_connection() {
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_dune (&mm_bob, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_bob, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
     // issue sell request on Bob side by setting base/rel price
     log!("Issue bob sell request");
     let rc = unwrap! (block_on (mm_bob.rpc (json! ({
@@ -291,7 +294,7 @@ fn alice_can_see_the_active_order_after_connection() {
             "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
             "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
             "passphrase": "alice passphrase",
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "seednodes": [fomat!((mm_bob.ip))],
             "rpc_password": "pass",
         }),
@@ -305,7 +308,7 @@ fn alice_can_see_the_active_order_after_connection() {
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum_dune (&mm_alice, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
 
     for _ in 0..2 {
         // Alice should be able to see the order no later than 10 seconds after connecting to bob
@@ -435,14 +438,6 @@ fn check_sell_fails(mm: &MarketMakerIt, base: &str, rel: &str, vol: f64) {
 #[test]
 #[cfg(feature = "native")]
 fn test_check_balance_on_order_post() {
-    let coins = json!([
-        {"coin":"BEER","asset":"BEER","rpcport":8923,"txversion":4},
-        {"coin":"PIZZA","asset":"PIZZA","rpcport":11608,"txversion":4},
-        {"coin":"ETOMIC","asset":"ETOMIC","rpcport":10271,"txversion":4},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
-    ]);
-
     // start bob and immediately place the order
     let mut mm = unwrap! (MarketMakerIt::start (
         json! ({
@@ -452,7 +447,7 @@ fn test_check_balance_on_order_post() {
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": "bob passphrase",
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "i_am_seed": true,
             "rpc_password": "pass",
         }),
@@ -463,7 +458,7 @@ fn test_check_balance_on_order_post() {
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     // Enable coins. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_dune (&mm, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]))});
     // issue sell request by setting base/rel price
 
     // Expect error as PIZZA balance is 0
@@ -697,15 +692,6 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
     let bob_passphrase = "0x3dc9187936e4bf40daf1aebdf4c58b7cb9665102c03640b9d696a260d87b1da5";
     let alice_passphrase = "spice describe gravity federal blast come thank unfair canal monkey style afraid";
 
-    let coins = json! ([
-        {"coin":"BEER","asset":"BEER","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"PIZZA","asset":"PIZZA","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"},
-        {"coin":"TEZOS","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
-    ]);
-
     let mut mm_bob = unwrap! (MarketMakerIt::start (
         json! ({
             "gui": "nogui",
@@ -715,7 +701,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": bob_passphrase,
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "rpc_password": "password",
             "i_am_seed": true,
         }),
@@ -741,7 +727,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
             "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
             "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
             "passphrase": alice_passphrase,
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "seednodes": [fomat!((mm_bob.ip))],
             "rpc_password": "password",
         }),
@@ -761,10 +747,10 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
     wait_log_re! (mm_alice, 22., ">>>>>>>>> DEX stats ");
 
     // Enable coins on Bob side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum_dune (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"], vec!["https://tezos-dev.cryptonomic-infra.tech"]) .await;
+    let rc = enable_coins_eth_electrum_xtz (&mm_bob, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"], vec!["https://tezos-dev.cryptonomic-infra.tech"]) .await;
     log! ({"enable_coins (bob): {:?}", rc});
     // Enable coins on Alice side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum_dune (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"], vec!["https://tezos-dev.cryptonomic-infra.tech"]) .await;
+    let rc = enable_coins_eth_electrum_xtz (&mm_alice, vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b"], vec!["https://tezos-dev.cryptonomic-infra.tech"]) .await;
     log! ({"enable_coins (alice): {:?}", rc});
 
     // unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
@@ -907,7 +893,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
 #[cfg(feature = "native")]
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    block_on(trade_base_rel_electrum(vec![("TEZOS", "ETH")]));
+    block_on(trade_base_rel_electrum(vec![("XTZ", "ETH")]));
 }
 
 #[cfg(not(feature = "native"))]
@@ -1170,14 +1156,6 @@ fn test_withdraw_and_send() {
 
     let alice_passphrase = unwrap! (var ("ALICE_PASSPHRASE") .ok().or (alice_file_passphrase), "No ALICE_PASSPHRASE or .env.client/PASSPHRASE");
 
-    let coins = json! ([
-        {"coin":"BEER","asset":"BEER","txversion":4,"overwintered":1},
-        {"coin":"PIZZA","asset":"PIZZA","txversion":4,"overwintered":1},
-        {"coin":"ETOMIC","asset":"ETOMIC","txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
-    ]);
-
     let mut mm_alice = unwrap! (MarketMakerIt::start (
         json! ({
             "gui": "nogui",
@@ -1185,7 +1163,7 @@ fn test_withdraw_and_send() {
             "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
             "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
             "passphrase": alice_passphrase,
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "rpc_password": "password",
             "i_am_seed": true,
         }),
@@ -1200,7 +1178,7 @@ fn test_withdraw_and_send() {
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
     // Enable coins. Print the replies in case we need the address.
-    let enable_res = block_on (enable_coins_eth_electrum_dune (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]));
+    let enable_res = block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]));
     log! ("enable_coins (alice): " [enable_res]);
     withdraw_and_send(&mm_alice, "PIZZA", "RJTYiYeJ8eVvJ53n2YbrVmxWNNMVZjDGLh", &enable_res, "-0.00101");
     // dev chain gas price is 0 so ETH expected balance change doesn't include the fee
@@ -1485,14 +1463,6 @@ fn test_multiple_buy_sell_no_delay() {
 #[test]
 #[cfg(feature = "native")]
 fn test_cancel_order() {
-    let coins = json!([
-        {"coin":"BEER","asset":"BEER","rpcport":8923,"txversion":4},
-        {"coin":"PIZZA","asset":"PIZZA","rpcport":11608,"txversion":4},
-        {"coin":"ETOMIC","asset":"ETOMIC","rpcport":10271,"txversion":4},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000","rpcport":80},
-        {"coin":"JST","name":"jst","etomic":"0xc0eb7AeD740E1796992A08962c15661bDEB58003"}
-    ]);
-
     // start bob and immediately place the order
     let mut mm_bob = unwrap! (MarketMakerIt::start (
         json! ({
@@ -1503,7 +1473,7 @@ fn test_cancel_order() {
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": "bob passphrase",
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "i_am_seed": true,
             "rpc_password": "pass",
         }),
@@ -1514,7 +1484,7 @@ fn test_cancel_order() {
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_dune (&mm_bob, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_bob, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
 
     log!("Issue sell request on Bob side by setting base/rel price…");
     let rc = unwrap! (block_on (mm_bob.rpc (json! ({
@@ -1537,7 +1507,7 @@ fn test_cancel_order() {
             "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
             "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
             "passphrase": "alice passphrase",
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "seednodes": [fomat!((mm_bob.ip))],
             "rpc_password": "pass",
         }),
@@ -1551,7 +1521,7 @@ fn test_cancel_order() {
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum_dune (&mm_alice, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8545"], vec!["https://testnet-node.dunscan.io"]))});
 
     log!("Give Alice 15 seconds to import the order…");
     thread::sleep(Duration::from_secs(15));
@@ -1917,12 +1887,6 @@ fn orderbook_should_display_rational_amounts() {
 #[test]
 #[cfg(feature = "native")]
 fn orderbook_should_display_valid_address() {
-    let coins = json!([
-        {"coin":"RICK","asset":"RICK"},
-        {"coin":"MORTY","asset":"MORTY"},
-        {"coin":"XZT","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
-    ]);
-
     let mut mm = unwrap! (MarketMakerIt::start (
         json! ({
             "gui": "nogui",
@@ -1931,7 +1895,7 @@ fn orderbook_should_display_valid_address() {
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": "0x3dc9187936e4bf40daf1aebdf4c58b7cb9665102c03640b9d696a260d87b1da5",
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "rpc_password": "pass",
             "i_am_seed": true,
         }),
@@ -1942,7 +1906,7 @@ fn orderbook_should_display_valid_address() {
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     block_on(enable_electrum(&mm, "MORTY", vec!["electrum3.cipig.net:10018", "electrum2.cipig.net:10018", "electrum1.cipig.net:10018"]));
-    block_on(enable_native(&mm, "XZT", vec!["https://tezos-dev.cryptonomic-infra.tech"]));
+    block_on(enable_native(&mm, "XTZ", vec!["https://tezos-dev.cryptonomic-infra.tech"]));
 
     let price = BigRational::new(9.into(), 10.into());
     let volume = BigRational::new(9.into(), 10.into());
@@ -1951,7 +1915,7 @@ fn orderbook_should_display_valid_address() {
     let rc = unwrap! (block_on (mm.rpc (json! ({
         "userpass": mm.userpass,
         "method": "setprice",
-        "base": "XZT",
+        "base": "XTZ",
         "rel": "MORTY",
         "price": price,
         "volume": volume,
@@ -1960,11 +1924,11 @@ fn orderbook_should_display_valid_address() {
     assert! (rc.0.is_success(), "!setprice: {}", rc.1);
 
     thread::sleep(Duration::from_secs(12));
-    log!("Get XZT/MORTY orderbook");
+    log!("Get XTZ/MORTY orderbook");
     let rc = unwrap! (block_on (mm.rpc (json! ({
             "userpass": mm.userpass,
             "method": "orderbook",
-            "base": "XZT",
+            "base": "XTZ",
             "rel": "MORTY",
         }))));
     assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
@@ -1972,7 +1936,7 @@ fn orderbook_should_display_valid_address() {
     let orderbook: Json = unwrap!(json::from_str(&rc.1));
     log!("orderbook " [orderbook]);
     let asks = orderbook["asks"].as_array().unwrap();
-    assert_eq!(asks.len(), 1, "XZT/MORTY orderbook must have exactly 1 ask");
+    assert_eq!(asks.len(), 1, "XTZ/MORTY orderbook must have exactly 1 ask");
     let address_in_orderbook = asks[0]["address"].as_str().unwrap();
     assert_eq!("tz1bzbcrL5f2U5cAVMgCUD1V7WN4L9YP6hpn", address_in_orderbook);
 }

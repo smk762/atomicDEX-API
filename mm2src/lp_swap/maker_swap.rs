@@ -7,14 +7,13 @@ use common::executor::Timer;
 use common::{bits256, now_ms, now_float, slurp, write, MM_VERSION};
 use common::crypto::{CurveType, EcPubkey};
 use common::mm_ctx::MmArc;
-use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails, TradeActor};
+use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
 use crc::crc32;
 use futures::compat::Future01CompatExt;
 use futures::future::Either;
 use futures01::Future;
 use parking_lot::Mutex as PaMutex;
 use peers::FixedValidator;
-use primitives::hash::{H264};
 use rand::Rng;
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json, H264 as H264Json};
 use serde_json::{self as json, Value as Json};
@@ -83,7 +82,6 @@ pub struct MakerSwapData {
     taker: H256Json,
     secret: H256Json,
     secret_hash: BytesJson,
-    my_persistent_pub: H264Json,
     lock_duration: u64,
     maker_amount: BigDecimal,
     taker_amount: BigDecimal,
@@ -114,7 +112,6 @@ pub struct MakerSwap {
     taker_coin: MmCoinEnum,
     maker_amount: BigDecimal,
     taker_amount: BigDecimal,
-    my_persistent_pub: H264,
     taker: bits256,
     uuid: String,
     taker_payment_lock: Atomic<u64>,
@@ -178,7 +175,6 @@ impl MakerSwap {
         taker_coin: MmCoinEnum,
         maker_amount: BigDecimal,
         taker_amount: BigDecimal,
-        my_persistent_pub: H264,
         uuid: String,
     ) -> Self {
         MakerSwap {
@@ -187,7 +183,6 @@ impl MakerSwap {
             taker_coin,
             maker_amount,
             taker_amount,
-            my_persistent_pub,
             taker,
             uuid,
             taker_payment_lock: Atomic::new(0),
@@ -284,7 +279,6 @@ impl MakerSwap {
             maker_payment_confirmations: self.maker_coin.required_confirmations(),
             taker_payment_confirmations: self.taker_coin.required_confirmations(),
             maker_payment_lock: started_at + lock_duration * 2,
-            my_persistent_pub: self.my_persistent_pub.clone().into(),
             uuid: self.uuid.clone(),
             maker_coin_start_block,
             taker_coin_start_block,
@@ -668,7 +662,6 @@ impl MakerSwap {
             MakerSwapEvent::Started(data) => {
                 let mut taker = bits256::from([0; 32]);
                 taker.bytes = data.taker.0;
-                let my_persistent_pub = H264::from(&**ctx.secp256k1_key_pair().public());
 
                 let swap = MakerSwap::new(
                     ctx,
@@ -677,7 +670,6 @@ impl MakerSwap {
                     taker_coin,
                     data.maker_amount.clone(),
                     data.taker_amount.clone(),
-                    my_persistent_pub,
                     saved.uuid,
                 );
                 let command = saved.events.last().unwrap().get_command();

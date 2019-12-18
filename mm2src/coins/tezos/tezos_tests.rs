@@ -509,7 +509,7 @@ fn test_address_from_ec_pubkey() {
         bytes: unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
     };
     let address = coin.address_from_ec_pubkey(&fee_addr_pub_key).unwrap();
-    assert_eq!("dn2GbmbWjNVwwBbaT8CTPjn1wyWWSsv479dZ", address.to_string());
+    assert_eq!("tz2L6seff8XKa64L4bmjL3ePt1zFdMrry63B", address.to_string());
 }
 
 #[test]
@@ -558,7 +558,7 @@ fn send_taker_payment() {
     let uuid = new_uuid();
     let payment = coin.send_taker_payment(
         uuid.as_bytes(),
-        (now_ms() / 1000) as u32 + 2000,
+        0,
         &coin.get_pubkey(),
         &*sha256(&[]),
         "0.1".parse().unwrap(),
@@ -575,7 +575,7 @@ fn send_taker_payment() {
     let refund = coin.send_taker_refunds_payment(
         uuid.as_bytes(),
         &payment.tx_hex,
-        (now_ms() / 1000) as u32 + 2000,
+        0,
         &coin.get_pubkey(),
         &*sha256(&[]),
     ).wait().unwrap();
