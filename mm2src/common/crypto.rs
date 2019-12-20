@@ -118,7 +118,7 @@ impl Default for EcPubkey {
     fn default() -> EcPubkey {
         EcPubkey {
             curve_type: CurveType::SECP256K1,
-            bytes: vec![],
+            bytes: vec![0; 33],
         }
     }
 }

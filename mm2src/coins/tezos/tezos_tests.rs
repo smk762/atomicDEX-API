@@ -1,33 +1,7 @@
 use super::*;
-use crate::tezos::tezos_rpc::OperationsResult;
+use crate::tezos::tezos_rpc::{OperationsResult, Origination};
 use bitcrypto::sha256;
 use common::privkey::key_pair_from_seed;
-
-fn tezos_coin_for_test() -> TezosCoin {
-    let conf = json!({
-        "coin": "TEZOS",
-        "name": "tezosbabylonnet",
-        "ed25519_addr_prefix": TZ1_ADDR_PREFIX,
-        "secp256k1_addr_prefix": TZ2_ADDR_PREFIX,
-        "p256_addr_prefix": TZ3_ADDR_PREFIX,
-        "protocol": {
-          "platform": "TEZOS",
-          "token_type": "TEZOS"
-        },
-        "mm2": 1
-    });
-    let req = json!({
-        "method": "enable",
-        "coin": "TEZOS",
-        "urls": [
-            "https://tezos-dev.cryptonomic-infra.tech"
-        ],
-        "mm2":1
-    });
-    let priv_key = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
-    let coin = block_on(tezos_coin_from_conf_and_request("TEZOS", &conf, &req, &priv_key)).unwrap();
-    coin
-}
 
 fn tezos_erc_coin_for_test() -> TezosCoin {
     let conf = json!({
@@ -402,6 +376,16 @@ fn tezos_secret_from_to_string() {
     assert_eq!(secret, unwrap!(TezosSecret::from_str("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ")));
     assert_eq!("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ", secret.to_string());
 
+    let secret = EcPrivkey::new(CurveType::ED25519, &secret.data).unwrap();
+    let pubkey = secret.get_pubkey();
+    let tezos_pub = TezosPubkey {
+        prefix: ED_PK_PREFIX,
+        data: pubkey.bytes.clone(),
+    };
+
+    log!((tezos_pub));
+    log!((address_from_ec_pubkey(TZ1_ADDR_PREFIX, &pubkey)));
+
     let secret = TezosSecret {
         prefix: [43, 246, 78, 7],
         data: vec![61, 201, 24, 121, 54, 228, 191, 64, 218, 241, 174, 189, 244, 197, 139, 124, 185, 102, 81, 2, 192, 54, 64, 185, 214, 150, 162, 96, 216, 123, 29, 165, 142, 161, 192, 170, 205, 174, 219, 163, 231, 121, 0, 121, 201, 83, 211, 80, 128, 182, 202, 191, 220, 249, 57, 121, 194, 72, 41, 174, 166, 58, 21, 17],
@@ -420,6 +404,7 @@ fn tezos_secret_from_to_string() {
     assert_eq!(secret, unwrap!(TezosSecret::from_str("edsk397WR2NimQ6WxgjQiPPkfJFC1YqM2RqA3sVhHuXtTvr2YGmQ5x")));
 }
 
+/*
 #[test]
 fn test_check_if_my_taker_payment_sent() {
     let coin = tezos_coin_for_test();
@@ -500,10 +485,13 @@ fn test_search_for_swap_spend_tx_my_refunded() {
         FoundSwapTxSpend::Refunded(spend_tx) => assert_eq!("oowh3N1N1ftS2iJnB8EAaPHzLnQnLFvosHQx8KA6GAoHHeXM3hm", coin.tx_hash_to_string(&spend_tx.tx_hash())),
     };
 }
-
+*/
 #[test]
 fn test_address_from_ec_pubkey() {
-    let coin = tezos_coin_for_test();
+    let coin = tezos_coin_for_test(
+        &hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap(),
+        "https://tezos-dev.cryptonomic-infra.tech",
+    );
     let fee_addr_pub_key = EcPubkey {
         curve_type: CurveType::SECP256K1,
         bytes: unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
@@ -523,33 +511,24 @@ fn test_rpc_operation_result_deserialization() {
 
 #[test]
 fn test_coin_from_conf_and_request() {
-    let conf = json!({
-        "coin": "TEZOS",
-        "name": "tezosbabylonnet",
-        "ed25519_addr_prefix": TZ1_ADDR_PREFIX,
-        "secp256k1_addr_prefix": TZ2_ADDR_PREFIX,
-        "p256_addr_prefix": TZ3_ADDR_PREFIX,
-        "protocol": {
-          "platform": "TEZOS",
-          "token_type": "TEZOS"
-        },
-        "mm2": 1
-    });
     let req = json!({
         "method": "enable",
         "coin": "TEZOS",
         "urls": [
             "https://tezos-dev.cryptonomic-infra.tech"
         ],
+        "swap_contract_address": "KT1NeiPn2baKGyofShT4B4NzVnXomgSLj6UK",
         "mm2":1
     });
     let priv_key = hex::decode("3dc9187936e4bf40daf1aebdf4c58b7cb9665102c03640b9d696a260d87b1da5").unwrap();
-    let coin = block_on(tezos_coin_from_conf_and_request("TEZOS", &conf, &req, &priv_key)).unwrap();
+    let coin = block_on(tezos_coin_from_conf_and_request("TEZOS", &COMMON_XTZ_CONFIG, &req, &priv_key)).unwrap();
     assert_eq!(TZ1_ADDR_PREFIX, coin.addr_prefixes.ed25519);
     assert_eq!(TZ2_ADDR_PREFIX, coin.addr_prefixes.secp256k1);
     assert_eq!(TZ3_ADDR_PREFIX, coin.addr_prefixes.p256);
+    assert_eq!("KT1NeiPn2baKGyofShT4B4NzVnXomgSLj6UK", coin.swap_contract_address.to_string());
 }
 
+/*
 #[test]
 fn send_taker_payment() {
     use common::new_uuid;
@@ -590,7 +569,7 @@ fn send_taker_payment() {
         block,
     ).wait().unwrap();
 }
-
+*/
 /*
 #[test]
 fn send_reveal() {

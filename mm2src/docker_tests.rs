@@ -31,6 +31,7 @@ mod docker_tests {
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
     use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
+    use coins::tezos::prepare_tezos_sandbox_network;
     use futures01::Future;
     use gstuff::now_ms;
     use secp256k1::SecretKey;
@@ -76,6 +77,27 @@ mod docker_tests {
         }
     }
 
+    fn kill_containers_by_image(img: &str) {
+        let stdout = Command::new("docker")
+            .arg("ps")
+            .arg("-f")
+            .arg(fomat!("ancestor=" (img)))
+            .arg("-q")
+            .output()
+            .expect("Failed to execute docker command");
+
+        let reader = BufReader::new(stdout.stdout.as_slice());
+        let ids: Vec<_> = reader.lines().map(|line| line.unwrap()).collect();
+        if !ids.is_empty() {
+            Command::new("docker")
+                .arg("rm")
+                .arg("-f")
+                .args(ids)
+                .status()
+                .expect("Failed to execute docker command");
+        }
+    }
+
     // AP: custom test runner is intended to initialize the required environment (e.g. coin daemons in the docker containers)
     // and then gracefully clear it by dropping the RAII docker container handlers
     // I've tried to use static for such singleton initialization but it turned out that despite
@@ -93,24 +115,11 @@ mod docker_tests {
             Command::new("docker").arg("pull").arg("artempikulin/testblockchain")
                 .status().expect("Failed to execute docker command");
 
-            let stdout = Command::new("docker")
-                .arg("ps")
-                .arg("-f")
-                .arg("ancestor=artempikulin/testblockchain")
-                .arg("-q")
-                .output()
-                .expect("Failed to execute docker command");
+            Command::new("docker").arg("pull").arg("artempikulin/tezos-sandbox")
+                .status().expect("Failed to execute docker command");
 
-            let reader = BufReader::new(stdout.stdout.as_slice());
-            let ids: Vec<_> = reader.lines().map(|line| line.unwrap()).collect();
-            if !ids.is_empty() {
-                Command::new("docker")
-                    .arg("rm")
-                    .arg("-f")
-                    .args(ids)
-                    .status()
-                    .expect("Failed to execute docker command");
-            }
+            kill_containers_by_image("artempikulin/testblockchain");
+            kill_containers_by_image("artempikulin/tezos-sandbox");
 
             let utxo_node = utxo_docker_node(&docker, "MYCOIN", 7000);
             let utxo_node1 = utxo_docker_node(&docker, "MYCOIN1", 8000);
@@ -118,6 +127,9 @@ mod docker_tests {
             utxo_node1.wait_ready();
             containers.push(utxo_node);
             containers.push(utxo_node1);
+
+            let tezos_node = tezos_docker_node(&docker, "XTZ", 20000);
+            log!((prepare_tezos_sandbox_network()));
         }
         // detect if docker is installed
         // skip the tests that use docker if not installed
@@ -197,6 +209,22 @@ mod docker_tests {
             if conf_path.exists() { break };
             assert!(now_ms() < timeout, "Test timed out");
         }
+        UtxoDockerNode {
+            container,
+            ticker: ticker.into(),
+            port,
+        }
+    }
+
+    fn tezos_docker_node<'a>(docker: &'a Cli, ticker: &'static str, port: u16) -> UtxoDockerNode<'a> {
+        let args = vec![
+            "-p".into(), "127.0.0.1:20000:20000".into(),
+            "-it".into()
+        ];
+        let image = GenericImage::new("artempikulin/tezos-sandbox")
+            .with_args(args)
+            .with_wait_for(WaitFor::message_on_stdout("Sandbox is READY"));
+        let container = docker.run(image);
         UtxoDockerNode {
             container,
             ticker: ticker.into(),

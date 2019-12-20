@@ -494,7 +494,7 @@ pub async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> J
         "coin": coin,
         "urls": urls,
         // Dev chain swap contract address
-        "swap_contract_address": "0x06964d4DAB22f96c1c382ef6f2b6b8324950f9FD",
+        "swap_contract_address": "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd",
         "mm2": 1,
     })) .await);
     assert_eq! (native.0, StatusCode::OK, "'enable' failed: {}", native.1);

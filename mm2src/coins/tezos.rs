@@ -65,15 +65,15 @@ mod tezos_tests;
 
 use self::tezos_rpc::{BigMapReq, ForgeOperationsRequest, Operation, PreapplyOperation,
                       PreapplyOperationsRequest, TezosInputType, TezosRpcClient, Transaction as Tx};
-use crate::tezos::tezos_rpc::{Reveal, OperationStatus, TransactionParameters};
+use crate::tezos::tezos_rpc::{Reveal, OperationStatus, Origination, Status, TransactionParameters, OperationResult};
 
-fn blake2b_256(input: &[u8]) -> H256 {
+pub fn blake2b_256(input: &[u8]) -> H256 {
     let mut blake = unwrap!(VarBlake2b::new(32));
     blake.input(&input);
     H256::from(blake.vec_result().as_slice())
 }
 
-fn blake2b_160(input: &[u8]) -> H160 {
+pub fn blake2b_160(input: &[u8]) -> H160 {
     let mut blake = unwrap!(VarBlake2b::new(20));
     blake.input(&input);
     H160::from(blake.vec_result().as_slice())
@@ -660,31 +660,31 @@ impl TezosCoin {
         if current_allowance < amount {
             let args = erc_approve_call(spender, &my_account.balance);
             let op = try_s!(self.sign_and_send_operation(zero, token_addr, Some(args)).await);
-            self.wait_for_operation_confirmation(
-                &op,
+            try_s!(self.wait_for_operation_confirmation(
+                op.op_hash(),
                 1,
                 now_ms() / 1000 + 120,
                 10,
-                0,
-            ).await
+                op.branch.clone(),
+            ).await);
+            Ok(())
         } else {
             Ok(())
         }
     }
 
-    async fn wait_for_operation_confirmation(
+    pub async fn wait_for_operation_confirmation(
         &self,
-        op: &TezosOperation,
+        op_hash: OpHash,
         confirmations: u64,
         wait_until: u64,
         check_every: u64,
-        _since_block: u64
-    ) -> Result<(), String> {
+        since_branch: H256,
+    ) -> Result<OperationResult, String> {
         let block_hash = TezosBlockHash {
-            prefix: [1, 52],
-            data: op.branch.clone(),
+            prefix: BLOCK_HASH_PREFIX,
+            data: since_branch,
         };
-        let op_hash = op.op_hash();
         let since_block_header = try_s!(self.rpc_client.block_header(&block_hash.to_string()).await);
         let since_block_timestamp = Some(since_block_header.timestamp.timestamp());
         let mut found_tx_in_block = None;
@@ -728,12 +728,12 @@ impl TezosCoin {
                     validation,
                     offset,
                 ).await);
-                if op_from_rpc.contents[0].metadata.operation_result != Some(OperationStatus::applied) {
+                if op_from_rpc.contents[0].metadata.operation_result.as_ref().unwrap().status != Status::applied {
                     return ERR!("Operation status must be `applied`");
                 }
                 let current_confirmations = current_block_header.level - block_number + 1;
                 if current_confirmations >= confirmations {
-                    return Ok(());
+                    return Ok(op_from_rpc.contents[0].clone());
                 }
             }
             Timer::sleep(check_every as f64).await
@@ -787,7 +787,8 @@ impl MarketCoinOps for TezosCoin {
         let coin = self.clone();
         let op: TezosOperation = try_fus!(deserialize(tx).map_err(|e| fomat!([e])));
         let fut = async move {
-            coin.wait_for_operation_confirmation(&op, confirmations, wait_until, check_every, since_block).await
+            try_s!(coin.wait_for_operation_confirmation(op.op_hash(), confirmations, wait_until, check_every, op.branch.clone()).await);
+            Ok(())
         };
         Box::new(Box::pin(fut).compat())
     }
@@ -1109,13 +1110,14 @@ impl SwapOps for TezosCoin {
                 },
                 _ => return ERR!("Taker fee must be TezosOperationEnum::Transaction"),
             }
-            coin.wait_for_operation_confirmation(
-                &op,
+            try_s!(coin.wait_for_operation_confirmation(
+                op.op_hash(),
                 coin.required_confirmations(),
                 now_ms() / 1000 + 120,
                 10,
-                0,
-            ).await
+                op.branch.clone(),
+            ).await);
+            Ok(())
         };
         Box::new(Box::pin(fut).compat())
     }
@@ -1423,6 +1425,12 @@ pub async fn tezos_coin_from_conf_and_request(
         _ => return ERR!("Unsupported token type"),
     };
 
+    let swap_contract_address = try_s!(req["swap_contract_address"].as_str().ok_or("swap_contract_address is not set or is not string"));
+    let swap_contract_address: TezosAddress = try_s!(swap_contract_address.parse());
+    if swap_contract_address.prefix != addr_prefixes.originated {
+        return ERR!("Invalid swap_contract_address prefix, valid example: KT1WKyHJ8k4uti1Rjg2Jno1tu391dQWECRiB");
+    }
+
     Ok(TezosCoin(Arc::new(TezosCoinImpl {
         addr_prefixes,
         coin_type,
@@ -1431,7 +1439,7 @@ pub async fn tezos_coin_from_conf_and_request(
         my_address,
         required_confirmations: conf["required_confirmations"].as_u64().unwrap_or(1).into(),
         rpc_client,
-        swap_contract_address: "KT1WKyHJ8k4uti1Rjg2Jno1tu391dQWECRiB".parse().unwrap(),
+        swap_contract_address,
         ticker: ticker.into(),
     })))
 }
@@ -2510,4 +2518,95 @@ impl CryptoOps for TezosCoin {
     fn sign_message(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
         self.priv_key.sign_message(msg)
     }
+}
+
+lazy_static! {
+    pub static ref COMMON_XTZ_CONFIG: Json = json!({
+        "coin": "TEZOS",
+        "name": "tezosbabylonnet",
+        "ed25519_addr_prefix": TZ1_ADDR_PREFIX,
+        "secp256k1_addr_prefix": TZ2_ADDR_PREFIX,
+        "p256_addr_prefix": TZ3_ADDR_PREFIX,
+        "protocol": {
+          "platform": "TEZOS",
+          "token_type": "TEZOS"
+        },
+        "mm2": 1
+    });
+}
+
+pub fn tezos_coin_for_test(priv_key: &[u8], node_url: &str) -> TezosCoin {
+    let req = json!({
+        "method": "enable",
+        "coin": "TEZOS",
+        "urls": [
+            node_url
+        ],
+        "mm2":1,
+        "swap_contract_address": "KT1WKyHJ8k4uti1Rjg2Jno1tu391dQWECRiB"
+    });
+    // let priv_key = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
+    let coin = block_on(tezos_coin_from_conf_and_request("TEZOS", &COMMON_XTZ_CONFIG, &req, priv_key)).unwrap();
+    coin
+}
+
+pub fn prepare_tezos_sandbox_network() -> String {
+    // 1 of hardcoded sandbox bootstrap privkeys having a lot of tezos
+    let priv_key: TezosSecret = unwrap!("edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC".parse());
+    let coin = tezos_coin_for_test(&priv_key.data, "http://localhost:20000");
+    loop {
+        let header = unwrap!(block_on(coin.rpc_client.block_header("head")));
+        if header.protocol == "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS" {
+            break;
+        }
+    }
+    let script_str = r#"{"code":[{"prim":"parameter","args":[{"prim":"or","args":[{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"timestamp"},{"prim":"pair","args":[{"prim":"bytes"},{"prim":"address"}]}]}],"annots":["%init_tezos_swap"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"timestamp"},{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"nat"},{"prim":"address"}]}]}]}]}],"annots":["%init_erc_swap"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"bytes"},{"prim":"key_hash"}]}],"annots":["%receiver_spends"]},{"prim":"pair","args":[{"prim":"bytes"},{"prim":"key_hash"}],"annots":["%sender_refunds"]}]}]}]}]},{"prim":"storage","args":[{"prim":"pair","args":[{"prim":"big_map","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"mutez"},{"prim":"pair","args":[{"prim":"nat"},{"prim":"pair","args":[{"prim":"option","args":[{"prim":"address"}]},{"prim":"pair","args":[{"prim":"timestamp"},{"prim":"pair","args":[{"prim":"timestamp"},{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"option","args":[{"prim":"timestamp"}]},{"prim":"pair","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"bytes"}]}]}]}]}]}]}]}]}]}]}]},{"prim":"unit"}]}]},{"prim":"code","args":[[{"prim":"DUP"},{"prim":"DIP","args":[[{"prim":"CDR"}]]},{"prim":"CAR"},{"prim":"DUP"},{"prim":"IF_LEFT","args":[[{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PUSH","args":[{"prim":"nat"},{"int":"32"}]},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"SIZE"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Secret hash length must be 32"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},{"prim":"AMOUNT"},{"prim":"COMPARE"},{"prim":"LE"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Transaction amount must be greater than zero"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"CDR"},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"GET"},{"prim":"IF_NONE","args":[[[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"PUSH","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"Left","args":[{"prim":"Unit"}]}]},{"prim":"PAIR"},{"prim":"NONE","args":[{"prim":"timestamp"}]},{"prim":"PAIR"},{"prim":"SOURCE"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"}],{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],[{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PAIR"},{"prim":"NOW"},{"prim":"PAIR"},{"prim":"NONE","args":[{"prim":"address"}]},{"prim":"PAIR"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"0"}]},{"prim":"PAIR"},{"prim":"AMOUNT"},{"prim":"PAIR"}],[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap was initialized already"}]},{"prim":"FAILWITH"}]]},{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"DIP","args":[[{"prim":"SOME"}]]},{"prim":"UPDATE"},{"prim":"PAIR"},{"prim":"NIL","args":[{"prim":"operation"}]},{"prim":"PAIR"},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}],[{"prim":"IF_LEFT","args":[[{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"}],{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},{"prim":"AMOUNT"},{"prim":"COMPARE"},{"prim":"GT"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Tx amount must be zero"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"32"}]},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"SIZE"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Secret hash length must be 32"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"0"}]},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"COMPARE"},{"prim":"LE"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"ERC amount must be greater than zero"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"CDR"},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"GET"},{"prim":"IF_NONE","args":[[[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"PUSH","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"Left","args":[{"prim":"Unit"}]}]},{"prim":"PAIR"},{"prim":"NONE","args":[{"prim":"timestamp"}]},{"prim":"PAIR"},{"prim":"SOURCE"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"8"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"9"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"8"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"9"}]}],[{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PAIR"},{"prim":"NOW"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"SOME"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"PAIR"},{"prim":"AMOUNT"},{"prim":"PAIR"}],[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap was initialized already"}]},{"prim":"FAILWITH"}]]},{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"DIP","args":[[{"prim":"SOME"}]]},{"prim":"UPDATE"},{"prim":"PAIR"},{"prim":"NIL","args":[{"prim":"operation"}]},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"CONTRACT","args":[{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}],"annots":["%transfer"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}],"annots":["%approve"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}],"annots":["%transferFrom"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}],"annots":["%createAccount"]},{"prim":"list","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}],"annots":["%createAccounts"]}]}]}]}]}]},{"prim":"IF_NONE","args":[[[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"PUSH","args":[{"prim":"string"},{"string":"Cannot recover erc contract from:"}]},{"prim":"PAIR"},{"prim":"FAILWITH"}],[{"prim":"DUP"},{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"SELF"},{"prim":"ADDRESS"},{"prim":"PAIR"},{"prim":"SOURCE"},{"prim":"PAIR"},{"prim":"LEFT","args":[{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]},{"prim":"list","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}]}]}]},{"prim":"RIGHT","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}]},{"prim":"RIGHT","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}]},{"prim":"TRANSFER_TOKENS"},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"RENAME"},{"prim":"CONS"},{"prim":"PAIR"},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}],[{"prim":"IF_LEFT","args":[[{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PUSH","args":[{"prim":"nat"},{"int":"32"}]},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"SIZE"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Secret length must be 32"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},{"prim":"AMOUNT"},{"prim":"COMPARE"},{"prim":"GT"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Tx amount must be zero"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"GET"},{"prim":"IF_NONE","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap was not initialized"}]},{"prim":"FAILWITH"}],[{"prim":"DUP"},[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"IF_LEFT","args":[[{"prim":"RENAME"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"DIP","args":[[{"prim":"DROP"}]]}],[{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap must be in initialized state"}]},{"prim":"FAILWITH"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"RENAME"},{"prim":"DUP"},[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"SOURCE"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Tx must be sent from receiver address"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"DUP"},[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"SHA256"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Invalid secret"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"DUP"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"PUSH","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"Right","args":[{"prim":"Left","args":[{"prim":"Unit"}]}]}]},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"NOW"},{"prim":"SOME"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"CDR"},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"SOME"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"UPDATE"},{"prim":"PAIR"},{"prim":"NIL","args":[{"prim":"operation"}]},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"IF_NONE","args":[[[{"prim":"DIP","args":[{"int":"7"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"8"}]}],[{"prim":"CDR"},{"prim":"CDR"}],{"prim":"IMPLICIT_ACCOUNT"},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"CAR"},{"prim":"UNIT"},{"prim":"TRANSFER_TOKENS"}],[{"prim":"DUP"},{"prim":"CONTRACT","args":[{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}],"annots":["%transfer"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}],"annots":["%approve"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}],"annots":["%transferFrom"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}],"annots":["%createAccount"]},{"prim":"list","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}],"annots":["%createAccounts"]}]}]}]}]}]},{"prim":"IF_NONE","args":[[{"prim":"DUP"},{"prim":"PUSH","args":[{"prim":"string"},{"string":"Cannot recover erc contract from:"}]},{"prim":"PAIR"},{"prim":"FAILWITH"}],[{"prim":"DUP"},{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],[{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"7"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"8"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PAIR"},{"prim":"LEFT","args":[{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]},{"prim":"list","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}]}]}]}]}]},{"prim":"TRANSFER_TOKENS"},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"RENAME"},{"prim":"CONS"},{"prim":"PAIR"},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}],[{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"CAR"},{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},{"prim":"AMOUNT"},{"prim":"COMPARE"},{"prim":"GT"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Tx amount must be zero"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"CAR"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"GET"},{"prim":"IF_NONE","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap was not initialized"}]},{"prim":"FAILWITH"}],[{"prim":"DUP"},[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"IF_LEFT","args":[[{"prim":"RENAME"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"DIP","args":[[{"prim":"DROP"}]]}],[{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap must be in initialized state"}]},{"prim":"FAILWITH"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"RENAME"},{"prim":"NOW"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"COMPARE"},{"prim":"LE"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Too early to refund"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"SOURCE"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Tx must be sent from sender address"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"PUSH","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"Right","args":[{"prim":"Right","args":[{"prim":"Unit"}]}]}]},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"CDR"},[{"prim":"DIP","args":[{"int":"9"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"10"}]}],{"prim":"SOME"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"CDR"},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"SOME"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"UPDATE"},{"prim":"PAIR"},{"prim":"NIL","args":[{"prim":"operation"}]},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"IF_NONE","args":[[[{"prim":"DIP","args":[{"int":"7"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"8"}]}],{"prim":"CDR"},{"prim":"IMPLICIT_ACCOUNT"},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"CAR"},{"prim":"UNIT"},{"prim":"TRANSFER_TOKENS"}],[{"prim":"DUP"},{"prim":"CONTRACT","args":[{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}],"annots":["%transfer"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}],"annots":["%approve"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}],"annots":["%transferFrom"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}],"annots":["%createAccount"]},{"prim":"list","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}],"annots":["%createAccounts"]}]}]}]}]}]},{"prim":"IF_NONE","args":[[{"prim":"DUP"},{"prim":"PUSH","args":[{"prim":"string"},{"string":"Cannot recover erc contract from:"}]},{"prim":"PAIR"},{"prim":"FAILWITH"}],[{"prim":"DUP"},{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],[{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"7"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"8"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PAIR"},{"prim":"LEFT","args":[{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]},{"prim":"list","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}]}]}]}]}]},{"prim":"TRANSFER_TOKENS"},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"RENAME"},{"prim":"CONS"},{"prim":"PAIR"},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]}]]}]]},{"prim":"DIP","args":[[{"prim":"DROP"},{"prim":"DROP"}]]}]]}],"storage":{"prim":"Pair","args":[[],{"prim":"Unit"}]}}"#;
+    let script_json: Json = unwrap!(json::from_str(script_str));
+    let mut operations = vec![];
+    let mut counter = TezosUint(unwrap!(block_on(coin.rpc_client.counter(&coin.my_address().to_string()))) + BigUint::from(1u8));
+    let head = unwrap!(block_on(coin.rpc_client.block_header("head")));
+    let reveal = Operation::origination(Origination {
+        counter: counter.clone(),
+        fee: BigUint::from(19694u32).into(),
+        gas_limit: BigUint::from(146835u32).into(),
+        source: coin.my_address().to_string(),
+        storage_limit: BigUint::from(5088u32).into(),
+        balance: BigUint::from(0u8).into(),
+        script: script_json,
+    });
+    operations.push(reveal);
+    let forge_req = ForgeOperationsRequest {
+        branch: head.hash.clone(),
+        contents: operations.clone()
+    };
+    let mut tx_bytes = unwrap!(block_on(coin.rpc_client.forge_operations(&head.chain_id, &head.hash, forge_req)));
+    let mut prefixed = vec![3u8];
+    prefixed.append(&mut tx_bytes.0);
+    let sig_hash = blake2b_256(&prefixed);
+    let sig = unwrap!(coin.sign_message(&*sig_hash));
+    let signature = TezosSignature {
+        prefix: ED_SIG_PREFIX.to_vec(),
+        data: sig,
+    };
+    let preapply_req = PreapplyOperationsRequest(vec![PreapplyOperation {
+        branch: head.hash.clone(),
+        contents: operations,
+        protocol: head.protocol.clone(),
+        signature: format!("{}", signature),
+    }]);
+    unwrap!(block_on(coin.rpc_client.preapply_operations(preapply_req)));
+    prefixed.extend_from_slice(&signature.data);
+    prefixed.remove(0);
+    let hex_encoded = hex::encode(&prefixed);
+    let hash = unwrap!(block_on(coin.rpc_client.inject_operation(&hex_encoded)));
+    let op_hash: OpHash = unwrap!(hash.parse());
+    let branch: TezosBlockHash = unwrap!(head.hash.parse());
+    let result = unwrap!(block_on(coin.wait_for_operation_confirmation(
+            op_hash,
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            branch.data,
+        )));
+    result.metadata.operation_result.unwrap().originated_contracts.unwrap()[0].clone()
 }

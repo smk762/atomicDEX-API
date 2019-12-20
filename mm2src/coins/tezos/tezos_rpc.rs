@@ -91,13 +91,11 @@ pub struct BlockHeader {
 pub struct Origination {
     pub balance: TezosUint,
     pub counter: TezosUint,
-    pub delegatable: bool,
     pub fee: TezosUint,
     pub gas_limit: TezosUint,
-    pub manager_pubkey: String,
     pub source: String,
-    pub spendable: bool,
     pub storage_limit: TezosUint,
+    pub script: Json,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -202,12 +200,17 @@ pub struct ManagerKeyRes {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "status")]
-pub enum OperationStatus {
+pub enum Status {
     applied,
     backtracked,
     failed,
     skipped,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OperationStatus {
+    pub status: Status,
+    pub originated_contracts: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

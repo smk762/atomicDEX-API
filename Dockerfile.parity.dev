@@ -3,7 +3,7 @@
 # Usage example:
 # docker build . -f Dockerfile.parity.dev -t artempikulin/parity_dev_node
 # docker run -p 8545:8545 artempikulin/parity_dev_node
-FROM parity/parity:beta
+FROM parity/parity:stable
 COPY parity.dev.chain.json /home/parity/.local/share/io.parity.ethereum/chain.json
 USER root
 RUN chmod -R 777 /home/parity/.local/share/io.parity.ethereum
