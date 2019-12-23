@@ -394,7 +394,6 @@ impl TezosCoinImpl {
         prefixed.extend_from_slice(&signature.data);
         prefixed.remove(0);
         let hex_encoded = hex::encode(&prefixed);
-        log!((hex_encoded));
         try_s!(self.rpc_client.inject_operation(&hex_encoded).await);
         Ok(deserialize(prefixed.as_slice()).unwrap())
     }
@@ -528,7 +527,6 @@ impl TezosCoinImpl {
                     }
                     current_block += 1;
                 }
-                ERR!("Swap is created but corresponding operation is not found")
             },
             None => Ok(None),
         }
@@ -563,15 +561,18 @@ impl TezosCoinImpl {
                                             let operation = TezosOperation {
                                                 branch: branch.data,
                                                 signature: Some(H512::from(signature.data.as_slice())),
-                                                op: TezosOperationEnum::Transaction(TezosTransaction {
+                                                op: TezosOperationEnum::BabylonTransaction(BabylonTransaction {
                                                     amount: tx.amount.into(),
                                                     counter: tx.counter.into(),
                                                     destination: try_s!(self.address_to_contract_id(&destination)),
-                                                    source: try_s!(self.address_to_contract_id(&source)),
+                                                    source: try_s!(self.address_to_pubkey_hash(&source)),
                                                     fee: tx.fee.into(),
                                                     gas_limit: tx.gas_limit.into(),
                                                     storage_limit: tx.storage_limit.into(),
-                                                    parameters: tx.parameters.map(|p| p.value),
+                                                    parameters: tx.parameters.map(|p| BabylonTransactionParams {
+                                                        entrypoint: EntrypointId::Default,
+                                                        params: p.value,
+                                                    }),
                                                 })
                                             };
                                             return Ok(Some(operation))
@@ -600,6 +601,50 @@ impl TezosCoinImpl {
                 match &op.parameters {
                     Some(params) => {
                         let (_, args) = read_function_call(vec![], params.clone());
+                        let (uuid, _) = args.split_and_read_value();
+                        let req = BigMapReq {
+                            r#type: TezosInputType {
+                                prim: "bytes".into(),
+                            },
+                            key: uuid.clone(),
+                        };
+                        let swap: TezosAtomicSwap = match try_s!(self.rpc_client.get_big_map(&self.swap_contract_address.to_string(), req).await) {
+                            Some(s) => s,
+                            None => return ERR!("Swap with uuid {:?} is not found", uuid),
+                        };
+
+                        let destination = self.contract_id_to_addr(&op.destination).to_string();
+                        match swap.state {
+                            TezosAtomicSwapState::ReceiverSpent => {
+                                let found = try_s!(self.find_op_by_uuid_and_entry_path(
+                                        &destination,
+                                        &uuid,
+                                        &[Or::R, Or::R, Or::L],
+                                        search_from_block,
+                                    ).await);
+                                let found = try_s!(found.ok_or(ERRL!("Atomic swap state is ReceiverSpent, but corresponding transaction wasn't found")));
+                                Ok(Some(FoundSwapTxSpend::Spent(found.into())))
+                            },
+                            TezosAtomicSwapState::SenderRefunded => {
+                                let found = try_s!(self.find_op_by_uuid_and_entry_path(
+                                        &destination,
+                                        &uuid,
+                                        &[Or::R, Or::R, Or::R],
+                                        search_from_block,
+                                    ).await);
+                                let found = try_s!(found.ok_or(ERRL!("Atomic swap state is SenderRefunded, but corresponding transaction wasn't found")));
+                                Ok(Some(FoundSwapTxSpend::Refunded(found.into())))
+                            },
+                            TezosAtomicSwapState::Initialized => Ok(None),
+                        }
+                    },
+                    None => ERR!("Operation params can't be None"),
+                }
+            },
+            TezosOperationEnum::BabylonTransaction(op) => {
+                match &op.parameters {
+                    Some(params) => {
+                        let (_, args) = read_function_call(vec![], params.params.clone());
                         let (uuid, _) = args.split_and_read_value();
                         let req = BigMapReq {
                             r#type: TezosInputType {
@@ -693,32 +738,21 @@ impl TezosCoin {
                 return ERR!("Waited too long until {} for transaction {} to be confirmed {} times", wait_until, op_hash, confirmations);
             }
 
-            let current_block_header = try_s!(self.rpc_client.block_header("head").await);
-            if current_block_header.level > since_block_header.level {
+            let current_head = try_s!(self.rpc_client.block_header("head").await);
+            if current_head.level > since_block_header.level {
+                let mut cur_block = since_block_header.level;
                 if found_tx_in_block.is_none() {
-                    if current_block_header.level == since_block_header.level + 1 {
-                        let operations = try_s!(self.rpc_client.operation_hashes(&current_block_header.hash).await);
+                    while cur_block <= current_head.level {
+                        let operations = try_s!(self.rpc_client.operation_hashes(&cur_block.to_string()).await);
                         for (validation, operation) in operations.into_iter().enumerate() {
                             for (offset, op) in operation.into_iter().enumerate() {
                                 if op == op_hash.to_string() {
-                                    found_tx_in_block = Some((current_block_header.level, validation, offset));
+                                    found_tx_in_block = Some((cur_block, validation, offset));
                                 }
                             }
                         }
-                    } else {
-                        let length = current_block_header.level - since_block_header.level;
-                        let blocks = try_s!(self.rpc_client.blocks(since_block_timestamp, Some(length), None).await);
-                        for block in blocks {
-                            let operations = try_s!(self.rpc_client.operation_hashes(&block).await);
-                            for (validation, operation) in operations.into_iter().enumerate() {
-                                for (offset, op) in operation.into_iter().enumerate() {
-                                    if op == op_hash.to_string() {
-                                        let header = try_s!(self.rpc_client.block_header(&block).await);
-                                        found_tx_in_block = Some((header.level, validation, offset));
-                                    }
-                                }
-                            }
-                        }
+                        cur_block += 1;
+                        Timer::sleep(1.).await
                     }
                 }
             }
@@ -731,7 +765,7 @@ impl TezosCoin {
                 if op_from_rpc.contents[0].metadata.operation_result.as_ref().unwrap().status != Status::applied {
                     return ERR!("Operation status must be `applied`");
                 }
-                let current_confirmations = current_block_header.level - block_number + 1;
+                let current_confirmations = current_head.level - block_number + 1;
                 if current_confirmations >= confirmations {
                     return Ok(op_from_rpc.contents[0].clone());
                 }
@@ -2387,13 +2421,13 @@ struct TezosAtomicSwap {
     amount: BigUint,
     amount_nat: BigUint,
     contract_address: TezosOption<ContractId>,
-    created_at: BigUint,
-    lock_time: BigUint,
-    receiver: ContractId,
+    created_at: DateTime<Utc>,
+    lock_time: DateTime<Utc>,
+    receiver: TezosAddress,
     secret_hash: BytesJson,
-    sender: ContractId,
+    sender: TezosAddress,
     state: TezosAtomicSwapState,
-    spent_at: TezosOption<BigUint>,
+    spent_at: TezosOption<DateTime<Utc>>,
     uuid: BytesJson,
 }
 
@@ -2428,6 +2462,28 @@ impl TryFrom<TezosValue> for ContractId {
         match value {
             TezosValue::Bytes { bytes } => Ok(try_s!(deserialize(bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)))),
             _ => ERR!("ContractId can be constructed only from TezosValue::Bytes, got {:?}", value),
+        }
+    }
+}
+
+impl TryFrom<TezosValue> for DateTime<Utc> {
+    type Error = String;
+
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
+        match value {
+            TezosValue::String { string } => Ok(try_s!(string.parse())),
+            _ => ERR!("DateTime<Utc> can be constructed only from TezosValue::String, got {:?}", value),
+        }
+    }
+}
+
+impl TryFrom<TezosValue> for TezosAddress {
+    type Error = String;
+
+    fn try_from(value: TezosValue) -> Result<Self, Self::Error> {
+        match value {
+            TezosValue::String { string } => Ok(try_s!(string.parse())),
+            _ => ERR!("TezosAddress can be constructed only from TezosValue::String, got {:?}", value),
         }
     }
 }
@@ -2535,7 +2591,7 @@ lazy_static! {
     });
 }
 
-pub fn tezos_coin_for_test(priv_key: &[u8], node_url: &str) -> TezosCoin {
+pub fn tezos_coin_for_test(priv_key: &[u8], node_url: &str, swap_contract: &str) -> TezosCoin {
     let req = json!({
         "method": "enable",
         "coin": "TEZOS",
@@ -2543,7 +2599,7 @@ pub fn tezos_coin_for_test(priv_key: &[u8], node_url: &str) -> TezosCoin {
             node_url
         ],
         "mm2":1,
-        "swap_contract_address": "KT1WKyHJ8k4uti1Rjg2Jno1tu391dQWECRiB"
+        "swap_contract_address": swap_contract,
     });
     // let priv_key = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
     let coin = block_on(tezos_coin_from_conf_and_request("TEZOS", &COMMON_XTZ_CONFIG, &req, priv_key)).unwrap();
@@ -2553,7 +2609,7 @@ pub fn tezos_coin_for_test(priv_key: &[u8], node_url: &str) -> TezosCoin {
 pub fn prepare_tezos_sandbox_network() -> String {
     // 1 of hardcoded sandbox bootstrap privkeys having a lot of tezos
     let priv_key: TezosSecret = unwrap!("edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC".parse());
-    let coin = tezos_coin_for_test(&priv_key.data, "http://localhost:20000");
+    let coin = tezos_coin_for_test(&priv_key.data, "http://localhost:20000", "KT1WKyHJ8k4uti1Rjg2Jno1tu391dQWECRiB");
     loop {
         let header = unwrap!(block_on(coin.rpc_client.block_header("head")));
         if header.protocol == "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS" {

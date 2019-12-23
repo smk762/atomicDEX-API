@@ -1302,12 +1302,17 @@ impl EthCoin {
                         return ERR!("Payment tx receiver arg {:?} is invalid, expected {:?}", decoded[3], Token::Address(selfi.my_address));
                     }
 
-                    if decoded[4] != Token::FixedBytes(secret_hash.to_vec()) {
-                        return ERR!("Payment tx secret_hash arg {:?} is invalid, expected {:?}", decoded[4], Token::FixedBytes(secret_hash.to_vec()));
+                    if decoded[4] != Token::Uint(U256::from(time_lock)) {
+                        return ERR!("Payment tx time_lock arg {:?} is invalid, expected {:?}", decoded[4], Token::Uint(U256::from(time_lock)));
                     }
 
-                    if decoded[5] != Token::Uint(U256::from(time_lock)) {
-                        return ERR!("Payment tx time_lock arg {:?} is invalid, expected {:?}", decoded[5], Token::Uint(U256::from(time_lock)));
+                    let expected_hash_algo = Token::Uint(U256::from(expected_hash_algo));
+                    if decoded[5] != expected_hash_algo {
+                        return ERR!("Secret hash algo {:?} is invalid, expected {:?}", decoded[5], expected_hash_algo);
+                    }
+
+                    if decoded[6] != Token::Bytes(secret_hash.to_vec()) {
+                        return ERR!("Payment tx secret_hash arg {:?} is invalid, expected {:?}", decoded[6], Token::FixedBytes(secret_hash.to_vec()));
                     }
                 },
             }

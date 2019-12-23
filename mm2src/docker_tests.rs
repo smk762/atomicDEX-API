@@ -25,13 +25,13 @@ fn main() {
 
 #[cfg(all(test, feature = "native"))]
 mod docker_tests {
-    use common::block_on;
+    use common::{block_on, new_uuid};
     use common::crypto::CryptoOps;
     use common::for_tests::{enable_native, MarketMakerIt, mm_dump};
     use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
     use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
-    use coins::tezos::prepare_tezos_sandbox_network;
+    use coins::tezos::{prepare_tezos_sandbox_network, tezos_coin_for_test};
     use futures01::Future;
     use gstuff::now_ms;
     use secp256k1::SecretKey;
@@ -46,6 +46,7 @@ mod docker_tests {
     use testcontainers::{Container, Docker, Image};
     use testcontainers::clients::Cli;
     use testcontainers::images::generic::{GenericImage, WaitFor};
+    use bitcrypto::sha256;
 
     // The copy of libtest function returning the exit code instead of immediate process exit
     fn test_main(args: &[String], tests: Vec<TestDescAndFn>, options: Options) -> i32 {
@@ -129,7 +130,8 @@ mod docker_tests {
             containers.push(utxo_node1);
 
             let tezos_node = tezos_docker_node(&docker, "XTZ", 20000);
-            log!((prepare_tezos_sandbox_network()));
+            *unwrap!(XTZ_SWAP_CONTRACT.lock()) = prepare_tezos_sandbox_network();
+            containers.push(tezos_node);
         }
         // detect if docker is installed
         // skip the tests that use docker if not installed
@@ -234,6 +236,7 @@ mod docker_tests {
 
     lazy_static! {
         static ref COINS_LOCK: Mutex<()> = Mutex::new(());
+        static ref XTZ_SWAP_CONTRACT: Mutex<String> = Mutex::new(String::new());
     }
 
     // generate random privkey, create a coin and fill it's address with 1000 coins
@@ -369,8 +372,8 @@ mod docker_tests {
         ));
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
         unwrap! (block_on (mm_bob.wait_for_log (60., |log| log.contains (">>>>>>>>> DEX stats "))));
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![], ""))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![], ""))]);
         let rc = unwrap! (block_on (mm_bob.rpc (json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -486,10 +489,10 @@ mod docker_tests {
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
         unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
-        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![]))]);
-        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![]))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![], ""))]);
+        log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![], ""))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![], ""))]);
+        log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![], ""))]);
         let rc = unwrap! (block_on (mm_bob.rpc (json! ({
             "userpass": mm_bob.userpass,
             "method": "setprice",
@@ -531,5 +534,55 @@ mod docker_tests {
         unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains ("Entering the taker_swap_loop MYCOIN/MYCOIN1"))));
         unwrap!(block_on(mm_bob.stop()));
         unwrap!(block_on(mm_alice.stop()));
+    }
+
+    #[test]
+    fn send_and_spend_xtz_payment() {
+        // edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC in hex
+        let priv_key = unwrap!(hex::decode("626f6f746163632d33626f6f746163632d33626f6f746163632d33626f6f7461"));
+        let coin = tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock()));
+        let uuid = new_uuid();
+        let secret = [0; 32];
+        let payment = unwrap!(coin.send_taker_payment(
+            uuid.as_bytes(),
+            0,
+            &coin.get_pubkey(),
+            &*sha256(&secret),
+            1.into(),
+        ).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &payment.tx_hex,
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
+
+        let spend = unwrap!(coin.send_maker_spends_taker_payment(
+            uuid.as_bytes(),
+            &payment.tx_hex,
+            0,
+            &coin.get_pubkey(),
+            &secret,
+        ).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &spend.tx_hex(),
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
+
+        let find = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
+            0,
+            &coin.get_pubkey(),
+            &*sha256(&secret),
+            &payment.tx_hex,
+            1,
+        ).wait()));
+        match find {
+            FoundSwapTxSpend::Refunded(_) => panic!("Must be FoundSwapTxSpend::Spent"),
+            FoundSwapTxSpend::Spent(tx) => assert_eq!(tx, spend),
+        }
     }
 }

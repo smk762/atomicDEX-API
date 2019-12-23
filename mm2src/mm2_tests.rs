@@ -48,10 +48,10 @@ lazy_static! {
 #[cfg(feature = "native")]
 fn enable_coins(mm: &MarketMakerIt) -> Vec<(&'static str, Json)> {
     let mut replies = Vec::new();
-    replies.push (("BEER", block_on (enable_native (mm, "BEER", vec![]))));
-    replies.push (("PIZZA", block_on (enable_native (mm, "PIZZA", vec![]))));
-    replies.push (("ETOMIC", block_on (enable_native (mm, "ETOMIC", vec![]))));
-    replies.push (("ETH", block_on (enable_native (mm, "ETH", vec!["http://195.201.0.6:8565"]))));
+    replies.push (("BEER", block_on (enable_native (mm, "BEER", vec![], ""))));
+    replies.push (("PIZZA", block_on (enable_native (mm, "PIZZA", vec![], ""))));
+    replies.push (("ETOMIC", block_on (enable_native (mm, "ETOMIC", vec![], ""))));
+    replies.push (("ETH", block_on (enable_native (mm, "ETH", vec!["http://195.201.0.6:8565"], "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd"))));
     replies
 }
 
@@ -60,9 +60,9 @@ async fn enable_coins_eth_electrum_xtz(mm: &MarketMakerIt, eth_urls: Vec<&str>, 
     replies.insert ("BEER", enable_electrum (mm, "BEER", vec!["test1.cipig.net:10022","test2.cipig.net:10022"]) .await);
     replies.insert ("PIZZA", enable_electrum (mm, "PIZZA", vec!["test1.cipig.net:10024","test2.cipig.net:10024"]) .await);
     replies.insert ("ETOMIC", enable_electrum (mm, "ETOMIC", vec!["test1.cipig.net:10025","test2.cipig.net:10025"]) .await);
-    replies.insert ("JST", enable_native (mm, "JST", eth_urls.clone()) .await);
-    replies.insert ("XTZ", enable_native (mm, "XTZ", xtz_urls.clone()) .await);
-    replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()) .await);
+    replies.insert ("JST", enable_native (mm, "JST", eth_urls.clone(), "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd") .await);
+    replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone(), "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd") .await);
+    replies.insert ("XTZ", enable_native (mm, "XTZ", xtz_urls.clone(), "KT1NeiPn2baKGyofShT4B4NzVnXomgSLj6UK") .await);
     replies
 }
 
@@ -256,7 +256,7 @@ fn alice_can_see_the_active_order_after_connection() {
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_bob, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_bob, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]))});
     // issue sell request on Bob side by setting base/rel price
     log!("Issue bob sell request");
     let rc = unwrap! (block_on (mm_bob.rpc (json! ({
@@ -308,7 +308,7 @@ fn alice_can_see_the_active_order_after_connection() {
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]))});
 
     for _ in 0..2 {
         // Alice should be able to see the order no later than 10 seconds after connecting to bob
@@ -458,7 +458,7 @@ fn test_check_balance_on_order_post() {
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     // Enable coins. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]))});
     // issue sell request by setting base/rel price
 
     // Expect error as PIZZA balance is 0
@@ -893,7 +893,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
 #[cfg(feature = "native")]
 #[test]
 fn trade_test_electrum_and_eth_coins() {
-    block_on(trade_base_rel_electrum(vec![("XTZ", "ETH")]));
+    block_on(trade_base_rel_electrum(vec![("ETH", "JST")]));
 }
 
 #[cfg(not(feature = "native"))]
@@ -1162,7 +1162,8 @@ fn test_withdraw_and_send() {
         {"coin":"PIZZA_SEGWIT","asset":"PIZZA_SEGWIT","txversion":4,"overwintered":1,"segwit":true},
         {"coin":"ETOMIC","asset":"ETOMIC","txversion":4,"overwintered":1},
         {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
+        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"},
+        {"coin":"XTZ","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
     ]);
 
     let mut mm_alice = unwrap! (MarketMakerIt::start (
@@ -1172,7 +1173,7 @@ fn test_withdraw_and_send() {
             "myipaddr": env::var ("ALICE_TRADE_IP") .ok(),
             "rpcip": env::var ("ALICE_TRADE_IP") .ok(),
             "passphrase": alice_passphrase,
-            "coins": *COINS_CONFIG,
+            "coins": coins,
             "rpc_password": "password",
             "i_am_seed": true,
         }),
@@ -1187,7 +1188,7 @@ fn test_withdraw_and_send() {
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
     // Enable coins. Print the replies in case we need the address.
-    let mut enable_res = block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8565"]));
+    let mut enable_res = block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]));
     enable_res.insert ("PIZZA_SEGWIT", block_on(enable_electrum (&mm_alice, "PIZZA_SEGWIT", vec!["test1.cipig.net:10024","test2.cipig.net:10024"])));
 
     log! ("enable_coins (alice): " [enable_res]);
@@ -1506,7 +1507,7 @@ fn test_cancel_order() {
     log!({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     // Enable coins on Bob side. Print the replies in case we need the "address".
-    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_bob, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]))});
+    log! ({"enable_coins (bob): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_bob, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]))});
 
     log!("Issue sell request on Bob side by setting base/rel price…");
     let rc = unwrap! (block_on (mm_bob.rpc (json! ({
@@ -1543,7 +1544,7 @@ fn test_cancel_order() {
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
     // Enable coins on Alice side. Print the replies in case we need the "address".
-    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://testnet-node.dunscan.io"]))});
+    log! ({"enable_coins (alice): {:?}", block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]))});
 
     log!("Give Alice 15 seconds to import the order…");
     thread::sleep(Duration::from_secs(15));
@@ -1928,7 +1929,7 @@ fn orderbook_should_display_valid_address() {
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     block_on(enable_electrum(&mm, "MORTY", vec!["electrum3.cipig.net:10018", "electrum2.cipig.net:10018", "electrum1.cipig.net:10018"]));
-    block_on(enable_native(&mm, "XTZ", vec!["https://tezos-dev.cryptonomic-infra.tech"]));
+    block_on(enable_native(&mm, "XTZ", vec!["https://tezos-dev.cryptonomic-infra.tech"], "KT1NeiPn2baKGyofShT4B4NzVnXomgSLj6UK"));
 
     let price = BigRational::new(9.into(), 10.into());
     let volume = BigRational::new(9.into(), 10.into());

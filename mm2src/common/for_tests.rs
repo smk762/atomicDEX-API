@@ -487,14 +487,14 @@ pub fn get_passphrase (path: &dyn AsRef<Path>, env: &str) -> Result<String, Stri
 
 /// Asks MM to enable the given currency in native mode.
 /// Returns the RPC reply containing the corresponding wallet address.
-pub async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>) -> Json {
+pub async fn enable_native(mm: &MarketMakerIt, coin: &str, urls: Vec<&str>, swap_contract: &str) -> Json {
     let native = unwrap! (mm.rpc (json! ({
         "userpass": mm.userpass,
         "method": "enable",
         "coin": coin,
         "urls": urls,
         // Dev chain swap contract address
-        "swap_contract_address": "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd",
+        "swap_contract_address": swap_contract,
         "mm2": 1,
     })) .await);
     assert_eq! (native.0, StatusCode::OK, "'enable' failed: {}", native.1);

@@ -399,7 +399,6 @@ fn tezos_secret_from_to_string() {
         data: vec![61, 201, 24, 121, 54, 228, 191, 64, 218, 241, 174, 189, 244, 197, 139, 124, 185, 102, 81, 2, 192, 54, 64, 185, 214, 150, 162, 96, 216, 123, 29, 165],
     };
 
-    log!((hex::encode(&secret.data)));
     assert_eq!("edsk397WR2NimQ6WxgjQiPPkfJFC1YqM2RqA3sVhHuXtTvr2YGmQ5x", secret.to_string());
     assert_eq!(secret, unwrap!(TezosSecret::from_str("edsk397WR2NimQ6WxgjQiPPkfJFC1YqM2RqA3sVhHuXtTvr2YGmQ5x")));
 }
