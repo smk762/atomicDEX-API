@@ -28,10 +28,11 @@ mod docker_tests {
     use common::{block_on, new_uuid};
     use common::crypto::CryptoOps;
     use common::for_tests::{enable_native, MarketMakerIt, mm_dump};
-    use coins::{FoundSwapTxSpend, MarketCoinOps, SwapOps};
+    use coins::{FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, Transaction, WithdrawRequest};
     use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
-    use coins::tezos::{prepare_tezos_sandbox_network, tezos_coin_for_test};
+    use coins::tezos::{mla_mint_call, prepare_tezos_sandbox_network, tezos_coin_for_test,
+                       tezos_mla_coin_for_test};
     use futures01::Future;
     use gstuff::now_ms;
     use secp256k1::SecretKey;
@@ -130,7 +131,9 @@ mod docker_tests {
             containers.push(utxo_node1);
 
             let tezos_node = tezos_docker_node(&docker, "XTZ", 20000);
-            *unwrap!(XTZ_SWAP_CONTRACT.lock()) = prepare_tezos_sandbox_network();
+            let xtz_contracts = prepare_tezos_sandbox_network();
+            *unwrap!(XTZ_SWAP_CONTRACT.lock()) = xtz_contracts.0;
+            *unwrap!(XTZ_MLA_CONTRACT.lock()) = xtz_contracts.1;
             containers.push(tezos_node);
         }
         // detect if docker is installed
@@ -237,6 +240,8 @@ mod docker_tests {
     lazy_static! {
         static ref COINS_LOCK: Mutex<()> = Mutex::new(());
         static ref XTZ_SWAP_CONTRACT: Mutex<String> = Mutex::new(String::new());
+        // Manager ledger asset contract
+        static ref XTZ_MLA_CONTRACT: Mutex<String> = Mutex::new(String::new());
     }
 
     // generate random privkey, create a coin and fill it's address with 1000 coins
@@ -584,5 +589,94 @@ mod docker_tests {
             FoundSwapTxSpend::Refunded(_) => panic!("Must be FoundSwapTxSpend::Spent"),
             FoundSwapTxSpend::Spent(tx) => assert_eq!(tx, spend),
         }
+    }
+
+    #[test]
+    fn send_and_refund_xtz_payment() {
+        // edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC in hex
+        let priv_key = unwrap!(hex::decode("626f6f746163632d33626f6f746163632d33626f6f746163632d33626f6f7461"));
+        let coin = tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock()));
+        let uuid = new_uuid();
+        let secret = [0; 32];
+        let payment = unwrap!(coin.send_taker_payment(
+            uuid.as_bytes(),
+            0,
+            &coin.get_pubkey(),
+            &*sha256(&secret),
+            1.into(),
+        ).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &payment.tx_hex,
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
+
+        let refund = unwrap!(coin.send_taker_refunds_payment(
+            uuid.as_bytes(),
+            &payment.tx_hex,
+            0,
+            &coin.get_pubkey(),
+            &*sha256(&secret),
+        ).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &refund.tx_hex(),
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
+
+        let find = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
+            0,
+            &coin.get_pubkey(),
+            &*sha256(&secret),
+            &payment.tx_hex,
+            1,
+        ).wait()));
+        match find {
+            FoundSwapTxSpend::Refunded(tx) => assert_eq!(tx, refund),
+            FoundSwapTxSpend::Spent(_) => panic!("Must be FoundSwapTxSpend::Refunded"),
+        }
+    }
+
+    #[test]
+    fn withdraw_managed_ledger_asset() {
+        // edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC in hex
+        let priv_key = unwrap!(hex::decode("626f6f746163632d33626f6f746163632d33626f6f746163632d33626f6f7461"));
+        let coin = tezos_mla_coin_for_test(
+            &priv_key,
+            "http://localhost:20000",
+            &unwrap!(XTZ_SWAP_CONTRACT.lock()),
+            &unwrap!(XTZ_MLA_CONTRACT.lock()),
+        );
+        let params = mla_mint_call(&coin.my_address, &100000000u64.into());
+        let operation = unwrap!(block_on(coin.sign_and_send_operation(
+            0u8.into(),
+            &unwrap!(unwrap!(XTZ_MLA_CONTRACT.lock()).parse()),
+            Some(params),
+        )));
+        unwrap!(coin.wait_for_confirmations(
+            &operation.tx_hex(),
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1,
+        ).wait());
+
+        let req_str = r#"{"coin":"XTZ_MLA","to":"KT1BhA5bCx37GjwrVy2egw7NKpir1bUt7nKj","amount":"20"}"#;
+        let req: WithdrawRequest = unwrap!(json::from_str(req_str));
+        let withdraw = unwrap!(coin.withdraw(req).wait());
+        let tx = unwrap!(coin.send_raw_tx(&hex::encode(&withdraw.tx_hex.0)).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &withdraw.tx_hex.0,
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1,
+        ).wait());
+        let balance = coin.my_balance().wait().unwrap();
+        assert_eq!(balance, 80.into());
     }
 }

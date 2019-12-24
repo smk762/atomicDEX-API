@@ -284,7 +284,7 @@ impl TezosRpcClientImpl {
         where T::Error: std::fmt::Display
     {
         let path = format!("/chains/main/blocks/head/context/contracts/{}/storage", addr);
-        let value: TezosValue = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
+        let value: TezosValue = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| format!("{:?}", e)));
         Ok(try_s!(T::try_from(value)))
     }
 

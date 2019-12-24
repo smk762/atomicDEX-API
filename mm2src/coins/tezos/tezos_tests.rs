@@ -3,33 +3,6 @@ use crate::tezos::tezos_rpc::{OperationsResult, Origination};
 use bitcrypto::sha256;
 use common::privkey::key_pair_from_seed;
 
-fn tezos_erc_coin_for_test() -> TezosCoin {
-    let conf = json!({
-        "coin": "DUNETESTERC",
-        "name": "dunetesterc",
-        "ed25519_addr_prefix": TZ1_ADDR_PREFIX,
-        "secp256k1_addr_prefix": TZ2_ADDR_PREFIX,
-        "p256_addr_prefix": TZ3_ADDR_PREFIX,
-        "protocol": {
-            "platform": "TEZOS",
-            "token_type": "ERC20",
-            "contract_address": "KT1Bzq2mPvZk6jdmSzvVySXrQhYrybPnnxyZ"
-        },
-        "mm2": 1
-    });
-    let req = json!({
-        "method": "enable",
-        "coin": "DUNETESTERC",
-        "urls": [
-            "https://testnet-node.dunscan.io"
-        ],
-        "mm2":1
-    });
-    let priv_key = hex::decode("0760b6189e10610d3800d75d14ffe2f0abb35f8bf612a9510b5598d978f83f7a").unwrap();
-    let coin = block_on(tezos_coin_from_conf_and_request("DUNETEST", &conf, &req, &priv_key)).unwrap();
-    coin
-}
-
 #[test]
 fn test_extract_secret() {
     let tx_bytes = unwrap!(hex::decode("ed0dd721b69a9caa34631c12de656294f40769eadc0f472f4cb86cccb643bae90800002969737230bd5ea60f632b52777981e43a25d069a08d069b0580ea30e0d40300011a8f7a22dd852d1c8542d795eae3b094a7c629aa00ff0000006e0005080508050507070a000000103bf685c8da0c4cbb9766ab46d36d5c9b07070a0000002000000000000000000000000000000000000000000000000000000000000000000100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779708ea21a6d1d3dfaf448f9ac095c456a43c2e08f9e148cf84f215cb888bdd36c28eaf0b351a063f71ac293112a9c8bf8ad6d38b6e47b1b8c84d2a1cb0d8044500f"));
@@ -403,88 +376,6 @@ fn tezos_secret_from_to_string() {
     assert_eq!(secret, unwrap!(TezosSecret::from_str("edsk397WR2NimQ6WxgjQiPPkfJFC1YqM2RqA3sVhHuXtTvr2YGmQ5x")));
 }
 
-/*
-#[test]
-fn test_check_if_my_taker_payment_sent() {
-    let coin = tezos_coin_for_test();
-    let uuid = unwrap!(hex::decode("65383063303832652d646135392d346165382d383064322d383961626139346163616362"));
-    let tx = coin.check_if_my_taker_payment_sent(
-        &uuid,
-        0,
-        &coin.get_pubkey(),
-        &[],
-        202994,
-    ).wait().unwrap();
-    let tx = unwrap!(tx);
-    assert_eq!("ooZY3Lz9r6XcceDgB9pvzdt8LXdasJoCCk1P1k2ZyBwxaJSZ5ks", coin.tx_hash_to_string(&tx.tx_hash()));
-    log!((hex::encode(tx.tx_hex())));
-}
-
-#[test]
-fn test_check_if_my_maker_payment_sent() {
-    let coin = tezos_coin_for_test();
-    let uuid = unwrap!(hex::decode("65383063303832652d646135392d346165382d383064322d383961626139346163616362"));
-    let tx = coin.check_if_my_maker_payment_sent(
-        &uuid,
-        0,
-        &coin.get_pubkey(),
-        &[],
-        202994,
-    ).wait().unwrap();
-    let tx = unwrap!(tx);
-    assert_eq!("ooKKQQN5mFHsgeJLw6EbpiHn9auqPub44uqtNMfrNMkbFQhiWXP", coin.tx_hash_to_string(&tx.tx_hash()));
-}
-
-#[test]
-#[ignore]
-fn test_wait_for_tx_spend() {
-    let coin = tezos_erc_coin_for_test();
-    let tx = unwrap!(hex::decode("a5a3da0a35a3722035f916879e71d8f420e0bbc59821ee5b48f91e88e9c8111c080000dfea0bdd3adff1b8072ea45beea66b00c9cbd918a08d06950a80ea30e0d4030001a1b26740e4d3d718c06a5ed58a59ba27d29b6ef500ff000000ce000508050507070a0000002565383063303832652d646135392d346165382d383064322d3839616261393461636163620107070100000014323031392d31312d32355431333a32373a30395a07070a00000020b795e8c0c862d82136c0b23a913453fe5dcccce5161fa248c2c22209b8890f4307070100000024646e314b75746668346577744e7875394663774448667a375834535775575a645247797007070080dac40901000000244b5431485a597077756e4271554834786672646d50396d364c766852787a48327957356389799e22c430f2b24deb5d949b4f249ad1b4e0110528253faf1122a8a4f1d84dfffdcd25829cfdead36987f67c16cfcd1b92d8f91ac3e74e274c84a1d9855103"));
-    let spend = unwrap!(coin.wait_for_tx_spend(
-        &tx,
-        now_ms() / 1000 + 300,
-        202994,
-    ).wait());
-    assert_eq!("onehiS6GMdSAwcVKnxKf2SaFUbYiuFiKVcKD1oJMzueHNVCkMtN", coin.tx_hash_to_string(&spend.tx_hash()));
-}
-
-#[test]
-fn test_search_for_swap_spend_tx_my_spent() {
-    let coin = tezos_erc_coin_for_test();
-    let tx = unwrap!(hex::decode("a5a3da0a35a3722035f916879e71d8f420e0bbc59821ee5b48f91e88e9c8111c080000dfea0bdd3adff1b8072ea45beea66b00c9cbd918a08d06950a80ea30e0d4030001a1b26740e4d3d718c06a5ed58a59ba27d29b6ef500ff000000ce000508050507070a0000002565383063303832652d646135392d346165382d383064322d3839616261393461636163620107070100000014323031392d31312d32355431333a32373a30395a07070a00000020b795e8c0c862d82136c0b23a913453fe5dcccce5161fa248c2c22209b8890f4307070100000024646e314b75746668346577744e7875394663774448667a375834535775575a645247797007070080dac40901000000244b5431485a597077756e4271554834786672646d50396d364c766852787a48327957356389799e22c430f2b24deb5d949b4f249ad1b4e0110528253faf1122a8a4f1d84dfffdcd25829cfdead36987f67c16cfcd1b92d8f91ac3e74e274c84a1d9855103"));
-    let spend_tx = unwrap!(coin.search_for_swap_tx_spend_my(
-        0,
-        &coin.get_pubkey(),
-        &[],
-        &tx,
-        202994,
-    ).wait());
-    let spend_tx = unwrap!(spend_tx);
-    match spend_tx {
-        FoundSwapTxSpend::Spent(spend_tx) => assert_eq!("onehiS6GMdSAwcVKnxKf2SaFUbYiuFiKVcKD1oJMzueHNVCkMtN", coin.tx_hash_to_string(&spend_tx.tx_hash())),
-        FoundSwapTxSpend::Refunded(_) => panic!("Must be FoundSwapTxSpend::Spent"),
-    };
-}
-
-#[test]
-fn test_search_for_swap_spend_tx_my_refunded() {
-    let coin = tezos_erc_coin_for_test();
-
-    let tx = unwrap!(hex::decode("33779e4012ca4ec683bd4ef207545283590e5072ac7a229ab94d18ad60f4cc2c0800002969737230bd5ea60f632b52777981e43a25d069a08d06850680ea30e0d4030001a1b26740e4d3d718c06a5ed58a59ba27d29b6ef500ff000000b7000508050507070a00000011eeefb15feb274d129281b91e9252cb6d0007070100000014313937302d30312d30315430303a30303a30305a07070a0000002066687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f292507070100000024646e314b75746668346577744e7875394663774448667a375834535775575a64524779700707000101000000244b5431427a71326d50765a6b366a646d537a765679535872516859727962506e6e78795ab842a6fe7213e14de5d0818aab8be261400342aaa039c86550fb5b1e9682e8f844ed1057c6ac6df161ffc5829991c44a7facba11cbf4d8b20bc14cb93462c60a"));
-    let spend_tx = unwrap!(coin.search_for_swap_tx_spend_my(
-        0,
-        &coin.get_pubkey(),
-        &[],
-        &tx,
-        228393,
-    ).wait());
-    let spend_tx = unwrap!(spend_tx);
-    match spend_tx {
-        FoundSwapTxSpend::Spent(_) => panic!("Must be FoundSwapTxSpend::Refunded"),
-        FoundSwapTxSpend::Refunded(spend_tx) => assert_eq!("oowh3N1N1ftS2iJnB8EAaPHzLnQnLFvosHQx8KA6GAoHHeXM3hm", coin.tx_hash_to_string(&spend_tx.tx_hash())),
-    };
-}
-*/
 #[test]
 fn test_address_from_ec_pubkey() {
     let coin = tezos_coin_for_test(
@@ -527,48 +418,6 @@ fn test_coin_from_conf_and_request() {
     assert_eq!("KT1NeiPn2baKGyofShT4B4NzVnXomgSLj6UK", coin.swap_contract_address.to_string());
 }
 
-/*
-#[test]
-fn send_taker_payment() {
-    use common::new_uuid;
-    let coin = tezos_coin_for_test();
-    let block = coin.current_block().wait().unwrap();
-    let uuid = new_uuid();
-    let payment = coin.send_taker_payment(
-        uuid.as_bytes(),
-        0,
-        &coin.get_pubkey(),
-        &*sha256(&[]),
-        "0.1".parse().unwrap(),
-    ).wait().unwrap();
-    log!((payment.tx_hash));
-    coin.wait_for_confirmations(
-        &payment.tx_hex,
-        1,
-        now_ms() / 1000 + 2000,
-        10,
-        block,
-    ).wait().unwrap();
-
-    let refund = coin.send_taker_refunds_payment(
-        uuid.as_bytes(),
-        &payment.tx_hex,
-        0,
-        &coin.get_pubkey(),
-        &*sha256(&[]),
-    ).wait().unwrap();
-
-    log!((coin.tx_hash_to_string(&refund.tx_hash())));
-
-    coin.wait_for_confirmations(
-        &refund.tx_hex(),
-        1,
-        now_ms() / 1000 + 2000,
-        10,
-        block,
-    ).wait().unwrap();
-}
-*/
 /*
 #[test]
 fn send_reveal() {
