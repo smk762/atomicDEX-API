@@ -665,6 +665,7 @@ mod docker_tests {
             1,
         ).wait());
 
+        /*
         let req_str = r#"{"coin":"XTZ_MLA","to":"KT1BhA5bCx37GjwrVy2egw7NKpir1bUt7nKj","amount":"20"}"#;
         let req: WithdrawRequest = unwrap!(json::from_str(req_str));
         let withdraw = unwrap!(coin.withdraw(req).wait());
@@ -678,5 +679,23 @@ mod docker_tests {
         ).wait());
         let balance = coin.my_balance().wait().unwrap();
         assert_eq!(balance, 80.into());
+        */
+
+        let uuid = new_uuid();
+        let secret = [0; 32];
+        let payment = unwrap!(coin.send_taker_payment(
+            uuid.as_bytes(),
+            0,
+            &coin.get_pubkey(),
+            &*sha256(&secret),
+            1.into(),
+        ).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &payment.tx_hex,
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
     }
 }

@@ -259,19 +259,6 @@ fn operation_hash_from_op_bytes() {
 }
 
 #[test]
-fn key_pair_get_address() {
-    let secret: TezosSecret = unwrap!("edsk4ArLQgBTLWG5FJmnGnT689VKoqhXwmDPBuGx3z4cvwU9MmrPZZ".parse());
-    let key_pair = unwrap!(TezosKeyPair::from_bytes(&*secret.data));
-
-    let expected = TezosAddress {
-        prefix: [6, 161, 159],
-        data: H160::from([218, 201, 245, 37, 67, 218, 26, 237, 11, 193, 214, 180, 107, 247, 193, 13, 183, 1, 76, 214]),
-    };
-
-    assert_eq!(expected, key_pair.get_address([6, 161, 159]));
-}
-
-#[test]
 fn tezos_address_from_to_string() {
     let address = TezosAddress {
         prefix: [6, 161, 159],
@@ -381,6 +368,7 @@ fn test_address_from_ec_pubkey() {
     let coin = tezos_coin_for_test(
         &hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap(),
         "https://tezos-dev.cryptonomic-infra.tech",
+        "KT1XcWHaTLiGpUVTHDLguus9rtV2ryhMtXxH",
     );
     let fee_addr_pub_key = EcPubkey {
         curve_type: CurveType::SECP256K1,
@@ -416,6 +404,35 @@ fn test_coin_from_conf_and_request() {
     assert_eq!(TZ2_ADDR_PREFIX, coin.addr_prefixes.secp256k1);
     assert_eq!(TZ3_ADDR_PREFIX, coin.addr_prefixes.p256);
     assert_eq!("KT1NeiPn2baKGyofShT4B4NzVnXomgSLj6UK", coin.swap_contract_address.to_string());
+}
+
+#[test]
+fn test_sample_contract() {
+    use common::new_uuid;
+    let priv_key: TezosSecret = "edskRk6cFnKSme2QuwCA3pCtqQYujU2P1mUWzFeDswm776jqMio7W2eYwV62y2nXfRhvqFw48H7Sf8Q24F2n8RuqCBXBdKxFCs".parse().unwrap();
+    let coin = tezos_mla_coin_for_test(
+        &priv_key.data[..32],
+        "https://tezos-dev.cryptonomic-infra.tech",
+        "KT1MW5LDoJfU4zvb63QvDwNbQ2uWjziSV5Qd",
+        "KT1DAJcbk3P8ReXsfWvWPWEfBP4ptNtyT2Ut",
+    );
+
+    let uuid = new_uuid();
+    let secret = [0; 32];
+    let payment = unwrap!(coin.send_taker_payment(
+            uuid.as_bytes(),
+            0,
+            &coin.get_pubkey(),
+            &*sha256(&secret),
+            1.into(),
+        ).wait());
+    unwrap!(coin.wait_for_confirmations(
+            &payment.tx_hex,
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
 }
 
 /*

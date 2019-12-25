@@ -55,6 +55,7 @@ async fn tezos_req<I: Serialize, O: DeserializeOwned + std::fmt::Debug + Send + 
         };
         let (status, _headers, body) = match res {Ok(r) => r, Err(err) => {errors.push(err); continue}};
         if !status.is_success() {errors.push(ERRL!("!200: {}, {}", status, binprint(&body, b'.'))); continue}
+        log!((binprint(&body, b'.')));
         match json::from_slice(&body) {
             Ok(b) => {
                 return Ok(b)
