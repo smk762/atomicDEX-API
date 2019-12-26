@@ -31,8 +31,7 @@ mod docker_tests {
     use coins::{FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, Transaction, WithdrawRequest};
     use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
-    use coins::tezos::{mla_mint_call, prepare_tezos_sandbox_network, tezos_coin_for_test,
-                       tezos_mla_coin_for_test};
+    use coins::tezos::{mla_mint_call, prepare_tezos_sandbox_network, tezos_coin_for_test, tezos_mla_coin_for_test, TezosCoin, TezosAddress};
     use futures01::Future;
     use gstuff::now_ms;
     use secp256k1::SecretKey;
@@ -255,11 +254,11 @@ mod docker_tests {
         let req = json!({"method":"enable"});
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let coin = unwrap!(block_on(utxo_coin_from_conf_and_request(ticker, &conf, &req, &priv_key)));
-        fill_address(&coin, &coin.my_address(), balance, timeout);
+        fill_utxo_address(&coin, &coin.my_address(), balance, timeout);
         (coin, priv_key)
     }
 
-    fn fill_address(coin: &UtxoCoin, address: &str, amount: u64, timeout: u64) {
+    fn fill_utxo_address(coin: &UtxoCoin, address: &str, amount: u64, timeout: u64) {
         if let UtxoRpcClientEnum::Native(client) = &coin.rpc_client() {
             unwrap!(client.import_address(&coin.my_address(), &coin.my_address(), false).wait());
             let hash = client.send_to_address(address, &amount.into()).wait().unwrap();
@@ -276,6 +275,38 @@ mod docker_tests {
                 thread::sleep(Duration::from_secs(1));
             };
         };
+    }
+
+    fn fill_xtz_address(address: &TezosAddress) {
+        // edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC in hex
+        let priv_key = unwrap!(hex::decode("626f6f746163632d33626f6f746163632d33626f6f746163632d33626f6f7461"));
+        let coin = tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock()));
+        let op = unwrap!(block_on(coin.sign_and_send_operation(
+            100000000u64.into(),
+            address,
+            None,
+        )));
+        unwrap!(coin.wait_for_confirmations(
+            &op.tx_hex(),
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1,
+        ).wait());
+
+        let params = mla_mint_call(&address, &100000000u64.into());
+        let operation = unwrap!(block_on(coin.sign_and_send_operation(
+            0u8.into(),
+            &unwrap!(unwrap!(XTZ_MLA_CONTRACT.lock()).parse()),
+            Some(params),
+        )));
+        unwrap!(coin.wait_for_confirmations(
+            &operation.tx_hex(),
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1,
+        ).wait());
     }
 
     #[test]
@@ -543,9 +574,9 @@ mod docker_tests {
 
     #[test]
     fn send_and_spend_xtz_payment() {
-        // edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC in hex
-        let priv_key = unwrap!(hex::decode("626f6f746163632d33626f6f746163632d33626f6f746163632d33626f6f7461"));
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let coin = tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock()));
+        fill_xtz_address(&coin.my_address);
         let uuid = new_uuid();
         let secret = [0; 32];
         let payment = unwrap!(coin.send_taker_payment(
@@ -593,9 +624,9 @@ mod docker_tests {
 
     #[test]
     fn send_and_refund_xtz_payment() {
-        // edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC in hex
-        let priv_key = unwrap!(hex::decode("626f6f746163632d33626f6f746163632d33626f6f746163632d33626f6f7461"));
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let coin = tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock()));
+        fill_xtz_address(&coin.my_address);
         let uuid = new_uuid();
         let secret = [0; 32];
         let payment = unwrap!(coin.send_taker_payment(
@@ -643,29 +674,15 @@ mod docker_tests {
 
     #[test]
     fn withdraw_managed_ledger_asset() {
-        // edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC in hex
-        let priv_key = unwrap!(hex::decode("626f6f746163632d33626f6f746163632d33626f6f746163632d33626f6f7461"));
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let coin = tezos_mla_coin_for_test(
             &priv_key,
             "http://localhost:20000",
             &unwrap!(XTZ_SWAP_CONTRACT.lock()),
             &unwrap!(XTZ_MLA_CONTRACT.lock()),
         );
-        let params = mla_mint_call(&coin.my_address, &100000000u64.into());
-        let operation = unwrap!(block_on(coin.sign_and_send_operation(
-            0u8.into(),
-            &unwrap!(unwrap!(XTZ_MLA_CONTRACT.lock()).parse()),
-            Some(params),
-        )));
-        unwrap!(coin.wait_for_confirmations(
-            &operation.tx_hex(),
-            1,
-            now_ms() / 1000 + 120,
-            1,
-            1,
-        ).wait());
+        fill_xtz_address(&coin.my_address);
 
-        /*
         let req_str = r#"{"coin":"XTZ_MLA","to":"KT1BhA5bCx37GjwrVy2egw7NKpir1bUt7nKj","amount":"20"}"#;
         let req: WithdrawRequest = unwrap!(json::from_str(req_str));
         let withdraw = unwrap!(coin.withdraw(req).wait());
@@ -679,7 +696,31 @@ mod docker_tests {
         ).wait());
         let balance = coin.my_balance().wait().unwrap();
         assert_eq!(balance, 80.into());
-        */
+    }
+
+    #[test]
+    fn send_and_refund_managed_ledger_asset_payment() {
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+        let coin = tezos_mla_coin_for_test(
+            &priv_key,
+            "http://localhost:20000",
+            &unwrap!(XTZ_SWAP_CONTRACT.lock()),
+            &unwrap!(XTZ_MLA_CONTRACT.lock()),
+        );
+        fill_xtz_address(&coin.my_address);
+        let params = mla_mint_call(&coin.my_address, &100000000u64.into());
+        let operation = unwrap!(block_on(coin.sign_and_send_operation(
+            0u8.into(),
+            &unwrap!(unwrap!(XTZ_MLA_CONTRACT.lock()).parse()),
+            Some(params),
+        )));
+        unwrap!(coin.wait_for_confirmations(
+            &operation.tx_hex(),
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1,
+        ).wait());
 
         let uuid = new_uuid();
         let secret = [0; 32];
@@ -697,5 +738,25 @@ mod docker_tests {
             1,
             1
         ).wait());
+        let balance = coin.my_balance().wait().unwrap();
+        assert_eq!(balance, 99.into());
+
+        let refund = unwrap!(coin.send_taker_refunds_payment(
+            uuid.as_bytes(),
+            &payment.tx_hex,
+            0,
+            &coin.get_pubkey(),
+            &*sha256(&secret),
+        ).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &refund.tx_hex(),
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
+
+        let balance = coin.my_balance().wait().unwrap();
+        assert_eq!(balance, 100.into());
     }
 }

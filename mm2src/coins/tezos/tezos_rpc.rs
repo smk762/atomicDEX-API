@@ -14,7 +14,7 @@ use std::convert::TryFrom;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
-use crate::tezos::{TezosValue, TezosUint};
+use crate::tezos::{TezosValue, TezosUint, TezosPubkey};
 use num_bigint::BigUint;
 
 #[derive(Debug)]
@@ -55,7 +55,6 @@ async fn tezos_req<I: Serialize, O: DeserializeOwned + std::fmt::Debug + Send + 
         };
         let (status, _headers, body) = match res {Ok(r) => r, Err(err) => {errors.push(err); continue}};
         if !status.is_success() {errors.push(ERRL!("!200: {}, {}", status, binprint(&body, b'.'))); continue}
-        log!((binprint(&body, b'.')));
         match json::from_slice(&body) {
             Ok(b) => {
                 return Ok(b)
@@ -123,7 +122,7 @@ pub struct Reveal {
     pub counter: TezosUint,
     pub fee: TezosUint,
     pub gas_limit: TezosUint,
-    pub public_key: String,
+    pub public_key: TezosPubkey,
     pub source: String,
     pub storage_limit: TezosUint,
 }
@@ -140,12 +139,19 @@ pub struct Endorsement {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SeedNonceRevelation {
+    level: u64,
+    nonce: BytesJson,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind")]
 pub enum Operation {
     activate_account(ActivateAccount),
     endorsement(Endorsement),
     reveal(Reveal),
     origination(Origination),
+    seed_nonce_revelation(SeedNonceRevelation),
     transaction(Transaction),
 }
 
@@ -163,7 +169,7 @@ pub struct OperationsResult {
     hash: String,
     pub branch: String,
     pub contents: Vec<OperationResult>,
-    pub signature: String,
+    pub signature: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -192,12 +198,6 @@ pub struct TezosInputType {
 pub struct BigMapReq {
     pub r#type: TezosInputType,
     pub key: TezosValue,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ManagerKeyRes {
-    pub manager: String,
-    pub key: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -294,7 +294,7 @@ impl TezosRpcClientImpl {
         tezos_req(&self.uris, &path, http::Method::POST, bytes).await.map_err(|e| ERRL!("{:?}", e))
     }
 
-    pub async fn manager_key(&self, contract_id: &str) -> Result<ManagerKeyRes, String> {
+    pub async fn manager_key(&self, contract_id: &str) -> Result<Option<TezosPubkey>, String> {
         let path = format!("/chains/main/blocks/head/context/contracts/{}/manager_key", contract_id);
         tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e))
     }
@@ -306,7 +306,7 @@ impl TezosRpcClientImpl {
 
     pub async fn operations(&self, block_id: &str) -> Result<Vec<OperationsResult>, String> {
         let path = format!("/chains/main/blocks/{}/operations", block_id);
-        let hashes: Vec<Vec<OperationsResult>> = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| ERRL!("{:?}", e)));
+        let hashes: Vec<Vec<OperationsResult>> = try_s!(tezos_req(&self.uris, &path, http::Method::GET, ()).await.map_err(|e| format!("{:?}", e)));
         Ok(hashes.into_iter().flatten().collect())
     }
 

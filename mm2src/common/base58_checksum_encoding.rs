@@ -16,7 +16,7 @@ impl fmt::Display for FromStrErr {
 
 #[macro_export]
 macro_rules! impl_base58_checksum_encoding {
-    ($impl_for:ident $(, ($prefix_len:expr, $total_len:expr))*) => {
+    ($impl_for:ident, $visitor:ident $(, ($prefix_len:expr, $total_len:expr))*) => {
         impl FromStr for $impl_for {
             type Err = common::base58_checksum_encoding::FromStrErr;
 
@@ -48,6 +48,35 @@ macro_rules! impl_base58_checksum_encoding {
                 let checksum = dhash256(&bytes);
                 bytes.extend_from_slice(&checksum[..4]);
                 bytes.to_base58().fmt(f)
+            }
+        }
+
+        impl serde::Serialize for $impl_for {
+            fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
+                s.serialize_str(&self.to_string())
+            }
+        }
+
+        impl<'de> serde::de::Deserialize<'de> for $impl_for {
+            fn deserialize<D>(d: D) -> Result<$impl_for, D::Error> where D: serde::de::Deserializer<'de> {
+                struct $visitor;
+
+                impl<'de> Visitor<'de> for $visitor {
+                    type Value = $impl_for;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        formatter.write_str("a string containing base58 checksum encoded data")
+                    }
+
+                    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                        where
+                            E: serde::de::Error,
+                    {
+                        v.parse().map_err(|e| E::custom(fomat!([e])))
+                    }
+                }
+
+                d.deserialize_any($visitor)
             }
         }
     }
