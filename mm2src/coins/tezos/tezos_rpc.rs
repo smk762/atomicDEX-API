@@ -146,6 +146,7 @@ pub struct SeedNonceRevelation {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind")]
+#[allow(non_camel_case_types)]
 pub enum Operation {
     activate_account(ActivateAccount),
     endorsement(Endorsement),
@@ -201,6 +202,7 @@ pub struct BigMapReq {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[allow(non_camel_case_types)]
 pub enum Status {
     applied,
     backtracked,

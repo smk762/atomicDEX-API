@@ -24,7 +24,6 @@ use serde::{Serialize, Serializer, Deserialize};
 use serde::de::{Deserializer, Visitor};
 use serde_json::{self as json, Value as Json};
 use serialization::{Deserializable, deserialize, Reader, Serializable, serialize, Stream};
-use sha2::{Sha512};
 use std::borrow::Cow;
 use std::cmp::PartialEq;
 use std::collections::HashMap;
@@ -379,7 +378,6 @@ impl TezosCoinImpl {
         prefixed.extend_from_slice(&signature.data);
         prefixed.remove(0);
         let hex_encoded = hex::encode(&prefixed);
-        log!((hex_encoded));
         try_s!(self.rpc_client.inject_operation(&hex_encoded).await);
         loop {
             let new_counter = TezosUint(try_s!(self.rpc_client.counter(&self.my_address.to_string()).await));
@@ -1298,11 +1296,27 @@ impl Transaction for TezosOperation {
 }
 
 async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<TransactionDetails, String> {
-    let to_addr: TezosAddress = try_s!(req.to.parse());
-    let counter = TezosUint(try_s!(coin.rpc_client.counter(&coin.my_address()).await) + BigUint::from(1u8));
+    let mut operations = vec![];
+    let _counter_lock = COUNTER_LOCK.lock().await;
+    let mut counter = TezosUint(try_s!(coin.rpc_client.counter(&coin.my_address.to_string()).await) + BigUint::from(1u8));
     let head = try_s!(coin.rpc_client.block_header("head").await);
-    let op = match &coin.coin_type {
-        TezosCoinType::Tezos => Operation::transaction(Tx{
+    let manager_key = try_s!(coin.rpc_client.manager_key(&coin.my_address.to_string()).await);
+    if manager_key.is_none() {
+        let my_pub: TezosPubkey = coin.get_pubkey().into();
+        let reveal = Operation::reveal(Reveal {
+            counter: counter.clone(),
+            fee: BigUint::from(1269u32).into(),
+            gas_limit: BigUint::from(10000u32).into(),
+            public_key: my_pub,
+            source: coin.my_address.to_string(),
+            storage_limit: BigUint::from(0u8).into(),
+        });
+        operations.push(reveal);
+        counter = counter + TezosUint(BigUint::from(1u8));
+    };
+    let to_addr: TezosAddress = try_s!(req.to.parse());
+    match &coin.coin_type {
+        TezosCoinType::Tezos => operations.push(Operation::transaction(Tx{
             amount: (&req.amount * BigDecimal::from(10u64.pow(coin.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap().into(),
             counter,
             destination: req.to.clone(),
@@ -1311,11 +1325,11 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
             parameters: None,
             source: coin.my_address().into(),
             storage_limit: BigUint::from(300u32).into(),
-        }),
+        })),
         TezosCoinType::ERC(addr) => {
             let amount: BigUint = (&req.amount * BigDecimal::from(10u64.pow(coin.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
             let parameters = Some(mla_transfer_call(&coin.my_address, &to_addr, &amount));
-            Operation::transaction(Tx {
+            operations.push(Operation::transaction(Tx {
                 amount: BigUint::from(0u8).into(),
                 counter,
                 destination: addr.to_string(),
@@ -1324,12 +1338,12 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
                 parameters,
                 source: coin.my_address().into(),
                 storage_limit: BigUint::from(60000u32).into(),
-            })
+            }));
         },
     };
     let forge_req = ForgeOperationsRequest {
         branch: head.hash.clone(),
-        contents: vec![op.clone()]
+        contents: operations.clone()
     };
     let mut tx_bytes = try_s!(coin.rpc_client.forge_operations(&head.chain_id, &head.hash, forge_req).await);
     let mut prefixed = vec![3u8];
@@ -1342,7 +1356,7 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
     };
     let preapply_req = PreapplyOperationsRequest(vec![PreapplyOperation {
         branch: head.hash,
-        contents: vec![op],
+        contents: operations,
         protocol: head.protocol,
         signature: format!("{}", signature),
     }]);
