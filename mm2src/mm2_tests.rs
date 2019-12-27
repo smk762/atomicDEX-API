@@ -686,6 +686,145 @@ async fn check_recent_swaps(
     assert_eq!(expected_len, swaps.len());
 }
 
+pub async fn trade_between_2_nodes<'a>(
+    mm_bob: &'a mut MarketMakerIt,
+    mm_alice: &'a mut MarketMakerIt,
+    pairs: Vec<(&'static str, &'static str)>,
+    volume: &'static str,
+    bob_max: bool,
+) {
+    let mut uuids = vec![];
+
+    // issue sell request on Bob side by setting base/rel price
+    for (base, rel) in pairs.iter() {
+        log!("Issue bob " (base) "/" (rel) " sell request");
+        let rc = unwrap! (mm_bob.rpc (json! ({
+            "userpass": mm_bob.userpass,
+            "method": "setprice",
+            "base": base,
+            "rel": rel,
+            "price": 1,
+            "volume": volume,
+            "max": bob_max
+        })) .await);
+        assert!(rc.0.is_success(), "!setprice: {}", rc.1);
+    }
+
+    for (base, rel) in pairs.iter() {
+        log!("Issue alice " (base) "/" (rel) " buy request");
+        let rc = unwrap! (mm_alice.rpc (json! ({
+            "userpass": mm_alice.userpass,
+            "method": "buy",
+            "base": base,
+            "rel": rel,
+            "volume": volume,
+            "price": 2
+        })) .await);
+        assert!(rc.0.is_success(), "!buy: {}", rc.1);
+        let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));
+        uuids.push(unwrap!(buy_json["result"]["uuid"].as_str()).to_owned());
+    }
+
+    for (base, rel) in pairs.iter() {
+        // ensure the swaps are started
+        unwrap! (mm_alice.wait_for_log (5., |log| log.contains (&format!("Entering the taker_swap_loop {}/{}", base, rel))) .await);
+        unwrap! (mm_bob.wait_for_log (5., |log| log.contains (&format!("Entering the maker_swap_loop {}/{}", base, rel))) .await);
+    }
+
+    let maker_success_events = vec!["Started", "Negotiated", "TakerFeeValidated", "MakerPaymentSent",
+                                    "TakerPaymentReceived", "TakerPaymentWaitConfirmStarted",
+                                    "TakerPaymentValidatedAndConfirmed", "TakerPaymentSpent", "Finished"];
+
+    let maker_error_events = vec!["StartFailed", "NegotiateFailed", "TakerFeeValidateFailed",
+                                  "MakerPaymentTransactionFailed", "MakerPaymentDataSendFailed",
+                                  "TakerPaymentValidateFailed", "TakerPaymentSpendFailed", "MakerPaymentRefunded",
+                                  "MakerPaymentRefundFailed"];
+
+    let taker_success_events = vec!["Started", "Negotiated", "TakerFeeSent", "MakerPaymentReceived",
+                                    "MakerPaymentWaitConfirmStarted", "MakerPaymentValidatedAndConfirmed",
+                                    "TakerPaymentSent", "TakerPaymentSpent", "MakerPaymentSpent", "Finished"];
+
+    let taker_error_events = vec!["StartFailed", "NegotiateFailed", "TakerFeeSendFailed", "MakerPaymentValidateFailed",
+                                  "TakerPaymentTransactionFailed", "TakerPaymentDataSendFailed", "TakerPaymentWaitForSpendFailed",
+                                  "MakerPaymentSpendFailed", "TakerPaymentRefunded", "TakerPaymentRefundFailed"];
+
+    for uuid in uuids.iter() {
+        unwrap! (mm_bob.wait_for_log (600., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
+        unwrap! (mm_alice.wait_for_log (600., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
+
+        #[cfg(not(feature = "native"))] {
+            log! ("Waiting a few second for the fresh swap status to be saved..");
+            Timer::sleep (7.77) .await;
+        }
+
+        log! ("Checking alice/taker status..");
+        check_my_swap_status(
+            &mm_alice,
+            &uuid,
+            &taker_success_events,
+            &taker_error_events,
+            volume.parse().unwrap(),
+            volume.parse().unwrap(),
+        ).await;
+
+        log! ("Checking bob/maker status..");
+        check_my_swap_status(
+            &mm_bob,
+            &uuid,
+            &maker_success_events,
+            &maker_error_events,
+            volume.parse().unwrap(),
+            volume.parse().unwrap(),
+        ).await;
+    }
+
+    log! ("Waiting 3 seconds for nodes to broadcast their swaps data..");
+    Timer::sleep (3.) .await;
+
+    for uuid in uuids.iter() {
+        log! ("Checking alice status..");
+        check_stats_swap_status(
+            &mm_alice,
+            &uuid,
+            &maker_success_events,
+            &taker_success_events,
+        ).await;
+
+        log! ("Checking bob status..");
+        check_stats_swap_status(
+            &mm_bob,
+            &uuid,
+            &maker_success_events,
+            &taker_success_events,
+        ).await;
+    }
+
+    log! ("Checking alice recent swaps..");
+    check_recent_swaps(&mm_alice, uuids.len()).await;
+    log! ("Checking bob recent swaps..");
+    check_recent_swaps(&mm_bob, uuids.len()).await;
+    for (base, rel) in pairs.iter() {
+        log!("Get " (base) "/" (rel) " orderbook");
+        let rc = unwrap! (mm_bob.rpc (json! ({
+            "userpass": mm_bob.userpass,
+            "method": "orderbook",
+            "base": base,
+            "rel": rel,
+        })) .await);
+        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
+
+        let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
+        log!((base) "/" (rel) " orderbook " [bob_orderbook]);
+
+        let bids = bob_orderbook["bids"].as_array().unwrap();
+        let asks = bob_orderbook["asks"].as_array().unwrap();
+        assert_eq!(0, bids.len(), "{} {} bids must be empty", base, rel);
+        assert_eq!(0, asks.len(), "{} {} asks must be empty", base, rel);
+    }
+    unwrap! (mm_bob.stop().await);
+    unwrap! (mm_alice.stop().await);
+}
+
 /// Trading test using coins with remote RPC (Electrum, ETH nodes), it needs only ENV variables to be set, coins daemons are not required.
 /// Trades few pairs concurrently to speed up the process and also act like "load" test
 async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
@@ -753,141 +892,7 @@ async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
     let rc = enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]) .await;
     log! ({"enable_coins (alice): {:?}", rc});
 
-    // unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
-
-    let mut uuids = vec![];
-
-    // issue sell request on Bob side by setting base/rel price
-    for (base, rel) in pairs.iter() {
-        log!("Issue bob " (base) "/" (rel) " sell request");
-        let rc = unwrap! (mm_bob.rpc (json! ({
-            "userpass": mm_bob.userpass,
-            "method": "sell",
-            "base": base,
-            "rel": rel,
-            "price": 1,
-            "volume": "0.1",
-        })) .await);
-        assert!(rc.0.is_success(), "!setprice: {}", rc.1);
-    }
-
-    // Allow the order to be converted to maker after not being matched in 30 seconds.
-    log! ("Waiting 32 seconds…");
-    Timer::sleep (32.) .await;
-
-    for (base, rel) in pairs.iter() {
-        log!("Issue alice " (base) "/" (rel) " buy request");
-        let rc = unwrap! (mm_alice.rpc (json! ({
-            "userpass": mm_alice.userpass,
-            "method": "buy",
-            "base": base,
-            "rel": rel,
-            "volume": "0.1",
-            "price": 2
-        })) .await);
-        assert!(rc.0.is_success(), "!buy: {}", rc.1);
-        let buy_json: Json = unwrap!(serde_json::from_str(&rc.1));
-        uuids.push(unwrap!(buy_json["result"]["uuid"].as_str()).to_owned());
-    }
-
-    for (base, rel) in pairs.iter() {
-        // ensure the swaps are started
-        unwrap! (mm_alice.wait_for_log (5., |log| log.contains (&format!("Entering the taker_swap_loop {}/{}", base, rel))) .await);
-        unwrap! (mm_bob.wait_for_log (5., |log| log.contains (&format!("Entering the maker_swap_loop {}/{}", base, rel))) .await);
-    }
-
-    let maker_success_events = vec!["Started", "Negotiated", "TakerFeeValidated", "MakerPaymentSent",
-                                    "TakerPaymentReceived", "TakerPaymentWaitConfirmStarted",
-                                    "TakerPaymentValidatedAndConfirmed", "TakerPaymentSpent", "Finished"];
-
-    let maker_error_events = vec!["StartFailed", "NegotiateFailed", "TakerFeeValidateFailed",
-                                  "MakerPaymentTransactionFailed", "MakerPaymentDataSendFailed",
-                                  "TakerPaymentValidateFailed", "TakerPaymentSpendFailed", "MakerPaymentRefunded",
-                                  "MakerPaymentRefundFailed"];
-
-    let taker_success_events = vec!["Started", "Negotiated", "TakerFeeSent", "MakerPaymentReceived",
-                                    "MakerPaymentWaitConfirmStarted", "MakerPaymentValidatedAndConfirmed",
-                                    "TakerPaymentSent", "TakerPaymentSpent", "MakerPaymentSpent", "Finished"];
-
-    let taker_error_events = vec!["StartFailed", "NegotiateFailed", "TakerFeeSendFailed", "MakerPaymentValidateFailed",
-                                  "TakerPaymentTransactionFailed", "TakerPaymentDataSendFailed", "TakerPaymentWaitForSpendFailed",
-                                  "MakerPaymentSpendFailed", "TakerPaymentRefunded", "TakerPaymentRefundFailed"];
-
-    for uuid in uuids.iter() {
-        unwrap! (mm_bob.wait_for_log (600., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
-        unwrap! (mm_alice.wait_for_log (600., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
-
-        #[cfg(not(feature = "native"))] {
-            log! ("Waiting a few second for the fresh swap status to be saved..");
-            Timer::sleep (7.77) .await;
-        }
-
-        log! ("Checking alice/taker status..");
-        check_my_swap_status(
-            &mm_alice,
-            &uuid,
-            &taker_success_events,
-            &taker_error_events,
-            "0.1".parse().unwrap(),
-            "0.1".parse().unwrap(),
-        ).await;
-
-        log! ("Checking bob/maker status..");
-        check_my_swap_status(
-            &mm_bob,
-            &uuid,
-            &maker_success_events,
-            &maker_error_events,
-            "0.1".parse().unwrap(),
-            "0.1".parse().unwrap(),
-        ).await;
-    }
-
-    log! ("Waiting 3 seconds for nodes to broadcast their swaps data..");
-    Timer::sleep (3.) .await;
-
-    for uuid in uuids.iter() {
-        log! ("Checking alice status..");
-        check_stats_swap_status(
-            &mm_alice,
-            &uuid,
-            &maker_success_events,
-            &taker_success_events,
-        ).await;
-
-        log! ("Checking bob status..");
-        check_stats_swap_status(
-            &mm_bob,
-            &uuid,
-            &maker_success_events,
-            &taker_success_events,
-        ).await;
-    }
-
-    log! ("Checking alice recent swaps..");
-    check_recent_swaps(&mm_alice, uuids.len()).await;
-    log! ("Checking bob recent swaps..");
-    check_recent_swaps(&mm_bob, uuids.len()).await;
-    for (base, rel) in pairs.iter() {
-        log!("Get " (base) "/" (rel) " orderbook");
-        let rc = unwrap! (mm_bob.rpc (json! ({
-            "userpass": mm_bob.userpass,
-            "method": "orderbook",
-            "base": base,
-            "rel": rel,
-        })) .await);
-        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
-
-        let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
-        log!((base) "/" (rel) " orderbook " [bob_orderbook]);
-
-        let bids = bob_orderbook["bids"].as_array().unwrap();
-        let asks = bob_orderbook["asks"].as_array().unwrap();
-        assert_eq!(0, bids.len(), "{} {} bids must be empty", base, rel);
-        assert_eq!(0, asks.len(), "{} {} asks must be empty", base, rel);
-    }
-    unwrap! (mm_bob.stop().await);
-    unwrap! (mm_alice.stop().await);
+    trade_between_2_nodes(&mut mm_bob, &mut mm_alice, pairs, "0.1", false).await;
 }
 
 #[cfg(feature = "native")]

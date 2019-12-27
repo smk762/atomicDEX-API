@@ -33,7 +33,7 @@
 
 use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
-use common::crypto::{CryptoOps, EcPubkey};
+use common::crypto::{CryptoOps, EcPubkey, SecretHash};
 use common::duplex_mutex::DuplexMutex;
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_number::MmNumber;
@@ -116,7 +116,7 @@ pub trait SwapOps {
         uuid: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> TransactionDetailsFut;
 
@@ -125,7 +125,7 @@ pub trait SwapOps {
         uuid: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> TransactionDetailsFut;
 
@@ -136,6 +136,7 @@ pub trait SwapOps {
         time_lock: u32,
         taker_pub: &EcPubkey,
         secret: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut;
 
     fn send_taker_spends_maker_payment(
@@ -145,6 +146,7 @@ pub trait SwapOps {
         time_lock: u32,
         maker_pub: &EcPubkey,
         secret: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut;
 
     fn send_taker_refunds_payment(
@@ -153,7 +155,7 @@ pub trait SwapOps {
         taker_payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut;
 
     fn send_maker_refunds_payment(
@@ -162,7 +164,7 @@ pub trait SwapOps {
         maker_payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut;
 
     fn validate_fee(
@@ -178,7 +180,7 @@ pub trait SwapOps {
         payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send>;
 
@@ -188,7 +190,7 @@ pub trait SwapOps {
         payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send>;
 
@@ -197,7 +199,7 @@ pub trait SwapOps {
         uuid: &[u8],
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send>;
 
@@ -206,7 +208,7 @@ pub trait SwapOps {
         uuid: &[u8],
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send>;
 
@@ -214,7 +216,7 @@ pub trait SwapOps {
         &self,
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send>;
@@ -223,7 +225,7 @@ pub trait SwapOps {
         &self,
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send>;

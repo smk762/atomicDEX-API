@@ -1,4 +1,5 @@
 use common::block_on;
+use common::crypto::{SecretHash, SecretHashType};
 use common::mm_ctx::{MmArc, MmCtxBuilder};
 use common::for_tests::wait_for_log;
 use futures::future::join_all;
@@ -165,7 +166,7 @@ fn send_and_refund_erc20_payment() {
         &[],
         (now_ms() / 1000) as u32 - 200,
         &taker_pub,
-        &[1; 20],
+        &SecretHash::default(),
         "0.001".parse().unwrap(),
     ).wait().unwrap();
 
@@ -178,7 +179,7 @@ fn send_and_refund_erc20_payment() {
         &payment.tx_hex,
         (now_ms() / 1000) as u32 - 200,
         &taker_pub,
-        &[1; 20],
+        &SecretHash::default(),
     ).wait().unwrap();
 
     log!([refund]);
@@ -192,7 +193,7 @@ fn send_and_refund_eth_payment() {
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let secret = [0u8; 32];
-    let hash = sha256(&secret);
+    let secret_hash = SecretHash::from_secret(SecretHashType::Sha256, &secret);
     let coin = EthCoin(Arc::new(EthCoinImpl {
         ticker: "ETH".into(),
         coin_type: EthCoinType::Eth,
@@ -214,7 +215,7 @@ fn send_and_refund_eth_payment() {
         &[],
         (now_ms() / 1000) as u32 - 200,
         &coin.get_pubkey(),
-        &*hash,
+        &secret_hash,
         "0.001".parse().unwrap(),
     ).wait().unwrap();
 
@@ -233,7 +234,7 @@ fn send_and_refund_eth_payment() {
         &payment.tx_hex,
         (now_ms() / 1000) as u32 - 200,
         &coin.get_pubkey(),
-        &*hash,
+        &secret_hash,
     ).wait().unwrap();
 
     log!([refund]);

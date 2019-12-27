@@ -1,5 +1,7 @@
+use bitcrypto::{dhash160, sha256};
 use ed25519_dalek::{Keypair as EdKeypair, PublicKey as EdPublicKey, SecretKey as EdSecret,
                     Signature as EdSignature};
+use primitives::hash::{H160, H256};
 use secp256k1::{Message as SecpMessage, PublicKey as SecpPublicKey, SecretKey as SecpSecret,
                 sign as secp_sign, Signature as SecpSignature, verify as secp_verify_sig};
 use serialization::{Deserializable, deserialize, Reader, Serializable, serialize, Stream};
@@ -183,5 +185,103 @@ impl<'de> Deserialize<'de> for EcPubkey {
         }
 
         d.deserialize_any(EcPubkeyVisitor)
+    }
+}
+
+pub enum SecretHashType {
+    Ripe160Sha256,
+    Sha256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SecretHash {
+    Ripe160Sha256(H160),
+    Sha256(H256),
+}
+
+impl Default for SecretHash {
+    fn default() -> Self {
+        SecretHash::Ripe160Sha256(H160::default())
+    }
+}
+
+impl SecretHash {
+    pub fn from_secret(hash_type: SecretHashType, secret: &[u8]) -> SecretHash {
+        match hash_type {
+            SecretHashType::Ripe160Sha256 => SecretHash::Ripe160Sha256(dhash160(secret)),
+            SecretHashType::Sha256 => SecretHash::Sha256(sha256(secret)),
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        match self {
+            SecretHash::Ripe160Sha256(hash) => hash.to_vec(),
+            SecretHash::Sha256(hash) => hash.to_vec(),
+        }
+    }
+}
+
+impl Serializable for SecretHash {
+    fn serialize(&self, s: &mut Stream) {
+        match self {
+            SecretHash::Ripe160Sha256(hash) => {
+                s.append(&0u8);
+                s.append(hash);
+            },
+            SecretHash::Sha256(hash) => {
+                s.append(&1u8);
+                s.append(hash);
+            },
+        };
+    }
+}
+
+impl Deserializable for SecretHash {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        let tag: u8 = reader.read()?;
+        match tag {
+            0 => Ok(SecretHash::Ripe160Sha256(reader.read()?)),
+            1 => Ok(SecretHash::Sha256(reader.read()?)),
+            _ => Err(serialization::Error::MalformedData)
+        }
+    }
+}
+
+impl Serialize for SecretHash {
+    fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        let bytes = serialize(self).take();
+        s.serialize_str(&hex::encode(&bytes))
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretHash {
+    fn deserialize<D>(d: D) -> Result<SecretHash, D::Error> where D: Deserializer<'de> {
+        struct SecretHashVisitor;
+
+        impl<'de> Visitor<'de> for SecretHashVisitor {
+            type Value = SecretHash;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a string containing SecretHash data")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+            {
+                let bytes = hex::decode(v).map_err(E::custom)?;
+                deserialize(bytes.as_slice()).map_err(|e| E::custom(fomat!([e])))
+            }
+        }
+
+        d.deserialize_any(SecretHashVisitor)
+    }
+}
+
+impl From<[u8; 20]> for SecretHash {
+    fn from(input: [u8; 20]) -> SecretHash {
+        SecretHash::Ripe160Sha256(input.into())
     }
 }

@@ -2,10 +2,9 @@
 
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use bitcrypto::{sha256, dhash160};
 use common::executor::Timer;
 use common::{bits256, now_ms, now_float, slurp, write, MM_VERSION};
-use common::crypto::{CurveType, EcPubkey};
+use common::crypto::{CurveType, EcPubkey, SecretHash, SecretHashType};
 use common::mm_ctx::MmArc;
 use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
 use crc::crc32;
@@ -15,7 +14,7 @@ use futures01::Future;
 use parking_lot::Mutex as PaMutex;
 use peers::FixedValidator;
 use rand::Rng;
-use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json, H264 as H264Json};
+use rpc::v1::types::{H256 as H256Json, H264 as H264Json};
 use serde_json::{self as json, Value as Json};
 use serialization::{deserialize, serialize};
 use std::path::PathBuf;
@@ -81,7 +80,7 @@ pub struct MakerSwapData {
     maker_coin: String,
     taker: H256Json,
     secret: H256Json,
-    secret_hash: BytesJson,
+    secret_hash: SecretHash,
     lock_duration: u64,
     maker_amount: BigDecimal,
     taker_amount: BigDecimal,
@@ -270,7 +269,7 @@ impl MakerSwap {
             taker_coin: self.taker_coin.ticker().to_owned(),
             maker_coin: self.maker_coin.ticker().to_owned(),
             taker: self.taker.bytes.into(),
-            secret_hash: sha256(&secret).to_vec().into(),
+            secret_hash: SecretHash::from_secret(SecretHashType::Sha256, &secret),
             secret: secret.into(),
             started_at,
             lock_duration,
@@ -291,7 +290,7 @@ impl MakerSwap {
         let maker_negotiation_data = SwapNegotiationData {
             started_at: self.r().data.started_at,
             payment_locktime: self.r().data.maker_payment_lock,
-            secret_hash: sha256(&self.r().data.secret.0),
+            secret_hash: SecretHash::from_secret(SecretHashType::Sha256, &self.r().data.secret.0),
             maker_coin_persistent_pub: self.maker_coin.get_pubkey(),
             taker_coin_persistent_pub: self.taker_coin.get_pubkey(),
         };
@@ -433,7 +432,7 @@ impl MakerSwap {
             self.uuid.as_bytes(),
             self.r().data.maker_payment_lock as u32,
             &self.r().other_persistent_pub_maker_coin,
-            &*sha256(&self.r().data.secret.0),
+            &self.r().data.secret_hash,
             self.r().data.maker_coin_start_block,
         ).compat();
         let tx_details = match transaction_f.await {
@@ -444,7 +443,7 @@ impl MakerSwap {
                         self.uuid.as_bytes(),
                         self.r().data.maker_payment_lock as u32,
                         &self.r().other_persistent_pub_maker_coin,
-                        &*sha256(&self.r().data.secret.0),
+                        &self.r().data.secret_hash,
                         self.maker_amount.clone(),
                     );
 
@@ -531,7 +530,7 @@ impl MakerSwap {
             &unwrap!(self.r().taker_payment.clone()).tx_hex,
             self.taker_payment_lock.load(Ordering::Relaxed) as u32,
             &self.r().other_persistent_pub_taker_coin,
-            &*sha256(&self.r().data.secret.0),
+            &self.r().data.secret_hash,
             self.taker_amount.clone(),
         ).compat();
 
@@ -570,6 +569,7 @@ impl MakerSwap {
             self.taker_payment_lock.load(Ordering::Relaxed) as u32,
             &self.r().other_persistent_pub_taker_coin,
             &self.r().data.secret.0,
+            &self.r().data.secret_hash,
         );
 
         let transaction = match spend_fut.compat().await {
@@ -617,7 +617,7 @@ impl MakerSwap {
             &unwrap!(self.r().maker_payment.clone()).tx_hex,
             self.r().data.maker_payment_lock as u32,
             &self.r().other_persistent_pub_maker_coin,
-            &*dhash160(&self.r().data.secret.0),
+            &self.r().data.secret_hash,
         );
 
         let transaction = match spend_fut.compat().await {
@@ -691,7 +691,7 @@ impl MakerSwap {
 
         let maker_payment_lock = self.r().data.maker_payment_lock as u32;
         let other_pub = &self.r().other_persistent_pub_maker_coin.clone();
-        let secret = self.r().data.secret.clone();
+        let secret_hash = self.r().data.secret_hash.clone();
         let maker_coin_start_block = self.r().data.maker_coin_start_block;
 
         let maker_payment = self.r().maker_payment.clone();
@@ -702,7 +702,7 @@ impl MakerSwap {
                     self.uuid.as_bytes(),
                     maker_payment_lock,
                     &other_pub,
-                    &*dhash160(&secret.0),
+                    &secret_hash,
                     maker_coin_start_block,
                 ).compat().await);
                 match maybe_maker_payment {
@@ -715,7 +715,7 @@ impl MakerSwap {
         match self.maker_coin.search_for_swap_tx_spend_my(
             maker_payment_lock,
             &other_pub,
-            &*dhash160(&secret.0),
+            &secret_hash,
             &maker_payment,
             maker_coin_start_block,
         ).compat().await {
@@ -734,7 +734,7 @@ impl MakerSwap {
             &maker_payment,
             maker_payment_lock,
             &other_pub,
-            &*dhash160(&secret.0),
+            &secret_hash,
         ).compat().await);
 
         Ok(RecoveredSwap {
@@ -1002,7 +1002,7 @@ pub fn migrate_maker_saved_swap(mut old_json: Json) -> Result<Json, String> {
                 match event["event"]["type"].as_str() {
                     Some("Started") => {
                         let secret: H256Json = try_s!(json::from_value(event["event"]["data"]["secret"].clone()));
-                        let secret_hash: BytesJson = dhash160(&secret.0).to_vec().into();
+                        let secret_hash = SecretHash::from_secret(SecretHashType::Ripe160Sha256, &secret.0);
                         event["event"]["data"]["secret_hash"] = try_s!(json::to_value(secret_hash));
                     },
                     Some("Negotiated") => {

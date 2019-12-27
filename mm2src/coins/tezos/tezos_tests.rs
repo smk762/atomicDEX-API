@@ -1,6 +1,5 @@
 use super::*;
 use crate::tezos::tezos_rpc::{OperationsResult, Origination};
-use bitcrypto::sha256;
 use common::privkey::key_pair_from_seed;
 
 #[test]

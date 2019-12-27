@@ -21,7 +21,7 @@
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
 use common::{now_ms, slurp_url, small_rng};
-use common::crypto::{CryptoOps, CurveType, EcPrivkey, EcPubkey};
+use common::crypto::{CryptoOps, CurveType, EcPrivkey, EcPubkey, SecretHash};
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
@@ -253,11 +253,11 @@ impl EthCoinImpl {
     fn etomic_swap_id(
         &self,
         time_lock: u32,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
     ) -> Vec<u8> {
         let mut input = vec![];
         input.extend_from_slice(&time_lock.to_le_bytes());
-        input.extend_from_slice(secret_hash);
+        input.extend_from_slice(&secret_hash.to_vec());
         sha256(&input).to_vec()
     }
 
@@ -458,7 +458,7 @@ impl SwapOps for EthCoin {
         _uuid: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> TransactionDetailsFut {
         let taker_addr = try_fus!(addr_from_ec_pubkey(taker_pub));
@@ -478,7 +478,7 @@ impl SwapOps for EthCoin {
         _uuid: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> TransactionDetailsFut {
         let maker_addr = try_fus!(addr_from_ec_pubkey(maker_pub));
@@ -499,6 +499,7 @@ impl SwapOps for EthCoin {
         _time_lock: u32,
         _taker_pub: &EcPubkey,
         secret: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(taker_payment_tx));
         let signed = try_fus!(SignedEthTx::new(tx));
@@ -513,6 +514,7 @@ impl SwapOps for EthCoin {
         _time_lock: u32,
         _maker_pub: &EcPubkey,
         secret: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(maker_payment_tx));
         let signed = try_fus!(SignedEthTx::new(tx));
@@ -525,7 +527,7 @@ impl SwapOps for EthCoin {
         taker_payment_tx: &[u8],
         _time_lock: u32,
         _maker_pub: &EcPubkey,
-        _secret_hash: &[u8],
+        _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(taker_payment_tx));
         let signed = try_fus!(SignedEthTx::new(tx));
@@ -539,7 +541,7 @@ impl SwapOps for EthCoin {
         maker_payment_tx: &[u8],
         _time_lock: u32,
         _taker_pub: &EcPubkey,
-        _secret_hash: &[u8],
+        _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(maker_payment_tx));
         let signed = try_fus!(SignedEthTx::new(tx));
@@ -616,7 +618,7 @@ impl SwapOps for EthCoin {
         payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         self.validate_payment(
@@ -635,7 +637,7 @@ impl SwapOps for EthCoin {
         payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         self.validate_payment(
@@ -653,7 +655,7 @@ impl SwapOps for EthCoin {
         _uuid: &[u8],
         time_lock: u32,
         _other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
         self.check_if_my_payment_sent(time_lock, secret_hash, from_block)
@@ -664,7 +666,7 @@ impl SwapOps for EthCoin {
         _uuid: &[u8],
         time_lock: u32,
         _other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
         self.check_if_my_payment_sent(time_lock, secret_hash, from_block)
@@ -674,7 +676,7 @@ impl SwapOps for EthCoin {
         &self,
         _time_lock: u32,
         _other_pub: &EcPubkey,
-        _secret_hash: &[u8],
+        _secret_hash: &SecretHash,
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
@@ -690,7 +692,7 @@ impl SwapOps for EthCoin {
         &self,
         _time_lock: u32,
         _other_pub: &EcPubkey,
-        _secret_hash: &[u8],
+        _secret_hash: &SecretHash,
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
@@ -979,7 +981,7 @@ impl EthCoin {
         id: Vec<u8>,
         value: U256,
         time_lock: u32,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         receiver_addr: Address,
     ) -> EthTxFut {
         match self.coin_type {
@@ -1233,7 +1235,7 @@ impl EthCoin {
         payment_tx: &[u8],
         time_lock: u32,
         sender_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
         expected_hash_algo: u8,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
@@ -1803,7 +1805,7 @@ impl EthCoin {
         }
     }
 
-    fn check_if_my_payment_sent(&self, time_lock: u32, secret_hash: &[u8], from_block: u64)
+    fn check_if_my_payment_sent(&self, time_lock: u32, secret_hash: &SecretHash, from_block: u64)
         -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
         let id = self.etomic_swap_id(time_lock, secret_hash);
         let selfi = self.clone();

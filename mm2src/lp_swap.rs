@@ -60,7 +60,7 @@
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, TransactionEnum};
 use common::{block_on, read_dir, rpc_response, slurp, write, HyRes};
-use common::crypto::{EcPubkey};
+use common::crypto::{EcPubkey, SecretHash};
 use common::mm_ctx::{from_ctx, MmArc};
 use http::Response;
 use primitives::hash::{H256};
@@ -313,7 +313,7 @@ pub fn dex_fee_amount(base: &str, rel: &str, trade_amount: &BigDecimal) -> BigDe
 struct SwapNegotiationData {
     started_at: u64,
     payment_locktime: u64,
-    secret_hash: H256,
+    secret_hash: SecretHash,
     maker_coin_persistent_pub: EcPubkey,
     taker_coin_persistent_pub: EcPubkey,
 }

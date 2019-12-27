@@ -26,7 +26,7 @@ fn main() {
 #[cfg(all(test, feature = "native"))]
 mod docker_tests {
     use common::{block_on, new_uuid};
-    use common::crypto::CryptoOps;
+    use common::crypto::{CryptoOps, SecretHash, SecretHashType};
     use common::for_tests::{enable_native, MarketMakerIt, mm_dump};
     use coins::{FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, Transaction, WithdrawRequest};
     use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
@@ -34,6 +34,7 @@ mod docker_tests {
     use coins::tezos::{mla_mint_call, prepare_tezos_sandbox_network, tezos_coin_for_test, tezos_mla_coin_for_test, TezosCoin, TezosAddress};
     use futures01::Future;
     use gstuff::now_ms;
+    use super::mm2::mm2_tests::trade_between_2_nodes;
     use secp256k1::SecretKey;
     use serde_json::{self as json, Value as Json};
     use std::env;
@@ -46,7 +47,6 @@ mod docker_tests {
     use testcontainers::{Container, Docker, Image};
     use testcontainers::clients::Cli;
     use testcontainers::images::generic::{GenericImage, WaitFor};
-    use bitcrypto::sha256;
 
     // The copy of libtest function returning the exit code instead of immediate process exit
     fn test_main(args: &[String], tests: Vec<TestDescAndFn>, options: Options) -> i32 {
@@ -244,7 +244,7 @@ mod docker_tests {
     }
 
     // generate random privkey, create a coin and fill it's address with 1000 coins
-    fn generate_coin_with_random_privkey(ticker: &str, balance: u64) -> (UtxoCoin, [u8; 32])  {
+    fn generate_utxo_coin_with_random_privkey(ticker: &str, balance: u64) -> (UtxoCoin, [u8; 32])  {
         // prevent concurrent initialization since daemon RPC returns errors if send_to_address
         // is called concurrently (insufficient funds) and it also may return other errors
         // if previous transaction is not confirmed yet
@@ -312,14 +312,14 @@ mod docker_tests {
     #[test]
     fn test_search_for_swap_tx_spend_native_was_refunded() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (coin, _) = generate_utxo_coin_with_random_privkey("MYCOIN", 1000);
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin.send_taker_payment(
             &[],
             time_lock,
             &coin.get_pubkey(),
-            &[0; 20],
+            &SecretHash::default(),
             1.into(),
         ).wait().unwrap();
 
@@ -330,7 +330,7 @@ mod docker_tests {
             &tx.tx_hex,
             time_lock,
             &coin.get_pubkey(),
-            &[0; 20],
+            &SecretHash::default(),
         ).wait().unwrap();
 
         unwrap!(coin.wait_for_confirmations(&refund_tx.tx_hex(), 1, timeout, 1, 0).wait());
@@ -338,7 +338,7 @@ mod docker_tests {
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
             &coin.get_pubkey(),
-            &[0; 20],
+            &SecretHash::default(),
             &tx.tx_hex,
             0,
         ).wait()));
@@ -348,15 +348,16 @@ mod docker_tests {
     #[test]
     fn test_search_for_swap_tx_spend_native_was_spent() {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
-        let (coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (coin, _) = generate_utxo_coin_with_random_privkey("MYCOIN", 1000);
         let secret = [0; 32];
+        let secret_hash = SecretHash::from_secret(SecretHashType::Ripe160Sha256, &secret);
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin.send_taker_payment(
             &[],
             time_lock,
             &coin.get_pubkey(),
-            &*dhash160(&secret),
+            &secret_hash,
             1.into(),
         ).wait().unwrap();
 
@@ -368,6 +369,7 @@ mod docker_tests {
             time_lock,
             &coin.get_pubkey(),
             &secret,
+            &secret_hash,
         ).wait().unwrap();
 
         unwrap!(coin.wait_for_confirmations(&spend_tx.tx_hex(), 1, timeout, 1, 0).wait());
@@ -375,7 +377,7 @@ mod docker_tests {
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
             &coin.get_pubkey(),
-            &*dhash160(&secret),
+            &secret_hash,
             &tx.tx_hex,
             0,
         ).wait()));
@@ -385,7 +387,7 @@ mod docker_tests {
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/554
     #[test]
     fn order_should_be_cancelled_when_entire_balance_is_withdrawn() {
-        let (_, priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
+        let (_, priv_key) = generate_utxo_coin_with_random_privkey("MYCOIN", 1000);
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1},
@@ -487,8 +489,8 @@ mod docker_tests {
     // https://github.com/KomodoPlatform/atomicDEX-API/issues/471
     #[test]
     fn match_and_trade_max() {
-        let (_, bob_priv_key) = generate_coin_with_random_privkey("MYCOIN", 1000);
-        let (_, alice_priv_key) = generate_coin_with_random_privkey("MYCOIN1", 2000);
+        let (_, bob_priv_key) = generate_utxo_coin_with_random_privkey("MYCOIN", 1000);
+        let (_, alice_priv_key) = generate_utxo_coin_with_random_privkey("MYCOIN1", 3000);
         let coins = json! ([
             {"coin":"MYCOIN","asset":"MYCOIN","txversion":4,"overwintered":1},
             {"coin":"MYCOIN1","asset":"MYCOIN1","txversion":4,"overwintered":1},
@@ -507,6 +509,8 @@ mod docker_tests {
             None,
         ));
         let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
+        log! ({"Bob log path: {}", mm_bob.log_path.display()});
+
         unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
         let mut mm_alice = unwrap! (MarketMakerIt::start (
@@ -523,53 +527,15 @@ mod docker_tests {
             None,
         ));
         let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+        log! ({"Alice log path: {}", mm_alice.log_path.display()});
+
         unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
         log!([block_on(enable_native(&mm_bob, "MYCOIN", vec![], ""))]);
         log!([block_on(enable_native(&mm_bob, "MYCOIN1", vec![], ""))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN", vec![], ""))]);
         log!([block_on(enable_native(&mm_alice, "MYCOIN1", vec![], ""))]);
-        let rc = unwrap! (block_on (mm_bob.rpc (json! ({
-            "userpass": mm_bob.userpass,
-            "method": "setprice",
-            "base": "MYCOIN",
-            "rel": "MYCOIN1",
-            "price": 1,
-            "max": true,
-        }))));
-        assert! (rc.0.is_success(), "!setprice: {}", rc.1);
-
-        thread::sleep(Duration::from_secs(12));
-
-        log!("Get MYCOIN/MYCOIN1 orderbook");
-        let rc = unwrap! (block_on (mm_bob.rpc (json! ({
-            "userpass": mm_bob.userpass,
-            "method": "orderbook",
-            "base": "MYCOIN",
-            "rel": "MYCOIN1",
-        }))));
-        assert!(rc.0.is_success(), "!orderbook: {}", rc.1);
-
-        let bob_orderbook: Json = unwrap!(json::from_str(&rc.1));
-        log!("orderbook " [bob_orderbook]);
-        let asks = bob_orderbook["asks"].as_array().unwrap();
-        assert_eq!(asks.len(), 1, "MYCOIN/MYCOIN1 orderbook must have exactly 1 ask");
-        assert_eq!(asks[0]["maxvolume"], Json::from("999.99999"));
-
-        let rc = unwrap! (block_on (mm_alice.rpc (json! ({
-            "userpass": mm_alice.userpass,
-            "method": "buy",
-            "base": "MYCOIN",
-            "rel": "MYCOIN1",
-            "price": 1,
-            "volume": "999.99999",
-        }))));
-        assert! (rc.0.is_success(), "!buy: {}", rc.1);
-
-        unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains ("Entering the maker_swap_loop MYCOIN/MYCOIN1"))));
-        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains ("Entering the taker_swap_loop MYCOIN/MYCOIN1"))));
-        unwrap!(block_on(mm_bob.stop()));
-        unwrap!(block_on(mm_alice.stop()));
+        block_on(trade_between_2_nodes(&mut mm_bob, &mut mm_alice, vec![("MYCOIN", "MYCOIN1")], "999.9999", true));
     }
 
     #[test]
@@ -579,11 +545,13 @@ mod docker_tests {
         fill_xtz_address(&coin.my_address);
         let uuid = new_uuid();
         let secret = [0; 32];
+        let secret_hash = SecretHash::from_secret(SecretHashType::Sha256, &secret);
+
         let payment = unwrap!(coin.send_taker_payment(
             uuid.as_bytes(),
             0,
             &coin.get_pubkey(),
-            &*sha256(&secret),
+            &secret_hash,
             1.into(),
         ).wait());
         unwrap!(coin.wait_for_confirmations(
@@ -600,6 +568,7 @@ mod docker_tests {
             0,
             &coin.get_pubkey(),
             &secret,
+            &secret_hash,
         ).wait());
         unwrap!(coin.wait_for_confirmations(
             &spend.tx_hex(),
@@ -612,7 +581,7 @@ mod docker_tests {
         let find = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             0,
             &coin.get_pubkey(),
-            &*sha256(&secret),
+            &secret_hash,
             &payment.tx_hex,
             1,
         ).wait()));
@@ -629,11 +598,13 @@ mod docker_tests {
         fill_xtz_address(&coin.my_address);
         let uuid = new_uuid();
         let secret = [0; 32];
+        let secret_hash = SecretHash::from_secret(SecretHashType::Sha256, &secret);
+
         let payment = unwrap!(coin.send_taker_payment(
             uuid.as_bytes(),
             0,
             &coin.get_pubkey(),
-            &*sha256(&secret),
+            &secret_hash,
             1.into(),
         ).wait());
         unwrap!(coin.wait_for_confirmations(
@@ -649,7 +620,7 @@ mod docker_tests {
             &payment.tx_hex,
             0,
             &coin.get_pubkey(),
-            &*sha256(&secret),
+            &secret_hash,
         ).wait());
         unwrap!(coin.wait_for_confirmations(
             &refund.tx_hex(),
@@ -662,7 +633,7 @@ mod docker_tests {
         let find = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             0,
             &coin.get_pubkey(),
-            &*sha256(&secret),
+            &secret_hash,
             &payment.tx_hex,
             1,
         ).wait()));
@@ -724,11 +695,12 @@ mod docker_tests {
 
         let uuid = new_uuid();
         let secret = [0; 32];
+        let secret_hash = SecretHash::from_secret(SecretHashType::Sha256, &secret);
         let payment = unwrap!(coin.send_taker_payment(
             uuid.as_bytes(),
             0,
             &coin.get_pubkey(),
-            &*sha256(&secret),
+            &secret_hash,
             1.into(),
         ).wait());
         unwrap!(coin.wait_for_confirmations(
@@ -746,7 +718,7 @@ mod docker_tests {
             &payment.tx_hex,
             0,
             &coin.get_pubkey(),
-            &*sha256(&secret),
+            &secret_hash,
         ).wait());
         unwrap!(coin.wait_for_confirmations(
             &refund.tx_hex(),
@@ -758,5 +730,15 @@ mod docker_tests {
 
         let balance = coin.my_balance().wait().unwrap();
         assert_eq!(balance, 100.into());
+
+        let find = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
+            0,
+            &coin.get_pubkey(),
+            &secret_hash,
+            &payment.tx_hex,
+            1,
+        ).wait()));
+
+        assert_eq!(FoundSwapTxSpend::Refunded(refund), find);
     }
 }

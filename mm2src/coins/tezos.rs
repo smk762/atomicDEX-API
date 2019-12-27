@@ -4,7 +4,7 @@ use bitcrypto::{dhash256};
 use blake2::{VarBlake2b};
 use blake2::digest::{Input, VariableOutput};
 use chrono::prelude::*;
-use common::crypto::{CryptoOps, CurveType, EcPrivkey, EcPubkey};
+use common::crypto::{CryptoOps, CurveType, EcPrivkey, EcPubkey, SecretHash};
 use common::executor::Timer;
 use common::impl_base58_checksum_encoding;
 use common::mm_ctx::MmArc;
@@ -995,7 +995,7 @@ impl SwapOps for TezosCoin {
         uuid: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> TransactionDetailsFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Maker);
@@ -1008,7 +1008,7 @@ impl SwapOps for TezosCoin {
         uuid: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> TransactionDetailsFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Taker);
@@ -1023,6 +1023,7 @@ impl SwapOps for TezosCoin {
         _time_lock: u32,
         _taker_pub: &EcPubkey,
         secret: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Taker);
         let args = receiver_spends_call(
@@ -1046,6 +1047,7 @@ impl SwapOps for TezosCoin {
         time_lock: u32,
         maker_pub: &EcPubkey,
         secret: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Maker);
         let args = receiver_spends_call(
@@ -1068,7 +1070,7 @@ impl SwapOps for TezosCoin {
         taker_payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Taker);
         let args = sender_refunds_call(uuid.into(), &self.my_address);
@@ -1086,7 +1088,7 @@ impl SwapOps for TezosCoin {
         maker_payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Maker);
         let args = sender_refunds_call(uuid.into(), &self.my_address);
@@ -1156,7 +1158,7 @@ impl SwapOps for TezosCoin {
         payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let operation: TezosOperation = try_fus!(deserialize(payment_tx).map_err(|e|  fomat!([e])));
@@ -1176,7 +1178,7 @@ impl SwapOps for TezosCoin {
         payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let operation: TezosOperation = try_fus!(deserialize(payment_tx).map_err(|e|  fomat!([e])));
@@ -1195,7 +1197,7 @@ impl SwapOps for TezosCoin {
         uuid: &[u8],
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
         let uuid = BytesJson(tagged_swap_uuid(uuid, TradeActor::Maker));
@@ -1212,7 +1214,7 @@ impl SwapOps for TezosCoin {
         uuid: &[u8],
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
         let uuid = BytesJson(tagged_swap_uuid(uuid, TradeActor::Taker));
@@ -1228,7 +1230,7 @@ impl SwapOps for TezosCoin {
         &self,
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
@@ -1245,7 +1247,7 @@ impl SwapOps for TezosCoin {
         &self,
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
@@ -2534,7 +2536,7 @@ impl TryFrom<TezosValue> for TezosAtomicSwapState {
 struct TezosAtomicSwap {
     amount: BigUint,
     amount_nat: BigUint,
-    contract_address: TezosOption<ContractId>,
+    contract_address: TezosOption<TezosAddress>,
     created_at: DateTime<Utc>,
     lock_time: DateTime<Utc>,
     receiver: TezosAddress,

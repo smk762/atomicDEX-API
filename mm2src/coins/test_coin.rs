@@ -1,5 +1,5 @@
 use bigdecimal::BigDecimal;
-use common::crypto::CryptoOps;
+use common::crypto::{CryptoOps, SecretHash};
 use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest, TransactionDetailsFut};
@@ -78,7 +78,7 @@ impl SwapOps for TestCoin {
         uuid: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> TransactionDetailsFut {
         unimplemented!()
@@ -89,7 +89,7 @@ impl SwapOps for TestCoin {
         uuid: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> TransactionDetailsFut {
         unimplemented!()
@@ -102,6 +102,7 @@ impl SwapOps for TestCoin {
         time_lock: u32,
         taker_pub: &EcPubkey,
         secret: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut {
         unimplemented!()
     }
@@ -113,6 +114,7 @@ impl SwapOps for TestCoin {
         time_lock: u32,
         maker_pub: &EcPubkey,
         secret: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut {
         unimplemented!()
     }
@@ -123,7 +125,7 @@ impl SwapOps for TestCoin {
         taker_payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut {
         unimplemented!()
     }
@@ -134,7 +136,7 @@ impl SwapOps for TestCoin {
         maker_payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
     ) -> TransactionFut {
         unimplemented!()
     }
@@ -154,7 +156,7 @@ impl SwapOps for TestCoin {
         payment_tx: &[u8],
         time_lock: u32,
         maker_pub: &EcPubkey,
-        priv_bn_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         unimplemented!()
@@ -166,7 +168,7 @@ impl SwapOps for TestCoin {
         payment_tx: &[u8],
         time_lock: u32,
         taker_pub: &EcPubkey,
-        priv_bn_hash: &[u8],
+        secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         unimplemented!()
@@ -177,7 +179,7 @@ impl SwapOps for TestCoin {
         uuid: &[u8],
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
         unimplemented!()
@@ -188,7 +190,7 @@ impl SwapOps for TestCoin {
         uuid: &[u8],
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
         unimplemented!()
@@ -198,7 +200,7 @@ impl SwapOps for TestCoin {
         &self,
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
@@ -209,7 +211,7 @@ impl SwapOps for TestCoin {
         &self,
         time_lock: u32,
         other_pub: &EcPubkey,
-        secret_hash: &[u8],
+        secret_hash: &SecretHash,
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
