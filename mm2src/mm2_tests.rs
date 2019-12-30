@@ -749,8 +749,8 @@ pub async fn trade_between_2_nodes<'a>(
                                   "MakerPaymentSpendFailed", "TakerPaymentRefunded", "TakerPaymentRefundFailed"];
 
     for uuid in uuids.iter() {
-        unwrap! (mm_bob.wait_for_log (600., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
-        unwrap! (mm_alice.wait_for_log (600., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
+        unwrap! (mm_bob.wait_for_log (180., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
+        unwrap! (mm_alice.wait_for_log (180., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
 
         #[cfg(not(feature = "native"))] {
             log! ("Waiting a few second for the fresh swap status to be saved..");

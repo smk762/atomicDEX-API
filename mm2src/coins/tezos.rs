@@ -29,6 +29,7 @@ use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::convert::{TryInto, TryFrom};
 use std::fmt;
+use std::io::Read;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -2399,7 +2400,45 @@ impl Deserializable for TezosOperation {
     {
         let mut contents = vec![];
         let branch = reader.read()?;
-        let peeked = loop {
+        let mut buffer = vec![];
+        reader.read_to_end(&mut buffer)?;
+
+        // Tezos operation serialization doesn't contain the length of contents sequence
+        // So we have to attempt to read the operation first and if this read fails
+        // consider the bytes to represent the signature
+        // So all bytes are read to temporary buffer and the buffer is returned if we fail to read from it
+        // The implementation is very ineffective due to memory copying taking place on every loop
+        // iteration, should consider refactoring the parity-bitcoin serialization crate to return
+        // the bytes that was read in case of error
+        let bytes_left = loop {
+            let temp_buf = buffer.clone();
+            let mut reader = Reader::from_read(temp_buf.as_slice());
+            let tag: u8 = reader.read()?;
+            let op = match tag {
+                8 => {
+                    let tx: TezosTransaction = match reader.read() {
+                        Ok(t) => t,
+                        Err(_) => break buffer,
+                    };
+                    TezosOperationEnum::Transaction(tx)
+                },
+                107 => {
+                    let tx: RevealOp = match reader.read() {
+                        Ok(t) => t,
+                        Err(_) => break buffer,
+                    };
+                    TezosOperationEnum::Reveal(tx)
+                },
+                108 => {
+                    let tx: BabylonTransaction = match reader.read() {
+                        Ok(t) => t,
+                        Err(_) => break buffer,
+                    };
+                    TezosOperationEnum::BabylonTransaction(tx)
+                },
+                _ => break buffer,
+            };
+            contents.push(op);
             if reader.is_finished() {
                 return Ok(TezosOperation {
                     branch,
@@ -2407,28 +2446,14 @@ impl Deserializable for TezosOperation {
                     signature: None,
                 })
             }
-            let tag: u8 = reader.read()?;
-            let op = match tag {
-                8 => {
-                    TezosOperationEnum::Transaction(reader.read()?)
-                },
-                107 => {
-                    TezosOperationEnum::Reveal(reader.read()?)
-                },
-                108 => {
-                    TezosOperationEnum::BabylonTransaction(reader.read()?)
-                },
-                _ => break tag,
-            };
-            contents.push(op);
+            buffer.clear();
+            reader.read_to_end(&mut buffer)?;
         };
-        let mut sig_bytes = [0; 64];
-        sig_bytes[0] = peeked;
-        reader.read_slice(&mut sig_bytes[1..])?;
+        let mut reader = Reader::from_read(bytes_left.as_slice());
         Ok(TezosOperation {
             branch,
             contents,
-            signature: Some(sig_bytes.into()),
+            signature: Some(reader.read()?),
         })
     }
 }
