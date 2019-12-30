@@ -144,7 +144,8 @@ impl SwapOps for TestCoin {
     fn validate_fee(
         &self,
         fee_tx: &TransactionEnum,
-        fee_addr: &EcPubkey,
+        fee_pubkey: &EcPubkey,
+        taker_pubkey: &EcPubkey,
         amount: &BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         unimplemented!()

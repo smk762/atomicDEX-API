@@ -379,10 +379,11 @@ impl MakerSwap {
             bytes: unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
         };
         let fee_amount = dex_fee_amount(&self.r().data.maker_coin, &self.r().data.taker_coin, &self.taker_amount);
+        let other_pub_taker_coin = self.r().other_persistent_pub_taker_coin.clone();
 
         let mut attempts = 0;
         loop {
-            match self.taker_coin.validate_fee(&taker_fee, &fee_addr_pub_key, &fee_amount).compat().await {
+            match self.taker_coin.validate_fee(&taker_fee, &fee_addr_pub_key, &other_pub_taker_coin, &fee_amount).compat().await {
                 Ok(_) => break,
                 Err(err) => if attempts >= 3 {
                     return Ok((

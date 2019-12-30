@@ -59,7 +59,7 @@
 
 use bigdecimal::BigDecimal;
 use coins::{lp_coinfind, TransactionEnum};
-use common::{block_on, read_dir, rpc_response, slurp, write, HyRes};
+use common::{block_on, read_dir, rpc_response, slurp, write, HyRes, json_dir_entries};
 use common::crypto::{EcPubkey, SecretHash};
 use common::mm_ctx::{from_ctx, MmArc};
 use http::Response;
@@ -130,8 +130,8 @@ mod maker_swap;
 #[path = "lp_swap/taker_swap.rs"]
 mod taker_swap;
 
-use maker_swap::{MakerSavedSwap, stats_maker_swap_file_path};
-use taker_swap::{TakerSavedSwap, stats_taker_swap_file_path};
+use maker_swap::{MakerSavedSwap, migrate_maker_saved_swap, stats_maker_swap_file_path};
+use taker_swap::{TakerSavedSwap, migrate_taker_saved_swap, stats_taker_swap_file_path};
 pub use maker_swap::{MakerSwap, run_maker_swap};
 pub use taker_swap::{TakerSwap, run_taker_swap};
 
@@ -725,6 +725,42 @@ pub async fn import_swaps(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
         }
     })));
     Ok(try_s!(Response::builder().body(res)))
+}
+
+pub fn migrate_swaps(ctx: &MmArc) -> Result<(), String> {
+    let swaps_entries = try_s!(json_dir_entries(&my_swaps_dir(ctx)));
+    swaps_entries.iter().for_each(|entry| {
+        let path = entry.path();
+        let json: Json = match json::from_slice(&unwrap!(slurp(&path))) {
+            Ok(j) => j,
+            Err(e) => {
+                log!("Error " [e] " trying to deserialize contents of " (path.display()) " as JSON");
+                return;
+            }
+        };
+        let new_json = match json["type"].as_str() {
+            Some("Maker") => match migrate_maker_saved_swap(json) {
+                Ok(j) => j,
+                Err(e) => {
+                    log!("Error " [e] " while migrating the maker swap in " (path.display()));
+                    return;
+                },
+            },
+            Some("Taker") => match migrate_taker_saved_swap(json) {
+                Ok(j) => j,
+                Err(e) => {
+                    log!("Error " [e] " while migrating the taker swap in " (path.display()));
+                    return;
+                },
+            },
+            _ => {
+                log!("Couldn't determine the type of swap saved in " (path.display()));
+                return;
+            }
+        };
+        unwrap!(std::fs::write(path, unwrap!(json::to_vec(&new_json))));
+    });
+    Ok(())
 }
 
 #[cfg(test)]

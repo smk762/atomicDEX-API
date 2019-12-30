@@ -48,7 +48,7 @@ use crate::common::mm_ctx::{MmCtx, MmArc};
 use crate::common::privkey::key_pair_from_seed;
 use crate::mm2::lp_network::{lp_command_q_loop, start_seednode_loop, start_client_p2p_loop};
 use crate::mm2::lp_ordermatch::{lp_ordermatch_loop, lp_trade_command, migrate_saved_orders, orders_kick_start};
-use crate::mm2::lp_swap::swap_kick_starts;
+use crate::mm2::lp_swap::{migrate_swaps, swap_kick_starts};
 use crate::mm2::rpc::{spawn_rpc};
 
 /// Process a previously queued command that wasn't handled by the RPC `dispatcher`.  
@@ -1067,7 +1067,8 @@ fn fix_directories(ctx: &MmCtx) -> Result<(), String> {
 #[cfg(feature = "native")]
 fn migrate_db(ctx: &MmArc) -> Result<(), String> {
     let migration_num_path = ctx.dbdir().join(".migration");
-    let mut current_migration = match std::fs::read(&migration_num_path) {
+    ctx.log.log("…", &[&"db_migration"], "Checking whether migration is required");
+    let old_migration = match std::fs::read(&migration_num_path) {
         Ok(bytes) => {
             let mut num_bytes = [0; 8];
             if bytes.len() == 8 {
@@ -1079,18 +1080,37 @@ fn migrate_db(ctx: &MmArc) -> Result<(), String> {
         },
         Err(_) => 0,
     };
+    let mut new_migration = old_migration;
 
-    if current_migration < 1 {
+    if old_migration < 1 {
+        ctx.log.log("…", &[&"db_migration"], "Applying migration 1");
         try_s!(migration_1(ctx));
-        current_migration = 1;
+        new_migration = 1;
     }
-    try_s!(std::fs::write(&migration_num_path, &current_migration.to_le_bytes()));
+
+    if old_migration < 2 {
+        ctx.log.log("…", &[&"db_migration"], "Applying migration 2");
+        try_s!(migration_2(ctx));
+        new_migration = 2;
+    }
+    try_s!(std::fs::write(&migration_num_path, &new_migration.to_le_bytes()));
+    if old_migration != new_migration {
+        ctx.log.log("🔥⚡", &[&"db_migration"], &fomat!("Successfully migrated DB from " (old_migration) " to " (new_migration)));
+    } else {
+        ctx.log.log("⚡", &[&"db_migration"], "Migration is not required");
+    }
     Ok(())
 }
 
 #[cfg(feature = "native")]
 fn migration_1(ctx: &MmArc) -> Result<(), String> {
     try_s!(migrate_saved_orders(ctx));
+    Ok(())
+}
+
+#[cfg(feature = "native")]
+fn migration_2(ctx: &MmArc) -> Result<(), String> {
+    try_s!(migrate_swaps(ctx));
     Ok(())
 }
 

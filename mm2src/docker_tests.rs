@@ -32,6 +32,7 @@ mod docker_tests {
     use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
     use coins::tezos::{mla_mint_call, prepare_tezos_sandbox_network, tezos_coin_for_test, tezos_mla_coin_for_test, TezosCoin, TezosAddress};
+    use coins::tezos::tezos_constants::*;
     use futures01::Future;
     use gstuff::now_ms;
     use super::mm2::mm2_tests::trade_between_2_nodes;
@@ -585,10 +586,7 @@ mod docker_tests {
             &payment.tx_hex,
             1,
         ).wait()));
-        match find {
-            FoundSwapTxSpend::Refunded(_) => panic!("Must be FoundSwapTxSpend::Spent"),
-            FoundSwapTxSpend::Spent(tx) => assert_eq!(tx, spend),
-        }
+        assert_eq!(FoundSwapTxSpend::Spent(spend), find);
     }
 
     #[test]
@@ -637,10 +635,7 @@ mod docker_tests {
             &payment.tx_hex,
             1,
         ).wait()));
-        match find {
-            FoundSwapTxSpend::Refunded(tx) => assert_eq!(tx, refund),
-            FoundSwapTxSpend::Spent(_) => panic!("Must be FoundSwapTxSpend::Refunded"),
-        }
+        assert_eq!(FoundSwapTxSpend::Refunded(refund), find);
     }
 
     #[test]
@@ -740,5 +735,81 @@ mod docker_tests {
         ).wait()));
 
         assert_eq!(FoundSwapTxSpend::Refunded(refund), find);
+    }
+
+    #[test]
+    fn test_trade_xtz_mla() {
+        let bob_priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+        let bob_coin = tezos_coin_for_test(
+            &bob_priv_key,
+            "http://localhost:20000",
+            &unwrap!(XTZ_SWAP_CONTRACT.lock()),
+        );
+        fill_xtz_address(&bob_coin.my_address);
+        let alice_priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+        let alice_coin = tezos_coin_for_test(
+            &alice_priv_key,
+            "http://localhost:20000",
+            &unwrap!(XTZ_SWAP_CONTRACT.lock()),
+        );
+        fill_xtz_address(&alice_coin.my_address);
+
+        let coins = json! ([
+            {"coin":"XTZ","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
+            {
+                "coin": "XTZ_MLA",
+                "name": "tezos_managed_ledger_asset",
+                "ed25519_addr_prefix": TZ1_ADDR_PREFIX,
+                "secp256k1_addr_prefix": TZ2_ADDR_PREFIX,
+                "p256_addr_prefix": TZ3_ADDR_PREFIX,
+                "protocol": {
+                    "platform": "TEZOS",
+                    "token_type": "MLA",
+                    "contract_address": *unwrap!(XTZ_MLA_CONTRACT.lock())
+                },
+                "mm2": 1
+            },
+        ]);
+        let mut mm_bob = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(bob_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "i_am_seed": true,
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_bob_dump_log, _bob_dump_dashboard) = mm_dump (&mm_bob.log_path);
+        log! ({"Bob log path: {}", mm_bob.log_path.display()});
+
+        unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        let mut mm_alice = unwrap! (MarketMakerIt::start (
+            json! ({
+                "gui": "nogui",
+                "netid": 9000,
+                "dht": "on",  // Enable DHT without delay.
+                "passphrase": format!("0x{}", hex::encode(alice_priv_key)),
+                "coins": coins,
+                "rpc_password": "pass",
+                "seednodes": vec![format!("{}", mm_bob.ip)],
+            }),
+            "pass".to_string(),
+            None,
+        ));
+        let (_alice_dump_log, _alice_dump_dashboard) = mm_dump (&mm_alice.log_path);
+        log! ({"Alice log path: {}", mm_alice.log_path.display()});
+
+        unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+
+        log!([block_on(enable_native(&mm_bob, "XTZ", vec!["http://localhost:20000"], &unwrap!(XTZ_SWAP_CONTRACT.lock())))]);
+        log!([block_on(enable_native(&mm_bob, "XTZ_MLA", vec!["http://localhost:20000"], &unwrap!(XTZ_SWAP_CONTRACT.lock())))]);
+        log!([block_on(enable_native(&mm_alice, "XTZ", vec!["http://localhost:20000"], &unwrap!(XTZ_SWAP_CONTRACT.lock())))]);
+        log!([block_on(enable_native(&mm_alice, "XTZ_MLA", vec!["http://localhost:20000"], &unwrap!(XTZ_SWAP_CONTRACT.lock())))]);
+        block_on(trade_between_2_nodes(&mut mm_bob, &mut mm_alice, vec![("XTZ", "XTZ_MLA")], "1", true));
     }
 }

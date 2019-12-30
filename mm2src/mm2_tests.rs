@@ -803,6 +803,10 @@ pub async fn trade_between_2_nodes<'a>(
     check_recent_swaps(&mm_alice, uuids.len()).await;
     log! ("Checking bob recent swaps..");
     check_recent_swaps(&mm_bob, uuids.len()).await;
+
+    // TODO temporary commented out, should create a separate test checking that order is deleted
+    // when filled completely
+    /*
     for (base, rel) in pairs.iter() {
         log!("Get " (base) "/" (rel) " orderbook");
         let rc = unwrap! (mm_bob.rpc (json! ({
@@ -821,6 +825,7 @@ pub async fn trade_between_2_nodes<'a>(
         assert_eq!(0, bids.len(), "{} {} bids must be empty", base, rel);
         assert_eq!(0, asks.len(), "{} {} asks must be empty", base, rel);
     }
+    */
     unwrap! (mm_bob.stop().await);
     unwrap! (mm_alice.stop().await);
 }

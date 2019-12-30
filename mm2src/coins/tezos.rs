@@ -38,7 +38,7 @@ use super::{HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeActor, TradeF
             Transaction, TransactionDetails, TransactionDetailsFut, TransactionEnum, TransactionFut};
 use common::{block_on, now_ms};
 
-mod tezos_constants;
+pub mod tezos_constants;
 use tezos_constants::*;
 mod tezos_rpc;
 
@@ -1104,51 +1104,87 @@ impl SwapOps for TezosCoin {
     fn validate_fee(
         &self,
         fee_tx: &TransactionEnum,
-        fee_addr: &EcPubkey,
+        fee_pubkey: &EcPubkey,
+        taker_pubkey: &EcPubkey,
         amount: &BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let op = match fee_tx {
             TransactionEnum::TezosOperation(op) => op.clone(),
             _ => unimplemented!(),
         };
-        let fee_addr = try_fus!(self.address_from_ec_pubkey(fee_addr));
+        let fee_addr = try_fus!(self.address_from_ec_pubkey(fee_pubkey));
+        let taker_addr = try_fus!(self.address_from_ec_pubkey(taker_pubkey));
         let amount = (amount * BigDecimal::from(10u64.pow(self.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
         let coin = self.clone();
         let fut = async move {
-            match op.contents[0] {
-                TezosOperationEnum::Transaction(ref tx) => {
-                    match coin.coin_type {
-                        TezosCoinType::Tezos => {
-                            if tx.amount.0 != amount {
-                                return ERR!("Invalid dex fee tx amount");
-                            }
-                            let fee_contract_id = try_s!(coin.address_to_contract_id(&fee_addr));
-                            if tx.destination != fee_contract_id {
-                                return ERR!("Invalid dex fee tx destination");
-                            }
-                        },
-                        TezosCoinType::ERC(ref token_addr) => {
-                            let token_contract_id = try_s!(coin.address_to_contract_id(token_addr));
-                            if tx.destination != token_contract_id {
-                                return ERR!("Invalid dex fee tx destination");
-                            }
-                            let expected_params = mla_transfer_call(&coin.my_address, &fee_addr, &amount);
-                            if tx.parameters != Some(expected_params.value) {
-                                return ERR!("Invalid dex fee tx parameters");
-                            }
-                        },
-                    }
-                },
-                _ => return ERR!("Taker fee must be TezosOperationEnum::Transaction"),
+            for content in op.contents.iter() {
+                match content {
+                    TezosOperationEnum::Transaction(ref tx) => {
+                        match coin.coin_type {
+                            TezosCoinType::Tezos => {
+                                if tx.amount.0 != amount {
+                                    return ERR!("Invalid dex fee tx amount");
+                                }
+                                let fee_contract_id = try_s!(coin.address_to_contract_id(&fee_addr));
+                                if tx.destination != fee_contract_id {
+                                    return ERR!("Invalid dex fee tx destination");
+                                }
+                            },
+                            TezosCoinType::ERC(ref token_addr) => {
+                                let token_contract_id = try_s!(coin.address_to_contract_id(token_addr));
+                                if tx.destination != token_contract_id {
+                                    return ERR!("Invalid dex fee tx destination");
+                                }
+                                let expected_params = mla_transfer_call(&taker_addr, &fee_addr, &amount);
+                                if tx.parameters != Some(expected_params.value) {
+                                    return ERR!("Invalid dex fee tx parameters");
+                                }
+                            },
+                        };
+                        try_s!(coin.wait_for_operation_confirmation(
+                            op.op_hash(),
+                            coin.required_confirmations(),
+                            now_ms() / 1000 + 120,
+                            10,
+                            op.branch.clone(),
+                        ).await);
+                        return Ok(());
+                    },
+                    TezosOperationEnum::BabylonTransaction(ref tx) => {
+                        match coin.coin_type {
+                            TezosCoinType::Tezos => {
+                                if tx.amount.0 != amount {
+                                    return ERR!("Invalid dex fee tx amount");
+                                }
+                                let fee_contract_id = try_s!(coin.address_to_contract_id(&fee_addr));
+                                if tx.destination != fee_contract_id {
+                                    return ERR!("Invalid dex fee tx destination");
+                                }
+                            },
+                            TezosCoinType::ERC(ref token_addr) => {
+                                let token_contract_id = try_s!(coin.address_to_contract_id(token_addr));
+                                if tx.destination != token_contract_id {
+                                    return ERR!("Invalid dex fee tx destination, expected {:?}, actual {:?}", token_contract_id, tx.destination);
+                                }
+                                let expected_params = mla_transfer_call(&taker_addr, &fee_addr, &amount);
+                                if tx.parameters.as_ref().unwrap().params != expected_params.value {
+                                    return ERR!("Invalid dex fee tx parameters, expected {:?}, actual {:?}", expected_params.value, tx.parameters.as_ref().unwrap().params);
+                                }
+                            },
+                        };
+                        try_s!(coin.wait_for_operation_confirmation(
+                            op.op_hash(),
+                            coin.required_confirmations(),
+                            now_ms() / 1000 + 120,
+                            10,
+                            op.branch.clone(),
+                        ).await);
+                        return Ok(());
+                    },
+                    _ => (),
+                }
             }
-            try_s!(coin.wait_for_operation_confirmation(
-                op.op_hash(),
-                coin.required_confirmations(),
-                now_ms() / 1000 + 120,
-                10,
-                op.branch.clone(),
-            ).await);
-            Ok(())
+            ERR!("Didn't find TezosOperationEnum::Transaction or TezosOperationEnum::BabylonTransaction in operation contents")
         };
         Box::new(Box::pin(fut).compat())
     }
@@ -1289,6 +1325,22 @@ impl Transaction for TezosOperation {
                     None => ERR!("parameters are None"),
                 }
             },
+            TezosOperationEnum::BabylonTransaction(tx) => {
+                match &tx.parameters {
+                    Some(params) => {
+                        let (_, args) = read_function_call(vec![], params.params.clone());
+                        let values = args.values_vec(vec![]);
+                        match values.get(1) {
+                            Some(val) => match val {
+                                TezosValue::Bytes { bytes } => Ok(bytes.0.clone()),
+                                _ => ERR!("The argument at index 1 must be TezosValue::Bytes, got {:?}", val),
+                            },
+                            None => ERR!("There's no argument at index 1"),
+                        }
+                    },
+                    None => ERR!("parameters are None"),
+                }
+            },
             _ => ERR!("Can't extract secret from non-Transaction operation"),
         }
     }
@@ -1420,7 +1472,10 @@ impl MmCoin for TezosCoin {
 
     /// Get fee to be paid per 1 swap transaction
     fn get_trade_fee(&self) -> Box<dyn Future<Item=TradeFee, Error=String> + Send> {
-        unimplemented!()
+        Box::new(futures01::future::ok(TradeFee {
+            coin: "XTZ".into(),
+            amount: 0.into(),
+        }))
     }
 
     fn required_confirmations(&self) -> u64 {

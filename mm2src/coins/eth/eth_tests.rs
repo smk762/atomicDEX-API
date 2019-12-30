@@ -136,6 +136,7 @@ fn test_wei_from_big_decimal() {
 }
 
 #[test]
+#[ignore]
 /// temporary ignore, will refactor later to use dev chain and properly check transaction statuses
 fn send_and_refund_erc20_payment() {
     let secret_bytes = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
@@ -186,6 +187,7 @@ fn send_and_refund_erc20_payment() {
 }
 
 #[test]
+#[ignore]
 fn send_and_refund_eth_payment() {
     let secret_bytes = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
     let key_pair = KeyPair::from_secret_slice(&secret_bytes).unwrap();

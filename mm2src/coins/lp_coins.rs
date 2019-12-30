@@ -170,7 +170,8 @@ pub trait SwapOps {
     fn validate_fee(
         &self,
         fee_tx: &TransactionEnum,
-        fee_pub_key: &EcPubkey,
+        fee_pubkey: &EcPubkey,
+        taker_pubkey: &EcPubkey,
         amount: &BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send>;
 

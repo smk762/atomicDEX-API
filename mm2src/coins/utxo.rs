@@ -1201,7 +1201,8 @@ impl SwapOps for UtxoCoin {
     fn validate_fee(
         &self,
         fee_tx: &TransactionEnum,
-        fee_addr: &EcPubkey,
+        fee_pubkey: &EcPubkey,
+        _taker_pubkey: &EcPubkey,
         amount: &BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let selfi = self.clone();
@@ -1210,8 +1211,8 @@ impl SwapOps for UtxoCoin {
             _ => panic!(),
         };
         let amount = amount.clone();
-        let address = match fee_addr.curve_type {
-            CurveType::SECP256K1 => try_fus!(address_from_raw_pubkey(&fee_addr.bytes, self.pub_addr_prefix, self.pub_t_addr_prefix, self.checksum_type)),
+        let address = match fee_pubkey.curve_type {
+            CurveType::SECP256K1 => try_fus!(address_from_raw_pubkey(&fee_pubkey.bytes, self.pub_addr_prefix, self.pub_t_addr_prefix, self.checksum_type)),
             _ => return Box::new(futures01::future::err(ERRL!("Unsupported pubkey type"))),
         };
 
