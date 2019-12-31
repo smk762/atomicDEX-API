@@ -1,5 +1,5 @@
 use common::block_on;
-use common::crypto::{SecretHash, SecretHashType};
+use common::crypto::{SecretHash, SecretHashAlgo};
 use common::mm_ctx::{MmArc, MmCtxBuilder};
 use common::for_tests::wait_for_log;
 use futures::future::join_all;
@@ -195,7 +195,7 @@ fn send_and_refund_eth_payment() {
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let secret = [0u8; 32];
-    let secret_hash = SecretHash::from_secret(SecretHashType::Sha256, &secret);
+    let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
     let coin = EthCoin(Arc::new(EthCoinImpl {
         ticker: "ETH".into(),
         coin_type: EthCoinType::Eth,

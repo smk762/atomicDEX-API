@@ -4,7 +4,7 @@ use atomic::Atomic;
 use bigdecimal::BigDecimal;
 use common::executor::Timer;
 use common::{bits256, now_ms, now_float, slurp, write, MM_VERSION};
-use common::crypto::{CurveType, EcPubkey, SecretHash, SecretHashType};
+use common::crypto::{CurveType, EcPubkey, SecretHash, SecretHashAlgo};
 use common::mm_ctx::MmArc;
 use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
 use crc::crc32;
@@ -23,7 +23,7 @@ use std::sync::atomic::Ordering;
 use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount_by_other_swaps,
   lp_atomic_locktime, my_swap_file_path,
   AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
-  SavedSwap, SwapsContext, SwapError, SwapNegotiationData,
+  SavedSwap, SwapsContext, SwapError, SwapNegotiationData, select_secret_hash_algo,
   BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
 
 pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
@@ -265,11 +265,19 @@ impl MakerSwap {
             ))
         };
 
+        let secret_hash_algo = match select_secret_hash_algo(&self.maker_coin, &self.taker_coin) {
+            Ok(a) => a,
+            Err(e) => return Ok((
+                Some(MakerSwapCommand::Finish),
+                vec![MakerSwapEvent::StartFailed(ERRL!("!select_secret_hash_algo {}", e).into())],
+            ))
+        };
+
         let data = MakerSwapData {
             taker_coin: self.taker_coin.ticker().to_owned(),
             maker_coin: self.maker_coin.ticker().to_owned(),
             taker: self.taker.bytes.into(),
-            secret_hash: SecretHash::from_secret(SecretHashType::Sha256, &secret),
+            secret_hash: SecretHash::from_secret(secret_hash_algo, &secret),
             secret: secret.into(),
             started_at,
             lock_duration,
@@ -290,7 +298,7 @@ impl MakerSwap {
         let maker_negotiation_data = SwapNegotiationData {
             started_at: self.r().data.started_at,
             payment_locktime: self.r().data.maker_payment_lock,
-            secret_hash: SecretHash::from_secret(SecretHashType::Sha256, &self.r().data.secret.0),
+            secret_hash: self.r().data.secret_hash.clone(),
             maker_coin_persistent_pub: self.maker_coin.get_pubkey(),
             taker_coin_persistent_pub: self.taker_coin.get_pubkey(),
         };
@@ -1003,7 +1011,7 @@ pub fn migrate_maker_saved_swap(mut old_json: Json) -> Result<Json, String> {
                 match event["event"]["type"].as_str() {
                     Some("Started") => {
                         let secret: H256Json = try_s!(json::from_value(event["event"]["data"]["secret"].clone()));
-                        let secret_hash = SecretHash::from_secret(SecretHashType::Ripe160Sha256, &secret.0);
+                        let secret_hash = SecretHash::from_secret(SecretHashAlgo::Ripe160Sha256, &secret.0);
                         event["event"]["data"]["secret_hash"] = try_s!(json::to_value(secret_hash));
                     },
                     Some("Negotiated") => {

@@ -21,7 +21,7 @@
 use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
 use common::{now_ms, slurp_url, small_rng};
-use common::crypto::{CryptoOps, CurveType, EcPrivkey, EcPubkey, SecretHash};
+use common::crypto::{CryptoOps, CurveType, EcPrivkey, EcPubkey, SecretHash, SecretHashAlgo};
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
 use common::mm_ctx::{MmArc, MmWeak};
@@ -628,7 +628,6 @@ impl SwapOps for EthCoin {
             maker_pub,
             secret_hash,
             amount,
-            SHA256,
         )
     }
 
@@ -647,7 +646,6 @@ impl SwapOps for EthCoin {
             taker_pub,
             secret_hash,
             amount,
-            SHA256,
         )
     }
 
@@ -703,6 +701,13 @@ impl SwapOps for EthCoin {
             coin.search_for_swap_tx_spend(&tx, search_from_block).await
         };
         Box::new(fut.boxed().compat())
+    }
+
+    fn supported_secret_hash_algos(&self) -> &[SecretHashAlgo] {
+        &[
+            SecretHashAlgo::Ripe160Sha256,
+            SecretHashAlgo::Sha256,
+        ]
     }
 }
 
@@ -985,6 +990,12 @@ impl EthCoin {
         secret_hash: &SecretHash,
         receiver_addr: Address,
     ) -> EthTxFut {
+        let secret_hash_algo = match secret_hash.get_algo() {
+            SecretHashAlgo::Ripe160Sha256 => U256::from(RIPE_SHA256),
+            SecretHashAlgo::Sha256 => U256::from(SHA256),
+            _ => return Box::new(futures01::future::err(ERRL!("Unsupported secret hash algo"))),
+        };
+
         match self.coin_type {
             EthCoinType::Eth => {
                 let function = try_fus!(SWAP_CONTRACT.function("ethPayment"));
@@ -992,7 +1003,7 @@ impl EthCoin {
                     Token::FixedBytes(id),
                     Token::Address(receiver_addr),
                     Token::Uint(U256::from(time_lock)),
-                    Token::Uint(U256::from(SHA256)),
+                    Token::Uint(secret_hash_algo),
                     Token::Bytes(secret_hash.to_vec()),
                 ]));
                 self.sign_and_send_transaction(value, Action::Call(self.swap_contract_address), data, U256::from(150000))
@@ -1007,7 +1018,7 @@ impl EthCoin {
                     Token::Address(token_addr),
                     Token::Address(receiver_addr),
                     Token::Uint(U256::from(time_lock)),
-                    Token::Uint(U256::from(SHA256)),
+                    Token::Uint(U256::from(secret_hash_algo)),
                     Token::Bytes(secret_hash.to_vec())
                 ]));
 
@@ -1238,13 +1249,17 @@ impl EthCoin {
         sender_pub: &EcPubkey,
         secret_hash: &SecretHash,
         amount: BigDecimal,
-        expected_hash_algo: u8,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let unsigned: UnverifiedTransaction = try_fus!(rlp::decode(payment_tx));
         let tx = try_fus!(SignedEthTx::new(unsigned));
         let sender = try_fus!(addr_from_ec_pubkey(sender_pub));
         let expected_value = try_fus!(wei_from_big_decimal(&amount, self.decimals));
         let selfi = self.clone();
+        let secret_hash_algo = match secret_hash.get_algo() {
+            SecretHashAlgo::Ripe160Sha256 => U256::from(RIPE_SHA256),
+            SecretHashAlgo::Sha256 => U256::from(SHA256),
+            _ => return Box::new(futures01::future::err(ERRL!("Unsupported secret hash algo"))),
+        };
         let secret_hash = secret_hash.to_vec();
         let fut = async move {
             let tx_from_rpc = try_s!(selfi.web3.eth().transaction(TransactionId::Hash(tx.hash)).compat().await);
@@ -1277,7 +1292,7 @@ impl EthCoin {
                         return ERR!("Payment tx time_lock arg {:?} is invalid, expected {:?}", decoded[2], Token::Uint(U256::from(time_lock)));
                     }
 
-                    let expected_hash_algo = Token::Uint(U256::from(expected_hash_algo));
+                    let expected_hash_algo = Token::Uint(secret_hash_algo);
                     if decoded[3] != expected_hash_algo {
                         return ERR!("Secret hash algo {:?} is invalid, expected {:?}", decoded[3], expected_hash_algo);
                     }
@@ -1309,7 +1324,7 @@ impl EthCoin {
                         return ERR!("Payment tx time_lock arg {:?} is invalid, expected {:?}", decoded[4], Token::Uint(U256::from(time_lock)));
                     }
 
-                    let expected_hash_algo = Token::Uint(U256::from(expected_hash_algo));
+                    let expected_hash_algo = Token::Uint(secret_hash_algo);
                     if decoded[5] != expected_hash_algo {
                         return ERR!("Secret hash algo {:?} is invalid, expected {:?}", decoded[5], expected_hash_algo);
                     }

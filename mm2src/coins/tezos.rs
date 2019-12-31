@@ -1,10 +1,9 @@
 use base58::{FromBase58, ToBase58};
 use bigdecimal::BigDecimal;
 use bitcrypto::{dhash256};
-use blake2::{VarBlake2b};
-use blake2::digest::{Input, VariableOutput};
 use chrono::prelude::*;
-use common::crypto::{CryptoOps, CurveType, EcPrivkey, EcPubkey, SecretHash};
+use common::crypto::{blake2b_160, blake2b_256, CryptoOps, CurveType, EcPrivkey, EcPubkey, SecretHash,
+                     SecretHashAlgo};
 use common::executor::Timer;
 use common::impl_base58_checksum_encoding;
 use common::mm_ctx::MmArc;
@@ -69,18 +68,6 @@ use self::tezos_rpc::{BigMapReq, ForgeOperationsRequest, Operation, PreapplyOper
                       PreapplyOperationsRequest, TezosInputType, TezosRpcClient, Transaction as Tx};
 use crate::tezos::tezos_rpc::{Reveal, OperationStatus, Origination, Status, TransactionParameters, OperationResult};
 use crate::tezos::tezos_constants::SECP_PK_PREFIX;
-
-pub fn blake2b_256(input: &[u8]) -> H256 {
-    let mut blake = unwrap!(VarBlake2b::new(32));
-    blake.input(&input);
-    H256::from(blake.vec_result().as_slice())
-}
-
-pub fn blake2b_160(input: &[u8]) -> H160 {
-    let mut blake = unwrap!(VarBlake2b::new(20));
-    blake.input(&input);
-    H160::from(blake.vec_result().as_slice())
-}
 
 #[derive(Debug, Eq, PartialEq)]
 struct TezosSignature {
@@ -1282,9 +1269,9 @@ impl SwapOps for TezosCoin {
 
     fn search_for_swap_tx_spend_other(
         &self,
-        time_lock: u32,
-        other_pub: &EcPubkey,
-        secret_hash: &SecretHash,
+        _time_lock: u32,
+        _other_pub: &EcPubkey,
+        _secret_hash: &SecretHash,
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
@@ -1295,6 +1282,13 @@ impl SwapOps for TezosCoin {
         };
         let fut = Box::pin(fut);
         Box::new(fut.compat())
+    }
+
+    fn supported_secret_hash_algos(&self) -> &[SecretHashAlgo] {
+        &[
+            SecretHashAlgo::Sha256,
+            SecretHashAlgo::Blake2b256,
+        ]
     }
 }
 

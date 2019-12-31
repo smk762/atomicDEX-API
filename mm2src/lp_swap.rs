@@ -58,9 +58,9 @@
 #![cfg_attr(not(feature = "native"), allow(dead_code))]
 
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, TransactionEnum};
-use common::{block_on, read_dir, rpc_response, slurp, write, HyRes, json_dir_entries};
-use common::crypto::{EcPubkey, SecretHash};
+use coins::{lp_coinfind, MmCoinEnum, TransactionEnum};
+use common::{block_on, first_slice_intersection, read_dir, rpc_response, slurp, write, HyRes, json_dir_entries};
+use common::crypto::{EcPubkey, SecretHash, SecretHashAlgo};
 use common::mm_ctx::{from_ctx, MmArc};
 use http::Response;
 use primitives::hash::{H256};
@@ -761,6 +761,16 @@ pub fn migrate_swaps(ctx: &MmArc) -> Result<(), String> {
         unwrap!(std::fs::write(path, unwrap!(json::to_vec(&new_json))));
     });
     Ok(())
+}
+
+pub fn select_secret_hash_algo(maker_coin: &MmCoinEnum, taker_coin: &MmCoinEnum)
+    -> Result<SecretHashAlgo, String> {
+    let maker_algos = maker_coin.supported_secret_hash_algos();
+    let taker_algos = taker_coin.supported_secret_hash_algos();
+    first_slice_intersection(
+        maker_algos,
+        taker_algos
+    ).ok_or(ERRL!("{}:{:?} and {}:{:?} supported_secret_hash_algos do not intersect.", maker_coin.ticker(), maker_algos, taker_coin.ticker(), taker_algos))
 }
 
 #[cfg(test)]

@@ -1,12 +1,12 @@
 use bigdecimal::BigDecimal;
-use common::crypto::{CryptoOps, SecretHash};
+use common::crypto::{CryptoOps, SecretHash, SecretHashAlgo};
 use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest, TransactionDetailsFut};
 use futures01::Future;
 use mocktopus::macros::*;
 use std::borrow::Cow;
-use super::{EcPubkey, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeActor, TradeFee,
+use super::{EcPubkey, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, TradeFee,
             TransactionDetails, TransactionEnum, TransactionFut};
 
 /// Dummy coin struct used in tests which functions are unimplemented but then mocked
@@ -218,6 +218,8 @@ impl SwapOps for TestCoin {
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
         unimplemented!()
     }
+
+    fn supported_secret_hash_algos(&self) -> &[SecretHashAlgo] { unimplemented!() }
 }
 
 #[mockable]

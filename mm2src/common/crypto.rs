@@ -1,4 +1,6 @@
 use bitcrypto::{dhash160, sha256};
+use blake2::{VarBlake2b};
+use blake2::digest::{Input, VariableOutput};
 use ed25519_dalek::{Keypair as EdKeypair, PublicKey as EdPublicKey, SecretKey as EdSecret,
                     Signature as EdSignature};
 use primitives::hash::{H160, H256};
@@ -8,6 +10,18 @@ use serialization::{Deserializable, deserialize, Reader, Serializable, serialize
 use serde::{Serialize, Serializer, Deserialize};
 use serde::de::{Deserializer, Visitor};
 use sha2::{Sha512};
+
+pub fn blake2b_256(input: &[u8]) -> H256 {
+    let mut blake = unwrap!(VarBlake2b::new(32));
+    blake.input(&input);
+    H256::from(blake.vec_result().as_slice())
+}
+
+pub fn blake2b_160(input: &[u8]) -> H160 {
+    let mut blake = unwrap!(VarBlake2b::new(20));
+    blake.input(&input);
+    H160::from(blake.vec_result().as_slice())
+}
 
 pub trait CryptoOps {
     fn get_pubkey(&self) -> EcPubkey;
@@ -188,15 +202,18 @@ impl<'de> Deserialize<'de> for EcPubkey {
     }
 }
 
-pub enum SecretHashType {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SecretHashAlgo {
     Ripe160Sha256,
     Sha256,
+    Blake2b256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SecretHash {
     Ripe160Sha256(H160),
     Sha256(H256),
+    Blake2b(H256),
 }
 
 impl Default for SecretHash {
@@ -206,10 +223,11 @@ impl Default for SecretHash {
 }
 
 impl SecretHash {
-    pub fn from_secret(hash_type: SecretHashType, secret: &[u8]) -> SecretHash {
+    pub fn from_secret(hash_type: SecretHashAlgo, secret: &[u8]) -> SecretHash {
         match hash_type {
-            SecretHashType::Ripe160Sha256 => SecretHash::Ripe160Sha256(dhash160(secret)),
-            SecretHashType::Sha256 => SecretHash::Sha256(sha256(secret)),
+            SecretHashAlgo::Ripe160Sha256 => SecretHash::Ripe160Sha256(dhash160(secret)),
+            SecretHashAlgo::Sha256 => SecretHash::Sha256(sha256(secret)),
+            SecretHashAlgo::Blake2b256 => SecretHash::Blake2b(blake2b_256(secret)),
         }
     }
 
@@ -217,6 +235,15 @@ impl SecretHash {
         match self {
             SecretHash::Ripe160Sha256(hash) => hash.to_vec(),
             SecretHash::Sha256(hash) => hash.to_vec(),
+            SecretHash::Blake2b(hash) => hash.to_vec(),
+        }
+    }
+
+    pub fn get_algo(&self) -> SecretHashAlgo {
+        match self {
+            SecretHash::Ripe160Sha256(_) => SecretHashAlgo::Ripe160Sha256,
+            SecretHash::Sha256(_) => SecretHashAlgo::Sha256,
+            SecretHash::Blake2b(_) => SecretHashAlgo::Blake2b256,
         }
     }
 }
@@ -232,6 +259,10 @@ impl Serializable for SecretHash {
                 s.append(&1u8);
                 s.append(hash);
             },
+            SecretHash::Blake2b(hash) => {
+                s.append(&2u8);
+                s.append(hash);
+            },
         };
     }
 }
@@ -244,6 +275,7 @@ impl Deserializable for SecretHash {
         match tag {
             0 => Ok(SecretHash::Ripe160Sha256(reader.read()?)),
             1 => Ok(SecretHash::Sha256(reader.read()?)),
+            2 => Ok(SecretHash::Blake2b(reader.read()?)),
             _ => Err(serialization::Error::MalformedData)
         }
     }

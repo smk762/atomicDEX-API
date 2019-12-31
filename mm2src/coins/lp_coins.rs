@@ -33,7 +33,7 @@
 
 use bigdecimal::BigDecimal;
 use common::{rpc_response, rpc_err_response, HyRes};
-use common::crypto::{CryptoOps, EcPubkey, SecretHash};
+use common::crypto::{CryptoOps, EcPubkey, SecretHash, SecretHashAlgo};
 use common::duplex_mutex::DuplexMutex;
 use common::mm_ctx::{from_ctx, MmArc};
 use common::mm_number::MmNumber;
@@ -230,6 +230,8 @@ pub trait SwapOps {
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send>;
+
+    fn supported_secret_hash_algos(&self) -> &[SecretHashAlgo];
 }
 
 /// Operations that coins have independently from the MarketMaker.

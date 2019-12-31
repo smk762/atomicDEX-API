@@ -29,7 +29,7 @@ pub use bitcrypto::{dhash160, ChecksumType, sha256};
 use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
 use common::{first_char_to_upper, small_rng};
-use common::crypto::{CryptoOps, CurveType, EcPubkey, SecretHash};
+use common::crypto::{CryptoOps, CurveType, EcPubkey, SecretHash, SecretHashAlgo};
 use common::custom_futures::join_all_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
@@ -267,13 +267,14 @@ fn payment_script(
     secret_hash: &SecretHash,
     pub_0: &Public,
     pub_1: &Public
-) -> Script {
+) -> Result<Script, String> {
     let builder = Builder::default();
     let (secret_hash_opcode, secret_hash_bytes) = match secret_hash {
         SecretHash::Ripe160Sha256(hash) => (Opcode::OP_HASH160, hash.to_vec()),
         SecretHash::Sha256(hash) => (Opcode::OP_SHA256, hash.to_vec()),
+        SecretHash::Blake2b(_) => return ERR!("UTXO coins do not support Blake2b secret hash"),
     };
-    builder
+    Ok(builder
         .push_opcode(Opcode::OP_IF)
         .push_bytes(&time_lock.to_le_bytes())
         .push_opcode(Opcode::OP_CHECKLOCKTIMEVERIFY)
@@ -291,6 +292,7 @@ fn payment_script(
         .push_opcode(Opcode::OP_CHECKSIG)
         .push_opcode(Opcode::OP_ENDIF)
         .into_script()
+    )
 }
 
 fn script_sig(message: &H256, key_pair: &KeyPair, fork_id: u32) -> Result<Bytes, String> {
@@ -547,12 +549,12 @@ impl UtxoCoin {
         let amount = try_fus!(sat_from_big_decimal(&amount, self.decimals));
         let selfi = self.clone();
 
-        let expected_redeem = payment_script(
+        let expected_redeem = try_fus!(payment_script(
             time_lock,
             secret_hash,
             &try_fus!(Public::from_slice(first_pub0)),
             &try_fus!(Public::from_slice(second_pub0)),
-        );
+        ));
         let fut = async move {
             let mut attempts = 0;
             loop {
@@ -778,12 +780,12 @@ impl UtxoCoin {
         other_pub: &EcPubkey,
         secret_hash: &SecretHash,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
-        let script = payment_script(
+        let script = try_fus!(payment_script(
             time_lock,
             secret_hash,
             self.key_pair.public(),
             &try_fus!(utxo_public_from_ec_pubkey(other_pub)),
-        );
+        ));
         let hash = dhash160(&script);
         let p2sh = Builder::build_p2sh(&hash);
         let script_hash = electrum_script_hash(&p2sh);
@@ -833,7 +835,7 @@ impl UtxoCoin {
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
         let tx: UtxoTx = try_fus!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
-        let script = payment_script(time_lock, secret_hash, first_pub, second_pub);
+        let script = try_fus!(payment_script(time_lock, secret_hash, first_pub, second_pub));
         let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script)).to_bytes();
         let coin = self.clone();
         let fut = async move {
@@ -921,12 +923,12 @@ impl SwapOps for UtxoCoin {
         secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> TransactionDetailsFut {
-        let redeem_script = payment_script(
+        let redeem_script = try_fus!(payment_script(
             time_lock,
             secret_hash,
             self.key_pair.public(),
             &try_fus!(utxo_public_from_ec_pubkey(taker_pub)),
-        );
+        ));
         let amount = try_fus!(sat_from_big_decimal(&amount, self.decimals));
         let output = TransactionOutput {
             value: amount,
@@ -960,12 +962,12 @@ impl SwapOps for UtxoCoin {
         secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> TransactionDetailsFut {
-        let redeem_script = payment_script(
+        let redeem_script = try_fus!(payment_script(
             time_lock,
             secret_hash,
             self.key_pair.public(),
             &try_fus!(utxo_public_from_ec_pubkey(maker_pub)),
-        );
+        ));
 
         let amount = try_fus!(sat_from_big_decimal(&amount, self.decimals));
 
@@ -1007,7 +1009,9 @@ impl SwapOps for UtxoCoin {
             .push_data(secret)
             .push_opcode(Opcode::OP_0)
             .into_script();
-        let redeem_script = payment_script(time_lock, secret_hash, &try_fus!(utxo_public_from_ec_pubkey(taker_pub)), self.key_pair.public());
+        let redeem_script = try_fus!(
+            payment_script(time_lock, secret_hash, &try_fus!(utxo_public_from_ec_pubkey(taker_pub)), self.key_pair.public())
+        );
         let arc = self.clone();
         Box::new(self.get_tx_fee().map_err(|e| ERRL!("{}", e)).and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
@@ -1058,7 +1062,9 @@ impl SwapOps for UtxoCoin {
             .push_data(secret)
             .push_opcode(Opcode::OP_0)
             .into_script();
-        let redeem_script = payment_script(time_lock, secret_hash, &try_fus!(utxo_public_from_ec_pubkey(maker_pub)), self.key_pair.public());
+        let redeem_script = try_fus!(
+            payment_script(time_lock, secret_hash, &try_fus!(utxo_public_from_ec_pubkey(maker_pub)), self.key_pair.public())
+        );
         let arc = self.clone();
         Box::new(self.get_tx_fee().map_err(|e| ERRL!("{}", e)).and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
@@ -1107,7 +1113,9 @@ impl SwapOps for UtxoCoin {
         let script_data = Builder::default()
             .push_opcode(Opcode::OP_1)
             .into_script();
-        let redeem_script = payment_script(time_lock, secret_hash, self.key_pair.public(), &try_fus!(utxo_public_from_ec_pubkey(maker_pub)));
+        let redeem_script = try_fus!(
+            payment_script(time_lock, secret_hash, self.key_pair.public(), &try_fus!(utxo_public_from_ec_pubkey(maker_pub)))
+        );
         let arc = self.clone();
         Box::new(self.get_tx_fee().map_err(|e| ERRL!("{}", e)).and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
@@ -1156,12 +1164,12 @@ impl SwapOps for UtxoCoin {
         let script_data = Builder::default()
             .push_opcode(Opcode::OP_1)
             .into_script();
-        let redeem_script = payment_script(
+        let redeem_script = try_fus!(payment_script(
             time_lock,
             secret_hash,
             self.key_pair.public(),
             &try_fus!(utxo_public_from_ec_pubkey(taker_pub)),
-        );
+        ));
         let arc = self.clone();
         Box::new(self.get_tx_fee().map_err(|e| ERRL!("{}", e)).and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
@@ -1345,6 +1353,13 @@ impl SwapOps for UtxoCoin {
             tx,
             search_from_block
         )
+    }
+
+    fn supported_secret_hash_algos(&self) -> &[SecretHashAlgo] {
+        &[
+            SecretHashAlgo::Ripe160Sha256,
+            SecretHashAlgo::Sha256,
+        ]
     }
 }
 

@@ -26,7 +26,7 @@ fn main() {
 #[cfg(all(test, feature = "native"))]
 mod docker_tests {
     use common::{block_on, new_uuid};
-    use common::crypto::{CryptoOps, SecretHash, SecretHashType};
+    use common::crypto::{CryptoOps, SecretHash, SecretHashAlgo};
     use common::for_tests::{enable_native, MarketMakerIt, mm_dump};
     use coins::{FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, Transaction, WithdrawRequest};
     use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
@@ -351,7 +351,7 @@ mod docker_tests {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
         let (coin, _) = generate_utxo_coin_with_random_privkey("MYCOIN", 1000);
         let secret = [0; 32];
-        let secret_hash = SecretHash::from_secret(SecretHashType::Ripe160Sha256, &secret);
+        let secret_hash = SecretHash::from_secret(SecretHashAlgo::Ripe160Sha256, &secret);
 
         let time_lock = (now_ms() / 1000) as u32 - 3600;
         let tx = coin.send_taker_payment(
@@ -546,7 +546,7 @@ mod docker_tests {
         fill_xtz_address(&coin.my_address);
         let uuid = new_uuid();
         let secret = [0; 32];
-        let secret_hash = SecretHash::from_secret(SecretHashType::Sha256, &secret);
+        let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
 
         let payment = unwrap!(coin.send_taker_payment(
             uuid.as_bytes(),
@@ -596,7 +596,7 @@ mod docker_tests {
         fill_xtz_address(&coin.my_address);
         let uuid = new_uuid();
         let secret = [0; 32];
-        let secret_hash = SecretHash::from_secret(SecretHashType::Sha256, &secret);
+        let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
 
         let payment = unwrap!(coin.send_taker_payment(
             uuid.as_bytes(),
@@ -690,7 +690,7 @@ mod docker_tests {
 
         let uuid = new_uuid();
         let secret = [0; 32];
-        let secret_hash = SecretHash::from_secret(SecretHashType::Sha256, &secret);
+        let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
         let payment = unwrap!(coin.send_taker_payment(
             uuid.as_bytes(),
             0,

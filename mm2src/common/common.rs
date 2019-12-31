@@ -1662,3 +1662,14 @@ pub fn json_dir_entries(path: &dyn AsRef<Path>) -> Result<Vec<DirEntry>, String>
         }
     }).collect())
 }
+
+pub fn first_slice_intersection<T: Copy + Eq>(a: &[T], b: &[T]) -> Option<T> {
+    for elem_a in a.iter() {
+        for elem_b in b.iter() {
+            if elem_a == elem_b {
+                return Some(*elem_a);
+            }
+        }
+    }
+    None
+}

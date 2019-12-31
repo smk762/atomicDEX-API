@@ -21,7 +21,7 @@ use std::sync::atomic::Ordering;
 use super::{ban_pubkey, broadcast_my_swap_status, dex_fee_amount, get_locked_amount_by_other_swaps,
   lp_atomic_locktime, my_swap_file_path,
   AtomicSwap, LockedAmount, MySwapInfo, RecoveredSwap, RecoveredSwapAction,
-  SavedSwap, SwapsContext, SwapError, SwapNegotiationData,
+  SavedSwap, select_secret_hash_algo, SwapsContext, SwapError, SwapNegotiationData,
   BASIC_COMM_TIMEOUT, WAIT_CONFIRM_INTERVAL};
 
 pub fn stats_taker_swap_file_path(ctx: &MmArc, uuid: &str) -> PathBuf {
@@ -547,6 +547,22 @@ impl TakerSwap {
                 vec![TakerSwapEvent::NegotiateFailed(ERRL!("maker_data.payment_locktime {} not equal to expected {}", maker_data.payment_locktime, expected_lock_time).into())]
             ))
         }
+
+        let expected_algo = match select_secret_hash_algo(&self.maker_coin, &self.taker_coin) {
+            Ok(a) => a,
+            Err(e) => return Ok((
+                Some(TakerSwapCommand::Finish),
+                vec![TakerSwapEvent::StartFailed(ERRL!("!select_secret_hash_algo {}", e).into())],
+            ))
+        };
+
+        let actual_algo = maker_data.secret_hash.get_algo();
+        if actual_algo != expected_algo {
+            return Ok((
+                Some(TakerSwapCommand::Finish),
+                vec![TakerSwapEvent::StartFailed(ERRL!("Maker selected wrong secret hash algo {:?}, expected {:?}", actual_algo, expected_algo).into())],
+            ))
+        };
 
         let taker_data = SwapNegotiationData {
             started_at: self.r().data.started_at,
