@@ -98,7 +98,7 @@ fn test_tezos_uint_binary_serde() {
 
 #[test]
 fn test_tezos_atomic_swap_from_value() {
-    let json_str = r#"{"prim":"Pair","args":[{"int":"1000000"},{"prim":"Pair","args":[{"int":"0"},{"prim":"Pair","args":[{"prim":"None"},{"prim":"Pair","args":[{"string":"2019-12-27T05:12:21Z"},{"prim":"Pair","args":[{"string":"1970-01-01T00:00:00Z"},{"prim":"Pair","args":[{"string":"tz1VuFw8bsMAfb2fKsvFvTr8qGJNJczmR3u6"},{"prim":"Pair","args":[{"bytes":"66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"},{"prim":"Pair","args":[{"string":"tz1VuFw8bsMAfb2fKsvFvTr8qGJNJczmR3u6"},{"prim":"Pair","args":[{"prim":"Some","args":[{"string":"2019-12-27T05:12:26Z"}]},{"prim":"Pair","args":[{"prim":"Right","args":[{"prim":"Right","args":[{"prim":"Unit"}]}]},{"bytes":"0cccb9c14b9248d2a391262a44604ae001"}]}]}]}]}]}]}]}]}]}]}"#;
+    let json_str = r#"{"prim":"Pair","args":[{"int":"1000000"},{"prim":"Pair","args":[{"int":"0"},{"prim":"Pair","args":[{"prim":"None"},{"prim":"Pair","args":[{"string":"2020-01-05T09:23:48Z"},{"prim":"Pair","args":[{"string":"1970-01-01T00:00:00Z"},{"prim":"Pair","args":[{"string":"tz1dfy5k1YgvS43jUBK45XvcizeGa36VuQEZ"},{"prim":"Pair","args":[{"bytes":"66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"},{"prim":"Pair","args":[{"prim":"Left","args":[{"prim":"Unit"}]},{"prim":"Pair","args":[{"string":"tz1dfy5k1YgvS43jUBK45XvcizeGa36VuQEZ"},{"prim":"Pair","args":[{"prim":"Some","args":[{"string":"2020-01-05T09:23:53Z"}]},{"prim":"Pair","args":[{"prim":"Right","args":[{"prim":"Left","args":[{"prim":"Unit"}]}]},{"bytes":"4bcf2daee31343f4ac91be98d6eb2c6101"}]}]}]}]}]}]}]}]}]}]}]}"#;
     let value: TezosValue = unwrap!(json::from_str(json_str));
     unwrap!(TezosAtomicSwap::try_from(value));
 }
@@ -148,6 +148,12 @@ fn test_operation_serde() {
     assert_eq!(tx_bytes, serialized);
 
     let tx_hex = "cc9d74285d52af45d8c04c6f1b9eebc2ff7b0337f24db2ab24a466cb57f66be06b00467625b196495b1fd24fe5e281bad8f8bc7d3995f50904904e00007e8d56ae2e8a45f921739ee4e35acb5302988b3f3a1090418360fe638ebfceaa6c00467625b196495b1fd24fe5e281bad8f8bc7d3995a08d060580ea30e0d403c0843d01de6833e86b2e2e6d187fff8535e734affb9977cf00ffff0f696e69745f74657a6f735f737761700000008307070a00000011a4a4169861094209b50b1b479c0211fb0107070100000014313937302d30312d30315430303a30303a30305a07070a0000002066687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f29250100000024747a31533462585a5848416248693654645754654e3344743958613435755643767845556c118259202dafb3ebae2cda4f005a3a2b4b6308f1d9585b94efdacfdb58f43c17136b9e352c82f25012430457bf8ecfc214a06c9c98d469d9b6d59a4d127d00";
+    let tx_bytes = hex::decode(tx_hex).unwrap();
+    let op: TezosOperation = unwrap!(deserialize(tx_bytes.as_slice()));
+    let serialized = serialize(&op).take();
+    assert_eq!(tx_bytes, serialized);
+
+    let tx_hex = "43cc072f04c4c46311d7325b9fc028afe4fe809ba81914373a9e133185fec10f6b0046f6710b00017841370ff0f0229de262c8193ac2f50904904e000006fc1dbaf316cd5b0228b239c64a619873fd84ecde5cf475e16bdbdfa1b552936c0046f6710b00017841370ff0f0229de262c8193ac2a08d060580ea30e0d403c0843d012e30119db40dc5cef292d4f00df0399ff494cb9800ffff0f696e69745f74657a6f735f737761700000008907070a00000011da9d809966e0441bb71201c0f4f5bfc30107070100000014313937302d30312d30315430303a30303a30305a07070a0000002066687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f292507070505030b0100000024747a3153374644634470794d6361764a37665774426e51536d3463384b4e33437a36366a542b5738ad64cc105360d2a29c5aff05c2e50d26401318cadc93bfe39b4007411a70c5dad0a9db0d27611344e25fe2391c659931e1bf510485bdb617bc32cd08";
     let tx_bytes = hex::decode(tx_hex).unwrap();
     let op: TezosOperation = unwrap!(deserialize(tx_bytes.as_slice()));
     let serialized = serialize(&op).take();

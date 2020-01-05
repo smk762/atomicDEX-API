@@ -272,7 +272,7 @@ fn payment_script(
     let (secret_hash_opcode, secret_hash_bytes) = match secret_hash {
         SecretHash::Ripe160Sha256(hash) => (Opcode::OP_HASH160, hash.to_vec()),
         SecretHash::Sha256(hash) => (Opcode::OP_SHA256, hash.to_vec()),
-        SecretHash::Blake2b(_) => return ERR!("UTXO coins do not support Blake2b secret hash"),
+        _ => return ERR!("Unsupported secret hash type"),
     };
     Ok(builder
         .push_opcode(Opcode::OP_IF)

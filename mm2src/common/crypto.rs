@@ -1,15 +1,21 @@
-use bitcrypto::{dhash160, sha256};
+use bitcrypto::{dhash160, keccak256, sha256};
 use blake2::{VarBlake2b};
 use blake2::digest::{Input, VariableOutput};
 use ed25519_dalek::{Keypair as EdKeypair, PublicKey as EdPublicKey, SecretKey as EdSecret,
                     Signature as EdSignature};
-use primitives::hash::{H160, H256};
+use primitives::hash::{H160, H256, H512};
 use secp256k1::{Message as SecpMessage, PublicKey as SecpPublicKey, SecretKey as SecpSecret,
                 sign as secp_sign, Signature as SecpSignature, verify as secp_verify_sig};
 use serialization::{Deserializable, deserialize, Reader, Serializable, serialize, Stream};
 use serde::{Serialize, Serializer, Deserialize};
 use serde::de::{Deserializer, Visitor};
-use sha2::{Sha512};
+use sha2::{Digest, Sha512};
+
+pub fn blake2b_160(input: &[u8]) -> H160 {
+    let mut blake = unwrap!(VarBlake2b::new(20));
+    blake.input(&input);
+    H160::from(blake.vec_result().as_slice())
+}
 
 pub fn blake2b_256(input: &[u8]) -> H256 {
     let mut blake = unwrap!(VarBlake2b::new(32));
@@ -17,10 +23,10 @@ pub fn blake2b_256(input: &[u8]) -> H256 {
     H256::from(blake.vec_result().as_slice())
 }
 
-pub fn blake2b_160(input: &[u8]) -> H160 {
-    let mut blake = unwrap!(VarBlake2b::new(20));
-    blake.input(&input);
-    H160::from(blake.vec_result().as_slice())
+pub fn sha512(input: &[u8]) -> H512 {
+    let mut sha = Sha512::default();
+    sha2::Digest::input(&mut sha, input);
+    H512::from(sha.result().as_slice())
 }
 
 pub trait CryptoOps {
@@ -206,14 +212,18 @@ impl<'de> Deserialize<'de> for EcPubkey {
 pub enum SecretHashAlgo {
     Ripe160Sha256,
     Sha256,
+    Sha512,
     Blake2b256,
+    Keccak256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SecretHash {
     Ripe160Sha256(H160),
     Sha256(H256),
+    Sha512(H512),
     Blake2b(H256),
+    Keccak256(H256),
 }
 
 impl Default for SecretHash {
@@ -227,7 +237,9 @@ impl SecretHash {
         match hash_type {
             SecretHashAlgo::Ripe160Sha256 => SecretHash::Ripe160Sha256(dhash160(secret)),
             SecretHashAlgo::Sha256 => SecretHash::Sha256(sha256(secret)),
+            SecretHashAlgo::Sha512 => SecretHash::Sha512(sha512(secret)),
             SecretHashAlgo::Blake2b256 => SecretHash::Blake2b(blake2b_256(secret)),
+            SecretHashAlgo::Keccak256 => SecretHash::Blake2b(keccak256(secret)),
         }
     }
 
@@ -235,7 +247,9 @@ impl SecretHash {
         match self {
             SecretHash::Ripe160Sha256(hash) => hash.to_vec(),
             SecretHash::Sha256(hash) => hash.to_vec(),
+            SecretHash::Sha512(hash) => hash.to_vec(),
             SecretHash::Blake2b(hash) => hash.to_vec(),
+            SecretHash::Keccak256(hash) => hash.to_vec(),
         }
     }
 
@@ -243,7 +257,9 @@ impl SecretHash {
         match self {
             SecretHash::Ripe160Sha256(_) => SecretHashAlgo::Ripe160Sha256,
             SecretHash::Sha256(_) => SecretHashAlgo::Sha256,
+            SecretHash::Sha512(_) => SecretHashAlgo::Sha512,
             SecretHash::Blake2b(_) => SecretHashAlgo::Blake2b256,
+            SecretHash::Keccak256(_) => SecretHashAlgo::Keccak256,
         }
     }
 }
@@ -259,8 +275,16 @@ impl Serializable for SecretHash {
                 s.append(&1u8);
                 s.append(hash);
             },
-            SecretHash::Blake2b(hash) => {
+            SecretHash::Sha512(hash) => {
                 s.append(&2u8);
+                s.append(hash);
+            },
+            SecretHash::Blake2b(hash) => {
+                s.append(&3u8);
+                s.append(hash);
+            },
+            SecretHash::Keccak256(hash) => {
+                s.append(&4u8);
                 s.append(hash);
             },
         };
