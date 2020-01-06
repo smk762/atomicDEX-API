@@ -32,8 +32,8 @@ use super::lp_main;
 
 lazy_static! {
     static ref COINS_CONFIG: Json = json! ([
-        {"coin":"BEER","asset":"BEER","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"PIZZA","asset":"PIZZA","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
+        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
         {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
         {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
         {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
@@ -59,8 +59,8 @@ async fn enable_coins_eth_electrum_xtz(mm: &MarketMakerIt, eth_urls: Vec<&str>, 
     let mut replies = HashMap::new();
     replies.insert ("RICK", enable_electrum (mm, "RICK", vec!["electrum1.cipig.net:10017","electrum2.cipig.net:10017","electrum3.cipig.net:10017"]) .await);
     replies.insert ("MORTY", enable_electrum (mm, "MORTY", vec!["electrum1.cipig.net:10018","electrum2.cipig.net:10018","electrum3.cipig.net:10018"]) .await);
-    replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone()) .await);
-    replies.insert ("JST", enable_native (mm, "JST", eth_urls) .await);
+    replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone(), "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd") .await);
+    replies.insert ("JST", enable_native (mm, "JST", eth_urls, "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd") .await);
     replies.insert ("XTZ", enable_native (mm, "XTZ", xtz_urls.clone(), "KT1NeiPn2baKGyofShT4B4NzVnXomgSLj6UK") .await);
     replies
 }
@@ -1198,7 +1198,7 @@ fn test_withdraw_and_send() {
     unwrap! (block_on (mm_alice.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
     // Enable coins. Print the replies in case we need the address.
-    let mut enable_res = block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8565"]));
+    let mut enable_res = block_on (enable_coins_eth_electrum_xtz (&mm_alice, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]));
     enable_res.insert ("MORTY_SEGWIT", block_on(enable_electrum (&mm_alice, "MORTY_SEGWIT", vec!["electrum1.cipig.net:10018","electrum2.cipig.net:10018","electrum3.cipig.net:10018"])));
 
     log! ("enable_coins (alice): " [enable_res]);
