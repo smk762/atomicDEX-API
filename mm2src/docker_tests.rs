@@ -281,7 +281,7 @@ mod docker_tests {
     fn fill_xtz_address(address: &TezosAddress) {
         // edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC in hex
         let priv_key = unwrap!(hex::decode("626f6f746163632d33626f6f746163632d33626f6f746163632d33626f6f7461"));
-        let coin = tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock()));
+        let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock())));
         let op = unwrap!(block_on(coin.sign_and_send_operation(
             100000000u64.into(),
             address,
@@ -542,7 +542,7 @@ mod docker_tests {
     #[test]
     fn send_and_spend_xtz_payment() {
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
-        let coin = tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock()));
+        let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock())));
         fill_xtz_address(&coin.my_address);
         let uuid = new_uuid();
         let secret = [0; 32];
@@ -592,7 +592,7 @@ mod docker_tests {
     #[test]
     fn send_and_refund_xtz_payment() {
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
-        let coin = tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock()));
+        let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock())));
         fill_xtz_address(&coin.my_address);
         let uuid = new_uuid();
         let secret = [0; 32];
@@ -740,18 +740,18 @@ mod docker_tests {
     #[test]
     fn test_trade_xtz_mla() {
         let bob_priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
-        let bob_coin = tezos_coin_for_test(
+        let bob_coin = block_on(tezos_coin_for_test(
             &bob_priv_key,
             "http://localhost:20000",
             &unwrap!(XTZ_SWAP_CONTRACT.lock()),
-        );
+        ));
         fill_xtz_address(&bob_coin.my_address);
         let alice_priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
-        let alice_coin = tezos_coin_for_test(
+        let alice_coin = block_on(tezos_coin_for_test(
             &alice_priv_key,
             "http://localhost:20000",
             &unwrap!(XTZ_SWAP_CONTRACT.lock()),
-        );
+        ));
         fill_xtz_address(&alice_coin.my_address);
 
         let coins = json! ([

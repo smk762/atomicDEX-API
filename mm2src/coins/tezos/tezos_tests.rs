@@ -382,11 +382,11 @@ fn tezos_secret_from_to_string() {
 
 #[test]
 fn test_address_from_ec_pubkey() {
-    let coin = tezos_coin_for_test(
+    let coin = block_on(tezos_coin_for_test(
         &hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap(),
         "https://tezos-dev.cryptonomic-infra.tech",
         "KT1XcWHaTLiGpUVTHDLguus9rtV2ryhMtXxH",
-    );
+    ));
     let fee_addr_pub_key = EcPubkey {
         curve_type: CurveType::SECP256K1,
         bytes: unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),

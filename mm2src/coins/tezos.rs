@@ -2830,7 +2830,7 @@ lazy_static! {
     });
 }
 
-pub fn tezos_coin_for_test(priv_key: &[u8], node_url: &str, swap_contract: &str) -> TezosCoin {
+pub async fn tezos_coin_for_test(priv_key: &[u8], node_url: &str, swap_contract: &str) -> TezosCoin {
     let req = json!({
         "method": "enable",
         "coin": "TEZOS",
@@ -2840,7 +2840,7 @@ pub fn tezos_coin_for_test(priv_key: &[u8], node_url: &str, swap_contract: &str)
         "mm2":1,
         "swap_contract_address": swap_contract,
     });
-    let coin = block_on(tezos_coin_from_conf_and_request("TEZOS", &COMMON_XTZ_CONFIG, &req, priv_key)).unwrap();
+    let coin = tezos_coin_from_conf_and_request("TEZOS", &COMMON_XTZ_CONFIG, &req, priv_key).await.unwrap();
     coin
 }
 
@@ -2874,7 +2874,7 @@ pub fn tezos_mla_coin_for_test(priv_key: &[u8], node_url: &str, swap_contract: &
 pub fn prepare_tezos_sandbox_network() -> (String, String) {
     // 1 of hardcoded sandbox bootstrap privkeys having a lot of tezos
     let priv_key: TezosSecret = unwrap!("edsk3RFgDiCt7tWB4bSUSXJgA5EQeXomgnMjF9fnDkeN96zsYxtbPC".parse());
-    let coin = tezos_coin_for_test(&priv_key.data, "http://localhost:20000", "KT1WKyHJ8k4uti1Rjg2Jno1tu391dQWECRiB");
+    let coin = block_on(tezos_coin_for_test(&priv_key.data, "http://localhost:20000", "KT1WKyHJ8k4uti1Rjg2Jno1tu391dQWECRiB"));
     loop {
         let header = unwrap!(block_on(coin.rpc_client.block_header("head")));
         if header.protocol == "PsBabyM1eUXZseaJdmXFApDSBqj8YBfwELoxZHHW77EMcAbbwAS" {

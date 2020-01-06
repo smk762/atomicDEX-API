@@ -40,6 +40,7 @@ lazy_static! {
         {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
         {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"},
         {"coin":"XTZ","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
+        {"coin":"XTZ_MLA","name":"tezosbabylonnet_mla","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"MLA","contract_address":"KT1DAJcbk3P8ReXsfWvWPWEfBP4ptNtyT2Ut"},"mm2":1},
     ]);
 }
 
@@ -61,7 +62,8 @@ async fn enable_coins_eth_electrum_xtz(mm: &MarketMakerIt, eth_urls: Vec<&str>, 
     replies.insert ("MORTY", enable_electrum (mm, "MORTY", vec!["electrum1.cipig.net:10018","electrum2.cipig.net:10018","electrum3.cipig.net:10018"]) .await);
     replies.insert ("ETH", enable_native (mm, "ETH", eth_urls.clone(), "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd") .await);
     replies.insert ("JST", enable_native (mm, "JST", eth_urls, "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd") .await);
-    replies.insert ("XTZ", enable_native (mm, "XTZ", xtz_urls.clone(), "KT1NeiPn2baKGyofShT4B4NzVnXomgSLj6UK") .await);
+    replies.insert ("XTZ", enable_native (mm, "XTZ", xtz_urls.clone(), "KT1KgsZcHkui8b9zcvJZyUGzG1NG15oYZjit") .await);
+    replies.insert ("XTZ_MLA", enable_native (mm, "XTZ_MLA", xtz_urls.clone(), "KT1KgsZcHkui8b9zcvJZyUGzG1NG15oYZjit") .await);
     replies
 }
 
@@ -749,8 +751,8 @@ pub async fn trade_between_2_nodes<'a>(
                                   "MakerPaymentSpendFailed", "TakerPaymentRefunded", "TakerPaymentRefundFailed"];
 
     for uuid in uuids.iter() {
-        unwrap! (mm_bob.wait_for_log (180., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
-        unwrap! (mm_alice.wait_for_log (180., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
+        unwrap! (mm_bob.wait_for_log (360., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
+        unwrap! (mm_alice.wait_for_log (360., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
 
         #[cfg(not(feature = "native"))] {
             log! ("Waiting a few second for the fresh swap status to be saved..");
@@ -835,7 +837,6 @@ pub async fn trade_between_2_nodes<'a>(
 async fn trade_base_rel_electrum (pairs: Vec<(&'static str, &'static str)>) {
     let bob_passphrase = "0x3dc9187936e4bf40daf1aebdf4c58b7cb9665102c03640b9d696a260d87b1da5";
     let alice_passphrase = "spice describe gravity federal blast come thank unfair canal monkey style afraid";
-
     let mut mm_bob = unwrap! (MarketMakerIt::start (
         json! ({
             "gui": "nogui",
@@ -1174,6 +1175,7 @@ fn test_withdraw_and_send() {
         {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
         {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"},
         {"coin":"XTZ","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
+        {"coin":"XTZ_MLA","name":"tezosbabylonnet_mla","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"MLA","contract_address":"KT1DAJcbk3P8ReXsfWvWPWEfBP4ptNtyT2Ut"},"mm2":1},
     ]);
 
     let mut mm_alice = unwrap! (MarketMakerIt::start (
