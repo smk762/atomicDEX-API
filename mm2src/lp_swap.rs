@@ -450,6 +450,14 @@ impl Into<SwapError> for String {
     }
 }
 
+impl Into<SwapError> for &str {
+    fn into(self) -> SwapError {
+        SwapError {
+            error: self.into()
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct MySwapStatusResponse<'a> {
     #[serde(flatten)]

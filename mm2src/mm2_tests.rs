@@ -738,17 +738,20 @@ pub async fn trade_between_2_nodes<'a>(
                                     "TakerPaymentValidatedAndConfirmed", "TakerPaymentSpent", "Finished"];
 
     let maker_error_events = vec!["StartFailed", "NegotiateFailed", "TakerFeeValidateFailed",
-                                  "MakerPaymentTransactionFailed", "MakerPaymentDataSendFailed",
-                                  "TakerPaymentValidateFailed", "TakerPaymentSpendFailed", "MakerPaymentRefunded",
-                                  "MakerPaymentRefundFailed"];
+                                  "MakerPaymentTransactionFailed", "MakerPaymentDataSendFailed", "MakerPaymentWaitConfirmFailed",
+                                  "TakerPaymentValidateFailed", "TakerPaymentWaitConfirmFailed", "TakerPaymentSpendFailed",
+                                  "MakerPaymentRefunded", "MakerPaymentRefundFailed"];
 
     let taker_success_events = vec!["Started", "Negotiated", "TakerFeeSent", "MakerPaymentReceived",
                                     "MakerPaymentWaitConfirmStarted", "MakerPaymentValidatedAndConfirmed",
                                     "TakerPaymentSent", "TakerPaymentSpent", "MakerPaymentSpent", "Finished"];
 
-    let taker_error_events = vec!["StartFailed", "NegotiateFailed", "TakerFeeSendFailed", "MakerPaymentValidateFailed",
-                                  "TakerPaymentTransactionFailed", "TakerPaymentDataSendFailed", "TakerPaymentWaitForSpendFailed",
-                                  "MakerPaymentSpendFailed", "TakerPaymentRefunded", "TakerPaymentRefundFailed"];
+    let taker_error_events = vec!["StartFailed", "NegotiateFailed", "TakerFeeSendFailed",
+                                  "MakerPaymentValidateFailed", "MakerPaymentWaitConfirmFailed",
+                                  "TakerPaymentTransactionFailed", "TakerPaymentWaitConfirmFailed",
+                                  "TakerPaymentDataSendFailed", "TakerPaymentWaitForSpendFailed",
+                                  "MakerPaymentSpendFailed", "TakerPaymentRefunded",
+                                  "TakerPaymentRefundFailed"];
 
     for uuid in uuids.iter() {
         unwrap! (mm_bob.wait_for_log (360., |log| log.contains (&format!("[swap uuid={}] Finished", uuid))) .await);
