@@ -809,6 +809,7 @@ impl TakerSwap {
             self.r().data.taker_payment_confirmations,
             wait_taker_payment,
             WAIT_CONFIRM_INTERVAL,
+            self.r().data.taker_coin_start_block,
         ).compat();
 
         if let Err(err) = wait_f.await {

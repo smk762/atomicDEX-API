@@ -496,6 +496,7 @@ impl MakerSwap {
             self.r().data.maker_payment_confirmations,
             maker_payment_wait_confirm,
             WAIT_CONFIRM_INTERVAL,
+            self.r().data.maker_coin_start_block,
         );
         if let Err(err) = f.compat().await {
             return Ok((

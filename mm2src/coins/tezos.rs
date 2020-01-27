@@ -176,7 +176,7 @@ impl Deserializable for TezosPubkey {
             0 => (ED_PK_PREFIX, 32),
             1 => (SECP_PK_PREFIX, 33),
             2 => (P256_PK_PREFIX, 33),
-            _ => return Err(serialization::Error::MalformedData),
+            _ => return Err(serialization::Error::Custom(ERRL!("Unsupported tag {}", tag))),
         };
         let mut data = vec![0; len];
         reader.read_slice(&mut data)?;
@@ -372,7 +372,8 @@ impl TezosCoinImpl {
             if new_counter == counter { break; };
             Timer::sleep(1.).await;
         }
-        Ok(deserialize(prefixed.as_slice()).unwrap())
+        deserialize(prefixed.as_slice())
+            .map_err(|e| ERRL!("Error {:?} on tx {} binary deserialization", e, hex_encoded))
     }
 
     fn address_from_ec_pubkey(&self, pubkey: &EcPubkey) -> Result<TezosAddress, String> {
@@ -2179,7 +2180,7 @@ impl Deserializable for TezosValue {
                 let sub_tag: u8 = reader.read()?;
                 match sub_tag {
                     11 => Ok(TezosValue::TezosPrim(TezosPrim::Unit)),
-                    _ => unimplemented!(),
+                    _ => return Err(serialization::Error::Custom(ERRL!("Unsupported tag {} and sub_tag {} combination", tag, sub_tag))),
                 }
             },
             5 => {
@@ -2191,7 +2192,7 @@ impl Deserializable for TezosValue {
                     8 => Ok(TezosValue::TezosPrim(TezosPrim::Right([
                         Box::new(reader.read()?),
                     ]))),
-                    _ => unimplemented!(),
+                    _ => return Err(serialization::Error::Custom(ERRL!("Unsupported tag {} and sub_tag {} combination", tag, sub_tag))),
                 }
             },
             7 => {
@@ -2201,7 +2202,7 @@ impl Deserializable for TezosValue {
                         Box::new(reader.read()?),
                         Box::new(reader.read()?),
                     )))),
-                    _ => unimplemented!(),
+                    _ => return Err(serialization::Error::Custom(ERRL!("Unsupported tag {} and sub_tag {} combination", tag, sub_tag))),
                 }
             },
             10 => {
@@ -2213,7 +2214,7 @@ impl Deserializable for TezosValue {
                     bytes: bytes.into()
                 })
             },
-            _ => unimplemented!(),
+            _ => return Err(serialization::Error::Custom(ERRL!("Unsupported tag {}", tag))),
         }
     }
 }
