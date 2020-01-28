@@ -404,7 +404,7 @@ impl TezosCoinImpl {
                     if tx.destination != try_s!(self.address_to_contract_id(&self.swap_contract_address)) {
                         return ERR!("Invalid transaction destination");
                     }
-                    let amount = (amount * BigDecimal::from(10u64.pow(self.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+                    let amount = try_s!(self.big_decimal_to_big_uint(&amount));
                     let expected_params = match self.coin_type {
                         TezosCoinType::Tezos => {
                             if tx.amount.0 != amount {
@@ -430,7 +430,7 @@ impl TezosCoinImpl {
                     if tx.destination != try_s!(self.address_to_contract_id(&self.swap_contract_address)) {
                         return ERR!("Invalid transaction destination");
                     }
-                    let amount = (amount * BigDecimal::from(10u64.pow(self.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+                    let amount = try_s!(self.big_decimal_to_big_uint(&amount));
                     let expected_params = match self.coin_type {
                         TezosCoinType::Tezos => {
                             if tx.amount.0 != amount {
@@ -676,6 +676,16 @@ impl TezosCoinImpl {
         };
         ERR!("Operation contents do not contain Transaction or BabylonTransaction")
     }
+
+    pub fn big_decimal_to_big_int(&self, decimal: &BigDecimal) -> Result<BigInt, String> {
+        let denominated = decimal * BigDecimal::from(10u64.pow(self.decimals as u32));
+        denominated.to_bigint().ok_or(ERRL!("Couldn't create BigInt from {}", denominated))
+    }
+
+    pub fn big_decimal_to_big_uint(&self, decimal: &BigDecimal) -> Result<BigUint, String> {
+        let big_int = try_s!(self.big_decimal_to_big_int(decimal));
+        big_int.to_biguint().ok_or(ERRL!("Couldn't create BigUint from {}", big_int))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -900,11 +910,11 @@ async fn send_htlc_payment(
                 secret_hash.get_algo(),
                 other_addr,
             );
-            let amount = (amount * BigDecimal::from(10u64.pow(coin.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+            let amount = try_s!(coin.big_decimal_to_big_uint(&amount));
             (amount, args)
         },
         TezosCoinType::ERC(token_addr) => {
-            let amount: BigUint = (amount * BigDecimal::from(10u64.pow(coin.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+            let amount = try_s!(coin.big_decimal_to_big_uint(&amount));
             try_s!(coin.check_and_update_allowance(token_addr, &coin.swap_contract_address, &amount).await);
             let args = init_tezos_erc_swap_call(
                 uuid.into(),
@@ -952,11 +962,11 @@ impl SwapOps for TezosCoin {
         let fut = Box::pin(async move {
             let (amount, dest, args) = match coin.coin_type {
                 TezosCoinType::Tezos => {
-                    let amount = (amount * BigDecimal::from(10u64.pow(coin.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+                    let amount = try_s!(coin.big_decimal_to_big_uint(&amount));;
                     (amount, fee_addr, None)
                 },
                 TezosCoinType::ERC(ref token_addr) => {
-                    let amount: BigUint = (amount * BigDecimal::from(10u64.pow(coin.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+                    let amount = try_s!(coin.big_decimal_to_big_uint(&amount));;
                     let args = mla_transfer_call(
                         &coin.my_address,
                         &fee_addr,
@@ -1108,7 +1118,7 @@ impl SwapOps for TezosCoin {
         };
         let fee_addr = try_fus!(self.address_from_ec_pubkey(fee_pubkey));
         let taker_addr = try_fus!(self.address_from_ec_pubkey(taker_pubkey));
-        let amount = (amount * BigDecimal::from(10u64.pow(self.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+        let amount = try_fus!(self.big_decimal_to_big_uint(&amount));
         let coin = self.clone();
         let fut = async move {
             for content in op.contents.iter() {
@@ -1373,7 +1383,7 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
     let to_addr: TezosAddress = try_s!(req.to.parse());
     match &coin.coin_type {
         TezosCoinType::Tezos => operations.push(Operation::transaction(Tx{
-            amount: (&req.amount * BigDecimal::from(10u64.pow(coin.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap().into(),
+            amount: try_s!(coin.big_decimal_to_big_uint(&req.amount)).into(),
             counter,
             destination: req.to.clone(),
             fee: BigUint::from(1420u32).into(),
@@ -1383,7 +1393,7 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
             storage_limit: BigUint::from(300u32).into(),
         })),
         TezosCoinType::ERC(addr) => {
-            let amount: BigUint = (&req.amount * BigDecimal::from(10u64.pow(coin.decimals as u32))).to_bigint().unwrap().to_biguint().unwrap();
+            let amount = try_s!(coin.big_decimal_to_big_uint(&req.amount));
             let parameters = Some(mla_transfer_call(&coin.my_address, &to_addr, &amount));
             operations.push(Operation::transaction(Tx {
                 amount: BigUint::from(0u8).into(),
@@ -1838,7 +1848,38 @@ impl Serializable for TezosValue {
                 s.append(&3u8);
                 s.append(&11u8);
             },
-            _ => unimplemented!(),
+            TezosValue::TezosPrim(TezosPrim::Elt((key, value))) => {
+                s.append(&7u8);
+                s.append(&4u8);
+                s.append(key.as_ref());
+                s.append(value.as_ref());
+            },
+            TezosValue::TezosPrim(TezosPrim::Some(value)) => {
+                s.append(&5u8);
+                s.append(&9u8);
+                s.append(value[0].as_ref());
+            },
+            TezosValue::TezosPrim(TezosPrim::None) => {
+                s.append(&3u8);
+                s.append(&6u8);
+            },
+            TezosValue::TezosPrim(TezosPrim::True) => {
+                s.append(&3u8);
+                s.append(&10u8);
+            },
+            TezosValue::TezosPrim(TezosPrim::False) => {
+                s.append(&3u8);
+                s.append(&3u8);
+            },
+            TezosValue::List(list_items) => {
+                s.append(&2u8);
+                let mut bytes = vec![];
+                for item in list_items {
+                    bytes.append(&mut serialize(item).take());
+                }
+                s.append_slice(&(bytes.len() as u32).to_be_bytes());
+                s.append_slice(&bytes);
+            },
         }
     }
 }
@@ -2176,9 +2217,25 @@ impl Deserializable for TezosValue {
                     string: String::from_utf8(bytes).map_err(|_| serialization::Error::MalformedData)?
                 })
             },
+            2 => {
+                let length: H32 = reader.read()?;
+                let length = u32::from_be_bytes(length.take());
+                let mut bytes = vec![0; length as usize];
+                reader.read_slice(&mut bytes)?;
+                let mut list_items = vec![];
+                let mut list_reader = Reader::from_read(bytes.as_slice());
+                while !list_reader.is_finished() {
+                    let item = list_reader.read()?;
+                    list_items.push(item);
+                }
+                Ok(TezosValue::List(list_items))
+            },
             3 => {
                 let sub_tag: u8 = reader.read()?;
                 match sub_tag {
+                    3 => Ok(TezosValue::TezosPrim(TezosPrim::False)),
+                    6 => Ok(TezosValue::TezosPrim(TezosPrim::None)),
+                    10 => Ok(TezosValue::TezosPrim(TezosPrim::True)),
                     11 => Ok(TezosValue::TezosPrim(TezosPrim::Unit)),
                     _ => return Err(serialization::Error::Custom(ERRL!("Unsupported tag {} and sub_tag {} combination", tag, sub_tag))),
                 }
@@ -2192,12 +2249,19 @@ impl Deserializable for TezosValue {
                     8 => Ok(TezosValue::TezosPrim(TezosPrim::Right([
                         Box::new(reader.read()?),
                     ]))),
+                    9 => Ok(TezosValue::TezosPrim(TezosPrim::Some([
+                        Box::new(reader.read()?),
+                    ]))),
                     _ => return Err(serialization::Error::Custom(ERRL!("Unsupported tag {} and sub_tag {} combination", tag, sub_tag))),
                 }
             },
             7 => {
                 let sub_tag: u8 = reader.read()?;
                 match sub_tag {
+                    4 => Ok(TezosValue::TezosPrim(TezosPrim::Elt((
+                        Box::new(reader.read()?),
+                        Box::new(reader.read()?),
+                    )))),
                     7 => Ok(TezosValue::TezosPrim(TezosPrim::Pair((
                         Box::new(reader.read()?),
                         Box::new(reader.read()?),
@@ -2479,7 +2543,7 @@ impl Deserializable for TezosOperation {
         // The implementation is very ineffective due to memory copying taking place on every loop
         // iteration, should consider refactoring the parity-bitcoin serialization crate to return
         // the bytes that was read in case of error
-        let bytes_left = loop {
+        let (error, bytes_left) = loop {
             let temp_buf = buffer.clone();
             let mut reader = Reader::from_read(temp_buf.as_slice());
             let tag: u8 = reader.read()?;
@@ -2487,25 +2551,25 @@ impl Deserializable for TezosOperation {
                 8 => {
                     let tx: TezosTransaction = match reader.read() {
                         Ok(t) => t,
-                        Err(_) => break buffer,
+                        Err(e) => break (e, buffer),
                     };
                     TezosOperationEnum::Transaction(tx)
                 },
                 107 => {
                     let tx: RevealOp = match reader.read() {
                         Ok(t) => t,
-                        Err(_) => break buffer,
+                        Err(e) => break (e, buffer),
                     };
                     TezosOperationEnum::Reveal(tx)
                 },
                 108 => {
                     let tx: BabylonTransaction = match reader.read() {
                         Ok(t) => t,
-                        Err(_) => break buffer,
+                        Err(e) => break (e, buffer),
                     };
                     TezosOperationEnum::BabylonTransaction(tx)
                 },
-                _ => break buffer,
+                _ => break (serialization::Error::Custom(ERRL!("Unsupported tag {}", tag)), buffer),
             };
             contents.push(op);
             if reader.is_finished() {
@@ -2518,6 +2582,9 @@ impl Deserializable for TezosOperation {
             buffer.clear();
             reader.read_to_end(&mut buffer)?;
         };
+        if bytes_left.len() != 64 {
+            return Err(error);
+        }
         let mut reader = Reader::from_read(bytes_left.as_slice());
         Ok(TezosOperation {
             branch,
@@ -2544,7 +2611,6 @@ impl Serializable for TezosOperation {
                     s.append(&107u8);
                     s.append(tx);
                 },
-                _ => unimplemented!(),
             }
         }
         if let Some(sig) = &self.signature {

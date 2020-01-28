@@ -109,7 +109,6 @@ mod docker_tests {
     // Windows - https://github.com/KomodoPlatform/komodo/blob/master/zcutil/fetch-params.bat
     // Linux and MacOS - https://github.com/KomodoPlatform/komodo/blob/master/zcutil/fetch-params.sh
     pub fn docker_tests_runner(tests: &[&TestDescAndFn]) {
-        // pretty_env_logger::try_init();
         let docker = Cli::default();
         let mut containers = vec![];
         // skip Docker containers initialization if we are intended to run test_mm_start only
