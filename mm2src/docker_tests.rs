@@ -29,7 +29,7 @@ mod docker_tests {
     use common::crypto::{CryptoOps, SecretHash, SecretHashAlgo};
     use common::for_tests::{enable_native, MarketMakerIt, mm_dump};
     use coins::{FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, Transaction, WithdrawRequest};
-    use coins::utxo::{coin_daemon_data_dir, dhash160, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
+    use coins::utxo::{coin_daemon_data_dir, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
     use coins::tezos::{mla_mint_call, prepare_tezos_sandbox_network, tezos_coin_for_test, tezos_mla_coin_for_test, TezosCoin, TezosAddress};
     use coins::tezos::tezos_constants::*;
@@ -651,7 +651,7 @@ mod docker_tests {
         let req_str = r#"{"coin":"XTZ_MLA","to":"KT1BhA5bCx37GjwrVy2egw7NKpir1bUt7nKj","amount":"20"}"#;
         let req: WithdrawRequest = unwrap!(json::from_str(req_str));
         let withdraw = unwrap!(coin.withdraw(req).wait());
-        let tx = unwrap!(coin.send_raw_tx(&hex::encode(&withdraw.tx_hex.0)).wait());
+        unwrap!(coin.send_raw_tx(&hex::encode(&withdraw.tx_hex.0)).wait());
         unwrap!(coin.wait_for_confirmations(
             &withdraw.tx_hex.0,
             1,

@@ -10,7 +10,6 @@ use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
 use crc::crc32;
 use futures::compat::Future01CompatExt;
 use futures::future::Either;
-use futures01::Future;
 use parking_lot::Mutex as PaMutex;
 use peers::FixedValidator;
 use rand::Rng;

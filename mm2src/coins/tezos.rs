@@ -66,11 +66,11 @@ mod tezos_tests;
 
 use self::tezos_rpc::{BigMapReq, ForgeOperationsRequest, Operation, PreapplyOperation,
                       PreapplyOperationsRequest, TezosInputType, TezosRpcClient, Transaction as Tx};
-use crate::tezos::tezos_rpc::{Reveal, OperationStatus, Origination, Status, TransactionParameters, OperationResult};
+use crate::tezos::tezos_rpc::{Reveal, Origination, Status, TransactionParameters, OperationResult};
 use crate::tezos::tezos_constants::SECP_PK_PREFIX;
 
-#[derive(Debug, Eq, PartialEq)]
-struct TezosSignature {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TezosSignature {
     prefix: Vec<u8>,
     data: Vec<u8>,
 }
@@ -108,8 +108,8 @@ impl OpHash {
     }
 }
 
-#[derive(Debug, PartialEq)]
-struct TezosBlockHash {
+#[derive(Clone, Debug, PartialEq)]
+pub struct TezosBlockHash {
     prefix: BlockHashPrefix,
     data: H256,
 }
@@ -326,7 +326,7 @@ impl TezosCoinImpl {
                 fee: BigUint::from(1269u32).into(),
                 gas_limit: BigUint::from(10000u32).into(),
                 public_key: my_pub,
-                source: self.my_address.to_string(),
+                source: self.my_address.clone(),
                 storage_limit: BigUint::from(0u8).into(),
             });
             operations.push(reveal);
@@ -335,11 +335,11 @@ impl TezosCoinImpl {
         let op = Operation::transaction(Tx {
             amount: amount.into(),
             counter: counter.clone(),
-            destination: destination.to_string(),
+            destination: destination.clone(),
             fee: BigUint::from(0100000u32).into(),
             gas_limit: BigUint::from(800000u32).into(),
             parameters,
-            source: self.my_address.to_string(),
+            source: self.my_address.clone(),
             storage_limit: BigUint::from(60000u32).into(),
         });
         operations.push(op);
@@ -443,7 +443,7 @@ impl TezosCoinImpl {
                             init_tezos_erc_swap_call(uuid.into(), time_lock, secret_hash.to_vec().into(),
                                                      secret_hash.get_algo(), self.my_address.clone(), amount, token_addr),
                     };
-                    if tx.parameters.unwrap().params != expected_params.value {
+                    if tx.parameters != Some(expected_params.into()) {
                         return ERR!("Invalid transaction parameters");
                     };
                     return Ok(())
@@ -465,7 +465,7 @@ impl TezosCoinImpl {
         };
         let swap: Option<TezosAtomicSwap> = try_s!(self.rpc_client.get_big_map(&self.swap_contract_address.to_string(), req).await);
         match swap {
-            Some(swap) => {
+            Some(_swap) => {
                 let mut current_block = search_from_block;
                 let uuid: TezosValue = uuid.into();
 
@@ -475,24 +475,20 @@ impl TezosCoinImpl {
                         for transaction in operation.contents {
                             match transaction.op {
                                 Operation::transaction(tx) => {
-                                    if tx.destination == self.swap_contract_address.to_string() {
+                                    if tx.destination == self.swap_contract_address {
                                         match tx.parameters {
                                             Some(ref params) => {
                                                 let (path, args) = read_function_call(vec![], params.value.clone());
                                                 let (tx_uuid, _) = args.split_and_read_value();
                                                 if (path == [Or::L] || path == [Or::R, Or::L]) && tx_uuid == uuid {
-                                                    let branch = unwrap!(TezosBlockHash::from_str(&operation.branch));
-                                                    let signature = unwrap!(TezosSignature::from_str(operation.signature.as_ref().unwrap()));
-                                                    let destination = unwrap!(TezosAddress::from_str(&tx.destination));
-                                                    let source = unwrap!(TezosAddress::from_str(&tx.source));
                                                     let operation = TezosOperation {
-                                                        branch: branch.data,
-                                                        signature: Some(H512::from(signature.data.as_slice())),
+                                                        branch: operation.branch.data,
+                                                        signature: operation.signature.map(|sig| H512::from(sig.data.as_slice())),
                                                         contents: vec![TezosOperationEnum::Transaction(TezosTransaction {
                                                             amount: tx.amount.into(),
                                                             counter: tx.counter.into(),
-                                                            destination: unwrap!(self.address_to_contract_id(&destination)),
-                                                            source: unwrap!(self.address_to_contract_id(&source)),
+                                                            destination: try_s!(self.address_to_contract_id(&tx.destination)),
+                                                            source: try_s!(self.address_to_contract_id(&tx.source)),
                                                             fee: tx.fee.into(),
                                                             gas_limit: tx.gas_limit.into(),
                                                             storage_limit: tx.storage_limit.into(),
@@ -519,7 +515,7 @@ impl TezosCoinImpl {
 
     async fn find_op_by_uuid_and_entry_path(
         &self,
-        dest: &str,
+        dest: &TezosAddress,
         uuid: &TezosValue,
         entry_path: &[Or],
         from_block: u64
@@ -533,24 +529,20 @@ impl TezosCoinImpl {
                 for transaction in operation.contents {
                     match transaction.op {
                         Operation::transaction(tx) => {
-                            if tx.destination == dest {
+                            if tx.destination == *dest {
                                 match tx.parameters {
                                     Some(ref params) => {
                                         let (path, args) = read_function_call(vec![], params.value.clone());
                                         let (tx_uuid, _) = args.split_and_read_value();
                                         if path == entry_path && tx_uuid == *uuid {
-                                            let branch = unwrap!(TezosBlockHash::from_str(&operation.branch));
-                                            let signature = unwrap!(TezosSignature::from_str(operation.signature.as_ref().unwrap()));
-                                            let destination = unwrap!(TezosAddress::from_str(&tx.destination));
-                                            let source = unwrap!(TezosAddress::from_str(&tx.source));
                                             let operation = TezosOperation {
-                                                branch: branch.data,
-                                                signature: Some(H512::from(signature.data.as_slice())),
+                                                branch: operation.branch.data,
+                                                signature: operation.signature.map(|sig| H512::from(sig.data.as_slice())),
                                                 contents: vec![TezosOperationEnum::BabylonTransaction(BabylonTransaction {
                                                     amount: tx.amount.into(),
                                                     counter: tx.counter.into(),
-                                                    destination: try_s!(self.address_to_contract_id(&destination)),
-                                                    source: try_s!(self.address_to_pubkey_hash(&source)),
+                                                    destination: try_s!(self.address_to_contract_id(&tx.destination)),
+                                                    source: try_s!(self.address_to_pubkey_hash(&tx.source)),
                                                     fee: tx.fee.into(),
                                                     gas_limit: tx.gas_limit.into(),
                                                     storage_limit: tx.storage_limit.into(),
@@ -599,7 +591,7 @@ impl TezosCoinImpl {
                                 None => return ERR!("Swap with uuid {:?} is not found", uuid),
                             };
 
-                            let destination = self.contract_id_to_addr(&op.destination).to_string();
+                            let destination = self.contract_id_to_addr(&op.destination);
                             match swap.state {
                                 TezosAtomicSwapState::ReceiverSpent => {
                                     let found = try_s!(self.find_op_by_uuid_and_entry_path(
@@ -643,7 +635,7 @@ impl TezosCoinImpl {
                                 None => return ERR!("Swap with uuid {:?} is not found", uuid),
                             };
 
-                            let destination = self.contract_id_to_addr(&op.destination).to_string();
+                            let destination = self.contract_id_to_addr(&op.destination);
                             match swap.state {
                                 TezosAtomicSwapState::ReceiverSpent => {
                                     let found = try_s!(self.find_op_by_uuid_and_entry_path(
@@ -727,7 +719,6 @@ impl TezosCoin {
             data: since_branch,
         };
         let since_block_header = try_s!(self.rpc_client.block_header(&block_hash.to_string()).await);
-        let since_block_timestamp = Some(since_block_header.timestamp.timestamp());
         let mut found_tx_in_block = None;
         loop {
             if now_ms() / 1000 > wait_until {
@@ -812,7 +803,7 @@ impl MarketCoinOps for TezosCoin {
         confirmations: u64,
         wait_until: u64,
         check_every: u64,
-        since_block: u64
+        _since_block: u64
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
         let coin = self.clone();
         let op: TezosOperation = try_fus!(deserialize(tx).map_err(|e| fomat!([e])));
@@ -962,11 +953,11 @@ impl SwapOps for TezosCoin {
         let fut = Box::pin(async move {
             let (amount, dest, args) = match coin.coin_type {
                 TezosCoinType::Tezos => {
-                    let amount = try_s!(coin.big_decimal_to_big_uint(&amount));;
+                    let amount = try_s!(coin.big_decimal_to_big_uint(&amount));
                     (amount, fee_addr, None)
                 },
                 TezosCoinType::ERC(ref token_addr) => {
-                    let amount = try_s!(coin.big_decimal_to_big_uint(&amount));;
+                    let amount = try_s!(coin.big_decimal_to_big_uint(&amount));
                     let args = mla_transfer_call(
                         &coin.my_address,
                         &fee_addr,
@@ -1028,7 +1019,7 @@ impl SwapOps for TezosCoin {
         _time_lock: u32,
         _taker_pub: &EcPubkey,
         secret: &[u8],
-        secret_hash: &SecretHash,
+        _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Taker);
         let args = receiver_spends_call(
@@ -1048,11 +1039,11 @@ impl SwapOps for TezosCoin {
     fn send_taker_spends_maker_payment(
         &self,
         uuid: &[u8],
-        maker_payment_tx: &[u8],
-        time_lock: u32,
-        maker_pub: &EcPubkey,
+        _maker_payment_tx: &[u8],
+        _time_lock: u32,
+        _maker_pub: &EcPubkey,
         secret: &[u8],
-        secret_hash: &SecretHash,
+        _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Maker);
         let args = receiver_spends_call(
@@ -1072,10 +1063,10 @@ impl SwapOps for TezosCoin {
     fn send_taker_refunds_payment(
         &self,
         uuid: &[u8],
-        taker_payment_tx: &[u8],
-        time_lock: u32,
-        maker_pub: &EcPubkey,
-        secret_hash: &SecretHash,
+        _taker_payment_tx: &[u8],
+        _time_lock: u32,
+        _maker_pub: &EcPubkey,
+        _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Taker);
         let args = sender_refunds_call(uuid.into(), &self.my_address);
@@ -1090,10 +1081,10 @@ impl SwapOps for TezosCoin {
     fn send_maker_refunds_payment(
         &self,
         uuid: &[u8],
-        maker_payment_tx: &[u8],
-        time_lock: u32,
-        taker_pub: &EcPubkey,
-        secret_hash: &SecretHash,
+        _maker_payment_tx: &[u8],
+        _time_lock: u32,
+        _taker_pub: &EcPubkey,
+        _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Maker);
         let args = sender_refunds_call(uuid.into(), &self.my_address);
@@ -1170,9 +1161,9 @@ impl SwapOps for TezosCoin {
                                 if tx.destination != token_contract_id {
                                     return ERR!("Invalid dex fee tx destination, expected {:?}, actual {:?}", token_contract_id, tx.destination);
                                 }
-                                let expected_params = mla_transfer_call(&taker_addr, &fee_addr, &amount);
-                                if tx.parameters.as_ref().unwrap().params != expected_params.value {
-                                    return ERR!("Invalid dex fee tx parameters, expected {:?}, actual {:?}", expected_params.value, tx.parameters.as_ref().unwrap().params);
+                                let expected_params = Some(mla_transfer_call(&taker_addr, &fee_addr, &amount).into());
+                                if tx.parameters != expected_params {
+                                    return ERR!("Invalid dex fee tx parameters, expected {:?}, actual {:?}", expected_params, tx.parameters);
                                 }
                             },
                         };
@@ -1236,9 +1227,9 @@ impl SwapOps for TezosCoin {
     fn check_if_my_maker_payment_sent(
         &self,
         uuid: &[u8],
-        time_lock: u32,
-        other_pub: &EcPubkey,
-        secret_hash: &SecretHash,
+        _time_lock: u32,
+        _other_pub: &EcPubkey,
+        _secret_hash: &SecretHash,
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
         let uuid = BytesJson(tagged_swap_uuid(uuid, TradeActor::Maker));
@@ -1253,9 +1244,9 @@ impl SwapOps for TezosCoin {
     fn check_if_my_taker_payment_sent(
         &self,
         uuid: &[u8],
-        time_lock: u32,
-        other_pub: &EcPubkey,
-        secret_hash: &SecretHash,
+        _time_lock: u32,
+        _other_pub: &EcPubkey,
+        _secret_hash: &SecretHash,
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<TransactionEnum>, Error=String> + Send> {
         let uuid = BytesJson(tagged_swap_uuid(uuid, TradeActor::Taker));
@@ -1269,9 +1260,9 @@ impl SwapOps for TezosCoin {
 
     fn search_for_swap_tx_spend_my(
         &self,
-        time_lock: u32,
-        other_pub: &EcPubkey,
-        secret_hash: &SecretHash,
+        _time_lock: u32,
+        _other_pub: &EcPubkey,
+        _secret_hash: &SecretHash,
         tx: &[u8],
         search_from_block: u64,
     ) -> Box<dyn Future<Item=Option<FoundSwapTxSpend>, Error=String> + Send> {
@@ -1374,7 +1365,7 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
             fee: BigUint::from(1269u32).into(),
             gas_limit: BigUint::from(10000u32).into(),
             public_key: my_pub,
-            source: coin.my_address.to_string(),
+            source: coin.my_address.clone(),
             storage_limit: BigUint::from(0u8).into(),
         });
         operations.push(reveal);
@@ -1385,11 +1376,11 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
         TezosCoinType::Tezos => operations.push(Operation::transaction(Tx{
             amount: try_s!(coin.big_decimal_to_big_uint(&req.amount)).into(),
             counter,
-            destination: req.to.clone(),
+            destination: to_addr,
             fee: BigUint::from(1420u32).into(),
             gas_limit: BigUint::from(10600u32).into(),
             parameters: None,
-            source: coin.my_address().into(),
+            source: coin.my_address.clone(),
             storage_limit: BigUint::from(300u32).into(),
         })),
         TezosCoinType::ERC(addr) => {
@@ -1398,11 +1389,11 @@ async fn withdraw_impl(coin: TezosCoin, req: WithdrawRequest) -> Result<Transact
             operations.push(Operation::transaction(Tx {
                 amount: BigUint::from(0u8).into(),
                 counter,
-                destination: addr.to_string(),
+                destination: addr.clone(),
                 fee: BigUint::from(100000u32).into(),
                 gas_limit: BigUint::from(800000u32).into(),
                 parameters,
-                source: coin.my_address().into(),
+                source: coin.my_address.clone(),
                 storage_limit: BigUint::from(60000u32).into(),
             }));
         },
@@ -1518,20 +1509,21 @@ pub async fn tezos_coin_from_conf_and_request(
     };
     let pubkey = priv_key.get_pubkey();
     let my_address = address_from_ec_pubkey(addr_prefixes.ed25519, &pubkey);
-    let (decimals, coin_type) = match conf["protocol"]["token_type"].as_str().unwrap() {
-        "TEZOS" => {
+    let (decimals, coin_type) = match conf["protocol"]["token_type"].as_str() {
+        Some("TEZOS") => {
             let decimals = conf["decimals"].as_u64().unwrap_or (6) as u8;
             (decimals, TezosCoinType::Tezos)
         },
-        "MLA" => {
-            let addr = try_s!(TezosAddress::from_str(conf["protocol"]["contract_address"].as_str().unwrap()));
+        Some("MLA") => {
+            let addr_str = try_s!(conf["protocol"]["contract_address"].as_str().ok_or("protocol.contract_address is not string"));
+            let addr = try_s!(TezosAddress::from_str(addr_str));
             let storage: TezosMlaStorage = try_s!(rpc_client.get_storage(&addr.to_string()).await);
             if storage.is_paused {
                 return ERR!("Contract {} is in paused state", addr);
             }
             (6, TezosCoinType::ERC(addr))
         },
-        _ => return ERR!("Unsupported token type"),
+        _ => return ERR!("Unsupported token type {:?}", conf["protocol"]["token_type"]),
     };
 
     let swap_contract_address = try_s!(req["swap_contract_address"].as_str().ok_or("swap_contract_address is not set or is not string"));
@@ -1581,10 +1573,10 @@ impl TryFrom<TezosValue> for TezosMlaStorage {
         };
 
         Ok(TezosMlaStorage {
-            accounts: try_s!(reader.read().unwrap().try_into()),
-            owner: try_s!(reader.read().unwrap().try_into()),
-            is_paused: try_s!(reader.read().unwrap().try_into()),
-            total_supply: try_s!(reader.read().unwrap().try_into()),
+            accounts: try_s!(try_s!(reader.read()).try_into()),
+            owner: try_s!(try_s!(reader.read()).try_into()),
+            is_paused: try_s!(try_s!(reader.read()).try_into()),
+            total_supply: try_s!(try_s!(reader.read()).try_into()),
         })
     }
 }
@@ -1684,8 +1676,8 @@ impl TryFrom<TezosValue> for TezosErcAccount {
         };
 
         Ok(TezosErcAccount {
-            balance: try_s!(reader.read().unwrap().try_into()),
-            allowances: try_s!(reader.read().unwrap().try_into()),
+            balance: try_s!(try_s!(reader.read()).try_into()),
+            allowances: try_s!(try_s!(reader.read()).try_into()),
         })
     }
 }
@@ -1887,9 +1879,14 @@ impl Serializable for TezosValue {
 impl TezosValueReader {
     fn read(&mut self) -> Result<TezosValue, String> {
         let val = self.inner.take();
-        let (res, next) = val.unwrap().split_and_read_value();
-        self.inner = next;
-        Ok(res)
+        match val {
+            Some(val) => {
+                let (res, next) = val.split_and_read_value();
+                self.inner = next;
+                Ok(res)
+            },
+            None => ERR!("Inner value is None, reader ")
+        }
     }
 }
 
@@ -1902,13 +1899,13 @@ impl TryFrom<TezosValue> for TezosErcStorage {
         };
 
         Ok(TezosErcStorage {
-            accounts: try_s!(reader.read().unwrap().try_into()),
-            version: try_s!(reader.read().unwrap().try_into()),
-            total_supply: try_s!(reader.read().unwrap().try_into()),
-            decimals: try_s!(reader.read().unwrap().try_into()),
-            name: try_s!(reader.read().unwrap().try_into()),
-            symbol: try_s!(reader.read().unwrap().try_into()),
-            owner: try_s!(reader.read().unwrap().try_into()),
+            accounts: try_s!(try_s!(reader.read()).try_into()),
+            version: try_s!(try_s!(reader.read()).try_into()),
+            total_supply: try_s!(try_s!(reader.read()).try_into()),
+            decimals: try_s!(try_s!(reader.read()).try_into()),
+            name: try_s!(try_s!(reader.read()).try_into()),
+            symbol: try_s!(try_s!(reader.read()).try_into()),
+            owner: try_s!(try_s!(reader.read()).try_into()),
         })
     }
 }
@@ -2745,18 +2742,18 @@ impl TryFrom<TezosValue> for TezosAtomicSwap {
         };
 
         Ok(TezosAtomicSwap {
-            amount: try_s!(reader.read().unwrap().try_into()),
-            amount_nat: try_s!(reader.read().unwrap().try_into()),
-            contract_address: try_s!(reader.read().unwrap().try_into()),
-            created_at: try_s!(reader.read().unwrap().try_into()),
-            lock_time: try_s!(reader.read().unwrap().try_into()),
-            receiver: try_s!(reader.read().unwrap().try_into()),
-            secret_hash: try_s!(reader.read().unwrap().try_into()),
-            secret_hash_type: try_s!(reader.read().unwrap().try_into()),
-            sender: try_s!(reader.read().unwrap().try_into()),
-            spent_at: try_s!(reader.read().unwrap().try_into()),
-            state: try_s!(reader.read().unwrap().try_into()),
-            uuid: try_s!(reader.read().unwrap().try_into()),
+            amount: try_s!(try_s!(reader.read()).try_into()),
+            amount_nat: try_s!(try_s!(reader.read()).try_into()),
+            contract_address: try_s!(try_s!(reader.read()).try_into()),
+            created_at: try_s!(try_s!(reader.read()).try_into()),
+            lock_time: try_s!(try_s!(reader.read()).try_into()),
+            receiver: try_s!(try_s!(reader.read()).try_into()),
+            secret_hash: try_s!(try_s!(reader.read()).try_into()),
+            secret_hash_type: try_s!(try_s!(reader.read()).try_into()),
+            sender: try_s!(try_s!(reader.read()).try_into()),
+            spent_at: try_s!(try_s!(reader.read()).try_into()),
+            state: try_s!(try_s!(reader.read()).try_into()),
+            uuid: try_s!(try_s!(reader.read()).try_into()),
         })
     }
 }
@@ -2854,10 +2851,10 @@ impl Deserializable for EntrypointId {
                 let len: u8 = reader.read()?;
                 let mut bytes = vec![0; len as usize];
                 reader.read_slice(&mut bytes)?;
-                let name = std::str::from_utf8(&bytes).map_err(|_| serialization::Error::MalformedData)?;
+                let name = std::str::from_utf8(&bytes).map_err(|e| serialization::Error::Custom(ERRL!("Error {} parsing bytes as UTF8", e)))?;
                 Ok(EntrypointId::Named(name.into()))
             },
-            _ => Err(serialization::Error::MalformedData),
+            _ => Err(serialization::Error::Custom(ERRL!("Unsupported EntrypointId tag {}", tag))),
         }
     }
 }
@@ -2907,8 +2904,7 @@ pub async fn tezos_coin_for_test(priv_key: &[u8], node_url: &str, swap_contract:
         "mm2":1,
         "swap_contract_address": swap_contract,
     });
-    let coin = tezos_coin_from_conf_and_request("TEZOS", &COMMON_XTZ_CONFIG, &req, priv_key).await.unwrap();
-    coin
+    unwrap!(tezos_coin_from_conf_and_request("TEZOS", &COMMON_XTZ_CONFIG, &req, priv_key).await)
 }
 
 pub fn tezos_mla_coin_for_test(priv_key: &[u8], node_url: &str, swap_contract: &str, token_contract: &str) -> TezosCoin {
@@ -2951,13 +2947,13 @@ pub fn prepare_tezos_sandbox_network() -> (String, String) {
     let swap_contract_script_str = r#"{"code":[{"prim":"parameter","args":[{"prim":"or","args":[{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"timestamp"},{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"address"}]}]}]}],"annots":["%init_tezos_swap"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"timestamp"},{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"nat"},{"prim":"address"}]}]}]}]}]}],"annots":["%init_erc_swap"]},{"prim":"or","args":[{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"bytes"},{"prim":"key_hash"}]}],"annots":["%receiver_spends"]},{"prim":"pair","args":[{"prim":"bytes"},{"prim":"key_hash"}],"annots":["%sender_refunds"]}]}]}]}]},{"prim":"storage","args":[{"prim":"pair","args":[{"prim":"big_map","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"mutez"},{"prim":"pair","args":[{"prim":"nat"},{"prim":"pair","args":[{"prim":"option","args":[{"prim":"address"}]},{"prim":"pair","args":[{"prim":"timestamp"},{"prim":"pair","args":[{"prim":"timestamp"},{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"bytes"},{"prim":"pair","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"option","args":[{"prim":"timestamp"}]},{"prim":"pair","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"bytes"}]}]}]}]}]}]}]}]}]}]}]}]},{"prim":"unit"}]}]},{"prim":"code","args":[[{"prim":"DUP"},{"prim":"DIP","args":[[{"prim":"CDR"}]]},{"prim":"CAR"},{"prim":"DUP"},{"prim":"IF_LEFT","args":[[{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"DUP"},{"prim":"IF_LEFT","args":[[{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"32"}]}],[{"prim":"IF_LEFT","args":[[{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"64"}]}],[{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"32"}]}]]}]]},{"prim":"RENAME"},{"prim":"DUP"},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"SIZE"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"DUP"},{"prim":"PUSH","args":[{"prim":"string"},{"string":"Secret hash length must be "}]},{"prim":"PAIR"},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},{"prim":"AMOUNT"},{"prim":"COMPARE"},{"prim":"LE"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Transaction amount must be greater than zero"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"CDR"},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"GET"},{"prim":"IF_NONE","args":[[[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"PUSH","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"Left","args":[{"prim":"Unit"}]}]},{"prim":"PAIR"},{"prim":"NONE","args":[{"prim":"timestamp"}]},{"prim":"PAIR"},{"prim":"SOURCE"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"8"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"9"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"}],{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"8"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"9"}]}],[{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PAIR"},{"prim":"NOW"},{"prim":"PAIR"},{"prim":"NONE","args":[{"prim":"address"}]},{"prim":"PAIR"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"0"}]},{"prim":"PAIR"},{"prim":"AMOUNT"},{"prim":"PAIR"}],[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap was initialized already"}]},{"prim":"FAILWITH"}]]},{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"DIP","args":[[{"prim":"SOME"}]]},{"prim":"DIP","args":[{"int":"4"},[{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"}]]},{"prim":"UPDATE"},{"prim":"PAIR"},{"prim":"NIL","args":[{"prim":"operation"}]},{"prim":"PAIR"}],[{"prim":"IF_LEFT","args":[[{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"}],{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},{"prim":"AMOUNT"},{"prim":"COMPARE"},{"prim":"GT"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Tx amount must be zero"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"IF_LEFT","args":[[{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"32"}]}],[{"prim":"IF_LEFT","args":[[{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"64"}]}],[{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"32"}]}]]}]]},{"prim":"RENAME"},{"prim":"DUP"},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"SIZE"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"DUP"},{"prim":"PUSH","args":[{"prim":"string"},{"string":"Secret hash length must be "}]},{"prim":"PAIR"},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"nat"},{"int":"0"}]},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"COMPARE"},{"prim":"LE"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"ERC amount must be greater than zero"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"CDR"},[{"prim":"DIP","args":[{"int":"7"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"8"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"8"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"9"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"8"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"9"}]}],{"prim":"GET"},{"prim":"IF_NONE","args":[[[{"prim":"DIP","args":[{"int":"7"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"8"}]}],{"prim":"PUSH","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"Left","args":[{"prim":"Unit"}]}]},{"prim":"PAIR"},{"prim":"NONE","args":[{"prim":"timestamp"}]},{"prim":"PAIR"},{"prim":"SOURCE"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"7"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"8"}]}],{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"10"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"11"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"10"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"11"}]}],[{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PAIR"},{"prim":"NOW"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"SOME"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"PAIR"},{"prim":"AMOUNT"},{"prim":"PAIR"}],[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap was initialized already"}]},{"prim":"FAILWITH"}]]},{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"8"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"9"}]}],{"prim":"DIP","args":[[{"prim":"SOME"}]]},{"prim":"UPDATE"},{"prim":"PAIR"},{"prim":"NIL","args":[{"prim":"operation"}]},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"CONTRACT","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}]}],"annots":["%transfer"]},{"prim":"IF_NONE","args":[[[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"PUSH","args":[{"prim":"string"},{"string":"Cannot recover erc contract from:"}]},{"prim":"PAIR"},{"prim":"FAILWITH"}],[{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"SELF"},{"prim":"ADDRESS"},{"prim":"PAIR"},{"prim":"SOURCE"},{"prim":"PAIR"},{"prim":"TRANSFER_TOKENS"}]]},{"prim":"DIP","args":[{"int":"3"},[{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"}]]},{"prim":"RENAME"},{"prim":"CONS"},{"prim":"PAIR"}],[{"prim":"IF_LEFT","args":[[{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PUSH","args":[{"prim":"nat"},{"int":"32"}]},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"SIZE"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Secret length must be 32"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},{"prim":"AMOUNT"},{"prim":"COMPARE"},{"prim":"GT"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Tx amount must be zero"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"GET"},{"prim":"IF_NONE","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap was not initialized"}]},{"prim":"FAILWITH"}],[{"prim":"DUP"},[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"IF_LEFT","args":[[{"prim":"DROP"},{"prim":"DUP"}],[{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap must be in initialized state"}]},{"prim":"FAILWITH"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"RENAME"},{"prim":"DUP"},[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"SOURCE"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Tx must be sent from receiver address"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"DUP"},[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"IF_LEFT","args":[[{"prim":"DROP"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"SHA256"}],[{"prim":"IF_LEFT","args":[[{"prim":"DROP"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"SHA512"}],[{"prim":"DROP"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"BLAKE2B"}]]}]]},{"prim":"RENAME"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Invalid secret"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},{"prim":"DUP"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"PUSH","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"Right","args":[{"prim":"Left","args":[{"prim":"Unit"}]}]}]},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"NOW"},{"prim":"SOME"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"CDR"},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"SOME"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"UPDATE"},{"prim":"PAIR"},{"prim":"NIL","args":[{"prim":"operation"}]},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"IF_NONE","args":[[[{"prim":"DIP","args":[{"int":"7"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"8"}]}],[{"prim":"CDR"},{"prim":"CDR"}],{"prim":"IMPLICIT_ACCOUNT"},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"CAR"},{"prim":"UNIT"},{"prim":"TRANSFER_TOKENS"}],[{"prim":"DUP"},{"prim":"CONTRACT","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}]}],"annots":["%transfer"]},{"prim":"IF_NONE","args":[[{"prim":"DUP"},{"prim":"PUSH","args":[{"prim":"string"},{"string":"Cannot recover erc contract from:"}]},{"prim":"PAIR"},{"prim":"FAILWITH"}],[{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],[{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PAIR"},{"prim":"SELF"},{"prim":"ADDRESS"},{"prim":"PAIR"},{"prim":"TRANSFER_TOKENS"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"DIP","args":[{"int":"3"},[{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"}]]},{"prim":"RENAME"},{"prim":"CONS"},{"prim":"PAIR"}],[{"prim":"RENAME"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"CAR"},{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},{"prim":"AMOUNT"},{"prim":"COMPARE"},{"prim":"GT"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Tx amount must be zero"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"CAR"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"GET"},{"prim":"IF_NONE","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap was not initialized"}]},{"prim":"FAILWITH"}],[{"prim":"DUP"},[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"IF_LEFT","args":[[{"prim":"DROP"},{"prim":"DUP"}],[{"prim":"DROP"},{"prim":"PUSH","args":[{"prim":"string"},{"string":"Swap must be in initialized state"}]},{"prim":"FAILWITH"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"RENAME"},{"prim":"NOW"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"COMPARE"},{"prim":"LE"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Too early to refund"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"SOURCE"},{"prim":"COMPARE"},{"prim":"NEQ"},{"prim":"IF","args":[[{"prim":"PUSH","args":[{"prim":"string"},{"string":"Tx must be sent from sender address"}]},{"prim":"FAILWITH"}],[{"prim":"UNIT"}]]},{"prim":"DROP"},[{"prim":"DIP","args":[[{"prim":"DUP"}]]},{"prim":"SWAP"}],{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"PUSH","args":[{"prim":"or","args":[{"prim":"unit"},{"prim":"or","args":[{"prim":"unit"},{"prim":"unit"}]}]},{"prim":"Right","args":[{"prim":"Right","args":[{"prim":"Unit"}]}]}]},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"DUP"},{"prim":"CAR"},{"prim":"SWAP"},{"prim":"CDR"},{"prim":"CDR"},[{"prim":"DIP","args":[{"int":"10"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"11"}]}],{"prim":"SOME"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},{"prim":"SWAP"},{"prim":"PAIR"},[{"prim":"DIP","args":[{"int":"4"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"5"}]}],{"prim":"CDR"},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],{"prim":"CAR"},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],{"prim":"SOME"},[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],{"prim":"UPDATE"},{"prim":"PAIR"},{"prim":"NIL","args":[{"prim":"operation"}]},[{"prim":"DIP","args":[{"int":"2"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"3"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"IF_NONE","args":[[[{"prim":"DIP","args":[{"int":"7"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"8"}]}],{"prim":"CDR"},{"prim":"IMPLICIT_ACCOUNT"},[{"prim":"DIP","args":[{"int":"3"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"4"}]}],{"prim":"CAR"},{"prim":"UNIT"},{"prim":"TRANSFER_TOKENS"}],[{"prim":"DUP"},{"prim":"CONTRACT","args":[{"prim":"pair","args":[{"prim":"address"},{"prim":"pair","args":[{"prim":"address"},{"prim":"nat"}]}]}],"annots":["%transfer"]},{"prim":"IF_NONE","args":[[{"prim":"DUP"},{"prim":"PUSH","args":[{"prim":"string"},{"string":"Cannot recover erc contract from:"}]},{"prim":"PAIR"},{"prim":"FAILWITH"}],[{"prim":"PUSH","args":[{"prim":"mutez"},{"int":"0"}]},[{"prim":"DIP","args":[{"int":"5"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"6"}]}],[{"prim":"CDR"},{"prim":"CAR"}],[{"prim":"DIP","args":[{"int":"6"},[{"prim":"DUP"}]]},{"prim":"DIG","args":[{"int":"7"}]}],[{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CDR"},{"prim":"CAR"}],{"prim":"PAIR"},{"prim":"SELF"},{"prim":"ADDRESS"},{"prim":"PAIR"},{"prim":"TRANSFER_TOKENS"}]]},{"prim":"DIP","args":[[{"prim":"DROP"}]]}]]},{"prim":"DIP","args":[{"int":"3"},[{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"},{"prim":"DROP"}]]},{"prim":"RENAME"},{"prim":"CONS"},{"prim":"PAIR"}]]}]]}]]},{"prim":"DIP","args":[[{"prim":"DROP"},{"prim":"DROP"}]]}]]}],"storage":{"prim":"Pair","args":[[],{"prim":"Unit"}]}}"#;
     let swap_script_json: Json = unwrap!(json::from_str(swap_contract_script_str));
     let mut operations = vec![];
-    let mut counter = TezosUint(unwrap!(block_on(coin.rpc_client.counter(&coin.my_address().to_string()))) + BigUint::from(1u8));
+    let counter = TezosUint(unwrap!(block_on(coin.rpc_client.counter(&coin.my_address().to_string()))) + BigUint::from(1u8));
     let head = unwrap!(block_on(coin.rpc_client.block_header("head")));
     let swap_orig = Operation::origination(Origination {
         counter: counter.clone(),
         fee: BigUint::from(21000u32).into(),
         gas_limit: BigUint::from(161000u32).into(),
-        source: coin.my_address().to_string(),
+        source: coin.my_address.clone(),
         storage_limit: BigUint::from(5200u32).into(),
         balance: BigUint::from(0u8).into(),
         script: swap_script_json,
@@ -2970,7 +2966,7 @@ pub fn prepare_tezos_sandbox_network() -> (String, String) {
         counter: TezosUint(counter.0 + BigUint::from(1u8)),
         fee: BigUint::from(19694u32).into(),
         gas_limit: BigUint::from(146835u32).into(),
-        source: coin.my_address().to_string(),
+        source: coin.my_address.clone(),
         storage_limit: BigUint::from(5088u32).into(),
         balance: BigUint::from(0u8).into(),
         script: managed_ledger_script_json,

@@ -14,7 +14,7 @@ use std::convert::TryFrom;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
-use crate::tezos::{TezosValue, TezosUint, TezosPubkey};
+use crate::tezos::{TezosValue, TezosUint, TezosPubkey, TezosSignature, TezosAddress, TezosBlockHash, BabylonTransactionParams, EntrypointId};
 use num_bigint::BigUint;
 
 #[derive(Debug)]
@@ -93,7 +93,7 @@ pub struct Origination {
     pub counter: TezosUint,
     pub fee: TezosUint,
     pub gas_limit: TezosUint,
-    pub source: String,
+    pub source: TezosAddress,
     pub storage_limit: TezosUint,
     pub script: Json,
 }
@@ -104,16 +104,33 @@ pub struct TransactionParameters {
     pub value: TezosValue,
 }
 
+impl From<TransactionParameters> for BabylonTransactionParams {
+    fn from(input: TransactionParameters) -> Self {
+        let entrypoint = match input.entrypoint.as_ref() {
+            "default" => EntrypointId::Default,
+            "root" => EntrypointId::Root,
+            "do" => EntrypointId::Do,
+            "set_delegate" => EntrypointId::SetDelegate,
+            "remove_delegate" => EntrypointId::RemoveDelegate,
+            _ => EntrypointId::Named(input.entrypoint),
+        };
+        BabylonTransactionParams {
+            entrypoint,
+            params: input.value
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Transaction {
     pub amount: TezosUint,
     pub counter: TezosUint,
-    pub destination: String,
+    pub destination: TezosAddress,
     pub fee: TezosUint,
     pub gas_limit: TezosUint,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<TransactionParameters>,
-    pub source: String,
+    pub source: TezosAddress,
     pub storage_limit: TezosUint,
 }
 
@@ -123,7 +140,7 @@ pub struct Reveal {
     pub fee: TezosUint,
     pub gas_limit: TezosUint,
     pub public_key: TezosPubkey,
-    pub source: String,
+    pub source: TezosAddress,
     pub storage_limit: TezosUint,
 }
 
@@ -168,9 +185,9 @@ pub struct OperationsResult {
     protocol: String,
     chain_id: String,
     hash: String,
-    pub branch: String,
+    pub branch: TezosBlockHash,
     pub contents: Vec<OperationResult>,
-    pub signature: Option<String>,
+    pub signature: Option<TezosSignature>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

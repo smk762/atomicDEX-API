@@ -499,7 +499,7 @@ impl SwapOps for EthCoin {
         _time_lock: u32,
         _taker_pub: &EcPubkey,
         secret: &[u8],
-        secret_hash: &SecretHash,
+        _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(taker_payment_tx));
         let signed = try_fus!(SignedEthTx::new(tx));
@@ -514,7 +514,7 @@ impl SwapOps for EthCoin {
         _time_lock: u32,
         _maker_pub: &EcPubkey,
         secret: &[u8],
-        secret_hash: &SecretHash,
+        _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let tx: UnverifiedTransaction = try_fus!(rlp::decode(maker_payment_tx));
         let signed = try_fus!(SignedEthTx::new(tx));
