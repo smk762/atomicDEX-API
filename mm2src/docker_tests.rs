@@ -31,7 +31,7 @@ mod docker_tests {
     use coins::{FoundSwapTxSpend, MarketCoinOps, MmCoin, SwapOps, Transaction, WithdrawRequest};
     use coins::utxo::{coin_daemon_data_dir, utxo_coin_from_conf_and_request, zcash_params_path, UtxoCoin};
     use coins::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcClientOps};
-    use coins::tezos::{mla_mint_call, prepare_tezos_sandbox_network, tezos_coin_for_test, tezos_mla_coin_for_test, TezosCoin, TezosAddress};
+    use coins::tezos::{mla_mint_call, prepare_tezos_sandbox_network, tezos_coin_for_test, tezos_mla_coin_for_test, TezosAddress};
     use coins::tezos::tezos_constants::*;
     use futures01::Future;
     use gstuff::now_ms;
@@ -673,19 +673,6 @@ mod docker_tests {
             &unwrap!(XTZ_MLA_CONTRACT.lock()),
         );
         fill_xtz_address(&coin.my_address);
-        let params = mla_mint_call(&coin.my_address, &100000000u64.into());
-        let operation = unwrap!(block_on(coin.sign_and_send_operation(
-            0u8.into(),
-            &unwrap!(unwrap!(XTZ_MLA_CONTRACT.lock()).parse()),
-            Some(params),
-        )));
-        unwrap!(coin.wait_for_confirmations(
-            &operation.tx_hex(),
-            1,
-            now_ms() / 1000 + 120,
-            1,
-            1,
-        ).wait());
 
         let uuid = new_uuid();
         let secret = [0; 32];

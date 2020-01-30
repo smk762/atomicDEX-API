@@ -749,8 +749,11 @@ impl TezosCoin {
                     validation,
                     offset,
                 ).await);
-                if op_from_rpc.contents[0].metadata.operation_result.as_ref().unwrap().status != Status::applied {
-                    return ERR!("Operation status must be `applied`");
+                for content in op_from_rpc.contents.iter() {
+                    let operation_result = try_s!(content.metadata.operation_result.as_ref().ok_or(ERRL!("One of {:?} operation_result is None", op_from_rpc)));
+                    if operation_result.status != Status::applied {
+                        return ERR!("All {:?} statuses must be `applied`", op_from_rpc);
+                    }
                 }
                 let current_confirmations = current_head.level - block_number + 1;
                 if current_confirmations >= confirmations {
@@ -1952,6 +1955,7 @@ impl Into<TezosValue> for &TezosAddress {
 impl Into<TezosValue> for &BigUint {
     fn into(self) -> TezosValue {
         TezosValue::Int {
+            // BigUint::to_bigint always returns Some so unwrap is safe
             int: unwrap!(self.to_bigint()).into()
         }
     }
@@ -1960,6 +1964,7 @@ impl Into<TezosValue> for &BigUint {
 impl Into<TezosValue> for BigUint {
     fn into(self) -> TezosValue {
         TezosValue::Int {
+            // BigUint::to_bigint always returns Some so unwrap is safe
             int: unwrap!(self.to_bigint()).into()
         }
     }
@@ -2081,9 +2086,11 @@ fn big_uint_to_zarith_bytes(mut num: BigUint) -> Vec<u8> {
         let remainder = &num % 128u8;
         num = num / 128u8;
         if num == BigUint::from(0u32) {
+            // unwrap is safe because 0 <= remainder <= 127 so it always fits u8
             bytes.push(unwrap!(remainder.to_u8()));
             break;
         } else {
+            // unwrap is safe because 0 <= remainder <= 127 so it always fits u8
             bytes.push(unwrap!(remainder.to_u8()) ^ 1u8 << 7);
         }
     }
@@ -2102,6 +2109,7 @@ fn big_int_to_zarith_bytes(mut num: BigInt) -> Vec<u8> {
     };
 
     loop {
+        // unwrap is safe because divisor is either 64 or 128 so num % divisor always fits u8
         let mut remainder = unwrap!((&num % divisor).to_u8());
         num = num / divisor;
         if divisor == 64 {
@@ -2930,7 +2938,7 @@ pub fn tezos_mla_coin_for_test(priv_key: &[u8], node_url: &str, swap_contract: &
         "swap_contract_address": swap_contract,
         "mm2":1
     });
-    let coin = block_on(tezos_coin_from_conf_and_request("XTZ_MLA", &conf, &req, priv_key)).unwrap();
+    let coin = unwrap!(block_on(tezos_coin_from_conf_and_request("XTZ_MLA", &conf, &req, priv_key)));
     coin
 }
 
