@@ -54,7 +54,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrderding};
 use std::thread;
 use std::time::Duration;
-use web3::{ self, Web3 };
+use web3::{ Error as Web3Error, ErrorKind as Web3ErrorKind, self, Web3 };
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Transaction as Web3Transaction, TransactionId, H256, Trace, TraceFilterBuilder};
 
 use super::{CoinsContext, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
@@ -72,10 +72,16 @@ use crate::TransactionDetailsFut;
 mod eth_tests;
 
 /// https://github.com/artemii235/etomic-swap/blob/master/contracts/EtomicSwap.sol
-/// Dev chain (195.201.0.6:8565) contract address: 0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd
+/// Version 1 of EtomicSwap smart contract is deployed to following addresses:
+/// Dev chain (195.201.0.6:8565): 0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd
 /// Ropsten: https://ropsten.etherscan.io/address/0x7bc1bbdd6a0a722fc9bffc49c921b685ecb84b94
 /// ETH mainnet: https://etherscan.io/address/0x8500AFc0bc5214728082163326C2FF0C73f4a871
-const SWAP_CONTRACT_ABI: &'static str = r#"[{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"id","type":"bytes32"}],"name":"PaymentSent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"id","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"secret","type":"bytes32"}],"name":"ReceiverSpent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"id","type":"bytes32"}],"name":"SenderRefunded","type":"event"},{"constant":false,"inputs":[{"internalType":"bytes32","name":"_id","type":"bytes32"},{"internalType":"uint256","name":"_amount","type":"uint256"},{"internalType":"address","name":"_tokenAddress","type":"address"},{"internalType":"address","name":"_receiver","type":"address"},{"internalType":"uint64","name":"_lockTime","type":"uint64"},{"internalType":"enum EtomicSwap.SecretHashAlgo","name":"_algo","type":"uint8"},{"internalType":"bytes","name":"_secretHash","type":"bytes"}],"name":"erc20Payment","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"constant":false,"inputs":[{"internalType":"bytes32","name":"_id","type":"bytes32"},{"internalType":"address","name":"_receiver","type":"address"},{"internalType":"uint64","name":"_lockTime","type":"uint64"},{"internalType":"enum EtomicSwap.SecretHashAlgo","name":"_algo","type":"uint8"},{"internalType":"bytes","name":"_secretHash","type":"bytes"}],"name":"ethPayment","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"constant":false,"inputs":[{"internalType":"bytes32","name":"_id","type":"bytes32"},{"internalType":"uint256","name":"_amount","type":"uint256"},{"internalType":"bytes32","name":"_secret","type":"bytes32"},{"internalType":"address","name":"_tokenAddress","type":"address"},{"internalType":"address","name":"_sender","type":"address"}],"name":"receiverSpend","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"internalType":"bytes32","name":"_id","type":"bytes32"},{"internalType":"uint256","name":"_amount","type":"uint256"},{"internalType":"bytes","name":"_secretHash","type":"bytes"},{"internalType":"address","name":"_tokenAddress","type":"address"},{"internalType":"address","name":"_receiver","type":"address"}],"name":"senderRefund","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"inputs":[],"payable":false,"stateMutability":"nonpayable","type":"constructor"},{"constant":true,"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"payments","outputs":[{"internalType":"bytes20","name":"paymentHash","type":"bytes20"},{"internalType":"uint64","name":"lockTime","type":"uint64"},{"internalType":"enum EtomicSwap.PaymentState","name":"state","type":"uint8"},{"internalType":"enum EtomicSwap.SecretHashAlgo","name":"secret_hash_algo","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"}]"#;
+const SWAP_CONTRACT_ABI_V1: &'static str = r#"[{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_amount","type":"uint256"},{"name":"_secret","type":"bytes32"},{"name":"_tokenAddress","type":"address"},{"name":"_sender","type":"address"}],"name":"receiverSpend","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"","type":"bytes32"}],"name":"payments","outputs":[{"name":"paymentHash","type":"bytes20"},{"name":"lockTime","type":"uint64"},{"name":"state","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_receiver","type":"address"},{"name":"_secretHash","type":"bytes20"},{"name":"_lockTime","type":"uint64"}],"name":"ethPayment","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_amount","type":"uint256"},{"name":"_paymentHash","type":"bytes20"},{"name":"_tokenAddress","type":"address"},{"name":"_receiver","type":"address"}],"name":"senderRefund","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_id","type":"bytes32"},{"name":"_amount","type":"uint256"},{"name":"_tokenAddress","type":"address"},{"name":"_receiver","type":"address"},{"name":"_secretHash","type":"bytes20"},{"name":"_lockTime","type":"uint64"}],"name":"erc20Payment","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"inputs":[],"payable":false,"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"name":"id","type":"bytes32"}],"name":"PaymentSent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"id","type":"bytes32"},{"indexed":false,"name":"secret","type":"bytes32"}],"name":"ReceiverSpent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"id","type":"bytes32"}],"name":"SenderRefunded","type":"event"}]"#;
+/// Version 2 of EtomicSwap smart contract is deployed to following addresses:
+/// Dev chain (195.201.0.6:8565): 0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd
+const SWAP_CONTRACT_ABI_V2: &'static str = r#"[{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"id","type":"bytes32"}],"name":"PaymentSent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"id","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"secret","type":"bytes32"}],"name":"ReceiverSpent","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"bytes32","name":"id","type":"bytes32"}],"name":"SenderRefunded","type":"event"},{"constant":false,"inputs":[{"internalType":"bytes32","name":"_id","type":"bytes32"},{"internalType":"uint256","name":"_amount","type":"uint256"},{"internalType":"address","name":"_tokenAddress","type":"address"},{"internalType":"address","name":"_receiver","type":"address"},{"internalType":"uint64","name":"_lockTime","type":"uint64"},{"internalType":"enum EtomicSwap.SecretHashAlgo","name":"_algo","type":"uint8"},{"internalType":"bytes","name":"_secretHash","type":"bytes"}],"name":"erc20Payment","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"constant":false,"inputs":[{"internalType":"bytes32","name":"_id","type":"bytes32"},{"internalType":"address","name":"_receiver","type":"address"},{"internalType":"uint64","name":"_lockTime","type":"uint64"},{"internalType":"enum EtomicSwap.SecretHashAlgo","name":"_algo","type":"uint8"},{"internalType":"bytes","name":"_secretHash","type":"bytes"}],"name":"ethPayment","outputs":[],"payable":true,"stateMutability":"payable","type":"function"},{"constant":false,"inputs":[{"internalType":"bytes32","name":"_id","type":"bytes32"},{"internalType":"uint256","name":"_amount","type":"uint256"},{"internalType":"bytes32","name":"_secret","type":"bytes32"},{"internalType":"address","name":"_tokenAddress","type":"address"},{"internalType":"address","name":"_sender","type":"address"}],"name":"receiverSpend","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"internalType":"bytes32","name":"_id","type":"bytes32"},{"internalType":"uint256","name":"_amount","type":"uint256"},{"internalType":"bytes","name":"_secretHash","type":"bytes"},{"internalType":"address","name":"_tokenAddress","type":"address"},{"internalType":"address","name":"_receiver","type":"address"}],"name":"senderRefund","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"inputs":[],"payable":false,"stateMutability":"nonpayable","type":"constructor"},{"constant":true,"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"payments","outputs":[{"internalType":"bytes20","name":"paymentHash","type":"bytes20"},{"internalType":"uint64","name":"lockTime","type":"uint64"},{"internalType":"enum EtomicSwap.PaymentState","name":"state","type":"uint8"},{"internalType":"enum EtomicSwap.SecretHashAlgo","name":"secret_hash_algo","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"}]"#;
+
+const VERSION_ABI: &'static str = r#"[{"constant":false,"inputs":[],"name":"version","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"nonpayable","type":"function"}]"#;
 /// https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20.md
 const ERC20_ABI: &'static str = r#"[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_from","type":"address"},{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_subtractedValue","type":"uint256"}],"name":"decreaseApproval","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_to","type":"address"},{"name":"_value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_addedValue","type":"uint256"}],"name":"increaseApproval","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"_owner","type":"address"},{"name":"_spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"inputs":[],"payable":false,"stateMutability":"nonpayable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"}]"#;
 
@@ -89,7 +95,11 @@ const RIPE_SHA256: u8 = 0;
 const SHA256: u8 = 1;
 
 lazy_static! {
-    static ref SWAP_CONTRACT: Contract = unwrap!(Contract::load(SWAP_CONTRACT_ABI.as_bytes()));
+    static ref SWAP_CONTRACT_V1: Contract = unwrap!(Contract::load(SWAP_CONTRACT_ABI_V1.as_bytes()));
+
+    static ref SWAP_CONTRACT_V2: Contract = unwrap!(Contract::load(SWAP_CONTRACT_ABI_V2.as_bytes()));
+
+    static ref VERSION_CONTRACT: Contract = unwrap!(Contract::load(VERSION_ABI.as_bytes()));
 
     static ref ERC20_CONTRACT: Contract = unwrap!(Contract::load(ERC20_ABI.as_bytes()));
 }
@@ -185,7 +195,7 @@ impl EthCoinImpl {
         from_block: BlockNumber,
         to_block: BlockNumber,
         limit: Option<usize>
-    ) -> Box<dyn Future<Item=Vec<Trace>, Error=String>> {
+    ) -> impl Future<Item=Vec<Trace>, Error=String> {
         let mut filter = TraceFilterBuilder::default()
             .from_address(from_addr)
             .to_address(to_addr)
@@ -196,7 +206,7 @@ impl EthCoinImpl {
             filter = filter.count(l);
         }
 
-        Box::new(self.web3.trace().filter(filter.build()).map_err(|e| ERRL!("{}", e)))
+        self.web3.trace().filter(filter.build()).map_err(|e| ERRL!("{}", e))
     }
 
     fn eth_traces_path(&self, ctx: &MmArc) -> PathBuf {
@@ -272,7 +282,7 @@ impl EthCoinImpl {
 
     /// Gets `ReceiverSpent` events from etomic swap smart contract (`self.swap_contract_address` ) since `from_block`
     fn spend_events(&self, from_block: u64) -> Box<dyn Future<Item=Vec<Log>, Error=String> + Send> {
-        let contract_event = try_fus!(SWAP_CONTRACT.event("ReceiverSpent"));
+        let contract_event = try_fus!(SWAP_CONTRACT_V2.event("ReceiverSpent"));
         let filter = FilterBuilder::default()
             .topics(Some(vec![contract_event.signature()]), None, None, None)
             .from_block(BlockNumber::Number(from_block))
@@ -284,7 +294,7 @@ impl EthCoinImpl {
 
     /// Gets `SenderRefunded` events from etomic swap smart contract (`self.swap_contract_address` ) since `from_block`
     fn refund_events(&self, from_block: u64) -> Box<dyn Future<Item=Vec<Log>, Error=String> + Send> {
-        let contract_event = try_fus!(SWAP_CONTRACT.event("SenderRefunded"));
+        let contract_event = try_fus!(SWAP_CONTRACT_V2.event("SenderRefunded"));
         let filter = FilterBuilder::default()
             .topics(Some(vec![contract_event.signature()]), None, None, None)
             .from_block(BlockNumber::Number(from_block))
@@ -307,7 +317,7 @@ impl EthCoinImpl {
             EthCoinType::Erc20(_token_addr) => "erc20Payment",
         };
 
-        let payment_func = try_s!(SWAP_CONTRACT.function(func_name));
+        let payment_func = try_s!(SWAP_CONTRACT_V2.function(func_name));
         let decoded = try_s!(payment_func.decode_input(&tx.data));
         let id = match &decoded[0] {
             Token::FixedBytes(bytes) => bytes.clone(),
@@ -806,7 +816,7 @@ impl MarketCoinOps for EthCoin {
             EthCoinType::Erc20(_token_addr) => "erc20Payment",
         };
 
-        let payment_func = try_fus!(SWAP_CONTRACT.function(func_name));
+        let payment_func = try_fus!(SWAP_CONTRACT_V2.function(func_name));
         let decoded = try_fus!(payment_func.decode_input(&tx.data));
         let id = match &decoded[0] {
             Token::FixedBytes(bytes) => bytes.clone(),
@@ -998,7 +1008,7 @@ impl EthCoin {
 
         match self.coin_type {
             EthCoinType::Eth => {
-                let function = try_fus!(SWAP_CONTRACT.function("ethPayment"));
+                let function = try_fus!(SWAP_CONTRACT_V2.function("ethPayment"));
                 let data = try_fus!(function.encode_input(&[
                     Token::FixedBytes(id),
                     Token::Address(receiver_addr),
@@ -1011,7 +1021,7 @@ impl EthCoin {
             EthCoinType::Erc20(token_addr) => {
                 let allowance_fut = self.allowance(self.swap_contract_address);
 
-                let function = try_fus!(SWAP_CONTRACT.function("erc20Payment"));
+                let function = try_fus!(SWAP_CONTRACT_V2.function("erc20Payment"));
                 let data = try_fus!(function.encode_input(&[
                     Token::FixedBytes(id),
                     Token::Uint(U256::from(value)),
@@ -1044,13 +1054,13 @@ impl EthCoin {
         payment: SignedEthTx,
         secret: &[u8],
     ) -> EthTxFut {
-        let spend_func = try_fus!(SWAP_CONTRACT.function("receiverSpend"));
+        let spend_func = try_fus!(SWAP_CONTRACT_V2.function("receiverSpend"));
         let clone = self.clone();
         let secret_vec = secret.to_vec();
 
         match self.coin_type {
             EthCoinType::Eth => {
-                let payment_func = try_fus!(SWAP_CONTRACT.function("ethPayment"));
+                let payment_func = try_fus!(SWAP_CONTRACT_V2.function("ethPayment"));
                 let decoded = try_fus!(payment_func.decode_input(&payment.data));
 
                 let state_f = self.payment_status(decoded[0].clone());
@@ -1072,7 +1082,7 @@ impl EthCoin {
                 }))
             },
             EthCoinType::Erc20(token_addr) => {
-                let payment_func = try_fus!(SWAP_CONTRACT.function("erc20Payment"));
+                let payment_func = try_fus!(SWAP_CONTRACT_V2.function("erc20Payment"));
                 let decoded = try_fus!(payment_func.decode_input(&payment.data));
                 let state_f = self.payment_status(decoded[0].clone());
 
@@ -1098,12 +1108,12 @@ impl EthCoin {
         &self,
         payment: SignedEthTx,
     ) -> EthTxFut {
-        let refund_func = try_fus!(SWAP_CONTRACT.function("senderRefund"));
+        let refund_func = try_fus!(SWAP_CONTRACT_V2.function("senderRefund"));
         let clone = self.clone();
 
         match self.coin_type {
             EthCoinType::Eth => {
-                let payment_func = try_fus!(SWAP_CONTRACT.function("ethPayment"));
+                let payment_func = try_fus!(SWAP_CONTRACT_V2.function("ethPayment"));
                 let decoded = try_fus!(payment_func.decode_input(&payment.data));
 
                 let state_f = self.payment_status(decoded[0].clone());
@@ -1125,7 +1135,7 @@ impl EthCoin {
                 }))
             },
             EthCoinType::Erc20(token_addr) => {
-                let payment_func = try_fus!(SWAP_CONTRACT.function("erc20Payment"));
+                let payment_func = try_fus!(SWAP_CONTRACT_V2.function("erc20Payment"));
                 let decoded = try_fus!(payment_func.decode_input(&payment.data));
                 let state_f = self.payment_status(decoded[0].clone());
                 Box::new(state_f.and_then(move |state| -> EthTxFut {
@@ -1159,7 +1169,7 @@ impl EthCoin {
                     Token::Address(self.my_address),
                 ]));
 
-                let call_fut = self.call_request(token_addr, None, Some(data.into()));
+                let call_fut = self.call_request(token_addr, None, Some(data.into())).map_err(|e| ERRL!("{:?}", e));
 
                 Box::new(call_fut.and_then(move |res| {
                     let decoded = try_s!(function.decode_output(&res.0));
@@ -1177,7 +1187,7 @@ impl EthCoin {
         Box::new(self.web3.eth().balance(self.my_address, Some(BlockNumber::Latest)).map_err(|e| ERRL!("{}", e)))
     }
 
-    fn call_request(&self, to: Address, value: Option<U256>, data: Option<Bytes>) -> impl Future<Item=Bytes, Error=String> {
+    fn call_request(&self, to: Address, value: Option<U256>, data: Option<Bytes>) -> impl Future<Item=Bytes, Error=Web3Error> {
         let request = CallRequest {
             from: Some(self.my_address),
             to,
@@ -1187,7 +1197,7 @@ impl EthCoin {
             data
         };
 
-        self.web3.eth().call(request, Some(BlockNumber::Latest)).map_err(|e| ERRL!("{}", e))
+        self.web3.eth().call(request, Some(BlockNumber::Latest))
     }
 
     fn allowance(&self, spender: Address) -> Box<dyn Future<Item=U256, Error=String> + Send + 'static> {
@@ -1200,7 +1210,7 @@ impl EthCoin {
                     Token::Address(spender),
                 ]));
 
-                let call_fut = self.call_request(token_addr, None, Some(data.into()));
+                let call_fut = self.call_request(token_addr, None, Some(data.into())).map_err(|e| ERRL!("{:?}", e));
 
                 Box::new(call_fut.and_then(move |res| {
                     let decoded = try_s!(function.decode_output(&res.0));
@@ -1231,7 +1241,7 @@ impl EthCoin {
 
     /// Gets `PaymentSent` events from etomic swap smart contract (`self.swap_contract_address` ) since `from_block`
     fn payment_sent_events(&self, from_block: u64) -> Box<dyn Future<Item=Vec<Log>, Error=String> + Send> {
-        let contract_event = try_fus!(SWAP_CONTRACT.event("PaymentSent"));
+        let contract_event = try_fus!(SWAP_CONTRACT_V2.event("PaymentSent"));
         let filter = FilterBuilder::default()
             .topics(Some(vec![contract_event.signature()]), None, None, None)
             .from_block(BlockNumber::Number(from_block))
@@ -1282,7 +1292,7 @@ impl EthCoin {
                         return ERR!("Payment tx {:?} value is invalid, expected {:?}", tx_from_rpc, expected_value);
                     }
 
-                    let function = try_s!(SWAP_CONTRACT.function("ethPayment"));
+                    let function = try_s!(SWAP_CONTRACT_V2.function("ethPayment"));
                     let decoded = try_s!(function.decode_input(&tx_from_rpc.input.0));
                     if decoded[1] != Token::Address(selfi.my_address) {
                         return ERR!("Payment tx receiver arg {:?} is invalid, expected {:?}", decoded[1], Token::Address(selfi.my_address));
@@ -1306,7 +1316,7 @@ impl EthCoin {
                         return ERR!("Payment tx {:?} was sent to wrong address, expected {:?}", tx_from_rpc, selfi.swap_contract_address);
                     }
 
-                    let function = try_s!(SWAP_CONTRACT.function("erc20Payment"));
+                    let function = try_s!(SWAP_CONTRACT_V2.function("erc20Payment"));
                     let decoded = try_s!(function.decode_input(&tx_from_rpc.input.0));
                     if decoded[1] != Token::Uint(expected_value) {
                         return ERR!("Payment tx value arg {:?} is invalid, expected {:?}", decoded[1], Token::Uint(expected_value));
@@ -1341,11 +1351,12 @@ impl EthCoin {
     }
 
     fn payment_status(&self, token: Token) -> Box<dyn Future<Item=U256, Error=String> + Send + 'static> {
-        let function = try_fus!(SWAP_CONTRACT.function("payments"));
+        let function = try_fus!(SWAP_CONTRACT_V2.function("payments"));
 
         let data = try_fus!(function.encode_input(&[token]));
+        let call_fut = self.call_request(self.swap_contract_address, None, Some(data.into())).map_err(|e| ERRL!("{:?}", e));
 
-        Box::new(self.call_request(self.swap_contract_address, None, Some(data.into())).and_then(move |bytes| {
+        Box::new(call_fut.and_then(move |bytes| {
             let decoded_tokens = try_s!(function.decode_output(&bytes.0));
             match decoded_tokens[2] {
                 Token::Uint(state) => Ok(state),
@@ -1847,6 +1858,29 @@ impl EthCoin {
         };
         Box::new(fut.boxed().compat())
     }
+
+    fn get_contract_version(&self, addr: Address) -> impl Future<Item=U256, Error=String> {
+        // unwraps can't panic because VERSION_CONTRACT_ABI is hardcoded
+        let function = unwrap!(VERSION_CONTRACT.function("version"));
+        let data = unwrap!(function.encode_input(&[]));
+        self.call_request(addr, None, Some(data.into())).then(move |res| {
+            match res {
+                Ok(bytes) => {
+                    let tokens = try_s!(function.decode_output(&bytes.0));
+                    match tokens.first() {
+                        Some(Token::Uint(num)) => Ok(num.clone()),
+                        _ => ERR!("First token of {:?} version function output must be Some(Token::Uint), but got {:?}", addr, tokens.first()),
+                    }
+                },
+                Err(e) => {
+                    match e.0 {
+                        Web3ErrorKind::Rpc(_) => Ok(1.into()),
+                        _ => ERR!("{}", e),
+                    }
+                }
+            }
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -2081,7 +2115,7 @@ impl Transaction for SignedEthTx {
     fn tx_hex(&self) -> Vec<u8> { rlp::encode(self).to_vec() }
 
     fn extract_secret(&self) -> Result<Vec<u8>, String> {
-        let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
+        let function = try_s!(SWAP_CONTRACT_V2.function("receiverSpend"));
         let tokens = try_s!(function.decode_input(&self.data));
         match &tokens[2] {
             Token::FixedBytes(secret) => Ok(secret.to_vec()),

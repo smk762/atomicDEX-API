@@ -384,6 +384,19 @@ fn test_get_pubkey() {
     assert_eq!(expected_pub, coin.get_pubkey());
 }
 
+#[test]
+fn test_version() {
+    let (_, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()]);
+
+    let contract = Address::from("0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd");
+    let result = unwrap!(coin.get_contract_version(contract).wait());
+    assert_eq!(U256::from(2), result);
+
+    let contract = Address::from("0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd");
+    let result = unwrap!(coin.get_contract_version(contract).wait());
+    assert_eq!(U256::from(1), result);
+}
+
 #[cfg(feature = "w-bindgen")]
 mod wasm_bindgen_tests {
     use crate::lp_coininit;
