@@ -740,7 +740,7 @@ pub async fn trade_between_2_nodes<'a>(
     let maker_error_events = vec!["StartFailed", "NegotiateFailed", "TakerFeeValidateFailed",
                                   "MakerPaymentTransactionFailed", "MakerPaymentDataSendFailed", "MakerPaymentWaitConfirmFailed",
                                   "TakerPaymentValidateFailed", "TakerPaymentWaitConfirmFailed", "TakerPaymentSpendFailed",
-                                  "MakerPaymentRefunded", "MakerPaymentRefundFailed"];
+                                  "MakerPaymentWaitRefundStarted", "MakerPaymentRefunded", "MakerPaymentRefundFailed"];
 
     let taker_success_events = vec!["Started", "Negotiated", "TakerFeeSent", "MakerPaymentReceived",
                                     "MakerPaymentWaitConfirmStarted", "MakerPaymentValidatedAndConfirmed",
@@ -750,7 +750,7 @@ pub async fn trade_between_2_nodes<'a>(
                                   "MakerPaymentValidateFailed", "MakerPaymentWaitConfirmFailed",
                                   "TakerPaymentTransactionFailed", "TakerPaymentWaitConfirmFailed",
                                   "TakerPaymentDataSendFailed", "TakerPaymentWaitForSpendFailed",
-                                  "MakerPaymentSpendFailed", "TakerPaymentRefunded",
+                                  "MakerPaymentSpendFailed", "TakerPaymentWaitRefundStarted", "TakerPaymentRefunded",
                                   "TakerPaymentRefundFailed"];
 
     for uuid in uuids.iter() {
