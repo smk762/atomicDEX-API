@@ -281,12 +281,12 @@ impl EthCoinImpl {
     }
 
     /// Gets `ReceiverSpent` events from etomic swap smart contract (`self.swap_contract_address` ) since `from_block`
-    fn spend_events(&self, from_block: u64) -> Box<dyn Future<Item=Vec<Log>, Error=String> + Send> {
+    fn spend_events(&self, contract_addr: Address, from_block: u64) -> Box<dyn Future<Item=Vec<Log>, Error=String> + Send> {
         let contract_event = try_fus!(SWAP_CONTRACT_V2.event("ReceiverSpent"));
         let filter = FilterBuilder::default()
             .topics(Some(vec![contract_event.signature()]), None, None, None)
             .from_block(BlockNumber::Number(from_block))
-            .address(vec![self.swap_contract_address])
+            .address(vec![contract_addr])
             .build();
 
         Box::new(self.web3.eth().logs(filter).map_err(|e| ERRL!("{}", e)))
@@ -324,7 +324,11 @@ impl EthCoinImpl {
             _ => panic!(),
         };
 
-        let spend_events = try_s!(self.spend_events(search_from_block).compat().await);
+        let contract_addr = match tx.action {
+            Action::Call(addr) => addr,
+            Action::Create => return ERR!("Transaction action must be Action::Call"),
+        };
+        let spend_events = try_s!(self.spend_events(contract_addr, search_from_block).compat().await);
         let found = spend_events.iter().find(|event| &event.data.0[..32] == id.as_slice());
 
         if let Some(event) = found {
@@ -825,8 +829,12 @@ impl MarketCoinOps for EthCoin {
         let selfi = self.clone();
 
         let fut = async move {
+            let contract_addr = match tx.action {
+                Action::Call(addr) => addr,
+                Action::Create => return ERR!("Transaction action must be Action::Call"),
+            };
             loop {
-                let events = match selfi.spend_events(from_block).compat().await {
+                let events = match selfi.spend_events(contract_addr, from_block).compat().await {
                     Ok(ev) => ev,
                     Err(e) => {
                         log!("Error " (e) " getting spend events");
