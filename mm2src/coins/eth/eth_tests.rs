@@ -3,15 +3,16 @@ use common::crypto::{SecretHash, SecretHashAlgo};
 use common::mm_ctx::{MmArc, MmCtxBuilder};
 use common::for_tests::wait_for_log;
 use futures::future::join_all;
-use super::*;
 use mocktopus::mocking::*;
+use rand::Rng;
+use super::*;
 
 fn check_sum(addr: &str, expected: &str) {
     let actual = checksum_address(addr);
     assert_eq!(expected, actual);
 }
 
-fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCoin) {
+fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>, swap_contract_address: &'static str) -> (MmArc, EthCoin) {
     let secret_bytes = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
     let key_pair = KeyPair::from_secret_slice(&secret_bytes).unwrap();
     let transport = Web3Transport::new(urls).unwrap();
@@ -25,7 +26,7 @@ fn eth_coin_for_test(coin_type: EthCoinType, urls: Vec<String>) -> (MmArc, EthCo
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         my_address: key_pair.address(),
         priv_key: unwrap!(EcPrivkey::new(CurveType::SECP256K1, &secret_bytes)),
-        swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
+        swap_contract_address: Address::from(swap_contract_address),
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
         web3,
@@ -136,110 +137,332 @@ fn test_wei_from_big_decimal() {
 }
 
 #[test]
-#[ignore]
-/// temporary ignore, will refactor later to use dev chain and properly check transaction statuses
-fn send_and_refund_erc20_payment() {
-    let secret_bytes = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
-    let key_pair = KeyPair::from_secret_slice(&secret_bytes).unwrap();
-    let transport = Web3Transport::new(vec!["https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b".into()]).unwrap();
-    let web3 = Web3::new(transport);
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let coin = EthCoin(Arc::new(EthCoinImpl {
-        ticker: "ETH".into(),
-        coin_type: EthCoinType::Erc20(Address::from("0xc0eb7AeD740E1796992A08962c15661bDEB58003")),
-        my_address: key_pair.address(),
-        priv_key: unwrap!(EcPrivkey::new(CurveType::SECP256K1, &secret_bytes)),
-        swap_contract_address: Address::from("0x06964d4DAB22f96c1c382ef6f2b6b8324950f9FD"),
-        web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: false}],
-        web3,
-        decimals: 18,
-        gas_station_url: None,
-        history_sync_state: Mutex::new(HistorySyncState::NotStarted),
-        ctx: ctx.weak(),
-        required_confirmations: 1.into(),
-    }));
+fn send_and_refund_eth_payment_v1() {
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd");
+    let block = unwrap!(coin.current_block().wait());
+    let mut rng = rand::thread_rng();
+    let secret: [u8; 32] = rng.gen();
+    let secret_hash = SecretHash::from_secret(SecretHashAlgo::Ripe160Sha256, &secret);
 
-    let taker_pub = EcPubkey {
-        curve_type: CurveType::SECP256K1,
-        bytes: unwrap!(hex::decode("03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06")),
-    };
-    let payment = coin.send_maker_payment(
-        &[],
-        (now_ms() / 1000) as u32 - 200,
-        &taker_pub,
-        &SecretHash::default(),
-        "0.001".parse().unwrap(),
-    ).wait().unwrap();
-
-    log!([payment]);
-
-    thread::sleep(Duration::from_secs(60));
-
-    let refund = coin.send_maker_refunds_payment(
-        &[],
-        &payment.tx_hex,
-        (now_ms() / 1000) as u32 - 200,
-        &taker_pub,
-        &SecretHash::default(),
-    ).wait().unwrap();
-
-    log!([refund]);
-}
-
-#[test]
-#[ignore]
-fn send_and_refund_eth_payment() {
-    let secret_bytes = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
-    let key_pair = KeyPair::from_secret_slice(&secret_bytes).unwrap();
-    let transport = Web3Transport::new(vec!["http://195.201.0.6:8545".into()]).unwrap();
-    let web3 = Web3::new(transport);
-    let ctx = MmCtxBuilder::new().into_mm_arc();
-    let secret = [0u8; 32];
-    let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
-    let coin = EthCoin(Arc::new(EthCoinImpl {
-        ticker: "ETH".into(),
-        coin_type: EthCoinType::Eth,
-        my_address: key_pair.address(),
-        priv_key: unwrap!(EcPrivkey::new(CurveType::SECP256K1, &secret_bytes)),
-        swap_contract_address: Address::from("0x06964d4DAB22f96c1c382ef6f2b6b8324950f9FD"),
-        web3_instances: vec![Web3Instance {web3: web3.clone(), is_parity: true}],
-        web3,
-        decimals: 18,
-        gas_station_url: None,
-        history_sync_state: Mutex::new(HistorySyncState::NotStarted),
-        ctx: ctx.weak(),
-        required_confirmations: 1.into(),
-    }));
-
-    let block = coin.current_block().wait().unwrap();
-
-    let payment = coin.send_maker_payment(
+    let payment = unwrap!(coin.send_maker_payment(
         &[],
         (now_ms() / 1000) as u32 - 200,
         &coin.get_pubkey(),
         &secret_hash,
         "0.001".parse().unwrap(),
-    ).wait().unwrap();
+    ).wait());
 
-    log!([payment]);
-
-    coin.wait_for_confirmations(
+    unwrap!(coin.wait_for_confirmations(
         &payment.tx_hex,
         1,
         now_ms() / 1000 + 1000,
         1,
         block,
-    ).wait().unwrap();
+    ).wait());
 
-    let refund = coin.send_maker_refunds_payment(
+    let refund = unwrap!(coin.send_maker_refunds_payment(
         &[],
         &payment.tx_hex,
         (now_ms() / 1000) as u32 - 200,
         &coin.get_pubkey(),
         &secret_hash,
-    ).wait().unwrap();
+    ).wait());
 
-    log!([refund]);
+    unwrap!(coin.wait_for_confirmations(
+        &refund.tx_hex(),
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+}
+
+#[test]
+fn send_and_refund_eth_payment_v2() {
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd");
+    let block = unwrap!(coin.current_block().wait());
+    let mut rng = rand::thread_rng();
+    let secret: [u8; 32] = rng.gen();
+    let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
+
+    let payment = unwrap!(coin.send_maker_payment(
+        &[],
+        (now_ms() / 1000) as u32 - 200,
+        &coin.get_pubkey(),
+        &secret_hash,
+        "0.001".parse().unwrap(),
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &payment.tx_hex,
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+
+    let refund = unwrap!(coin.send_maker_refunds_payment(
+        &[],
+        &payment.tx_hex,
+        (now_ms() / 1000) as u32 - 200,
+        &coin.get_pubkey(),
+        &secret_hash,
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &refund.tx_hex(),
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+}
+
+#[test]
+fn send_and_refund_erc20_payment_v1() {
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Erc20("0x2b294f029fde858b2c62184e8390591755521d8e".into()), vec!["http://195.201.0.6:8565".into()], "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd");
+    let block = unwrap!(coin.current_block().wait());
+    let mut rng = rand::thread_rng();
+    let secret: [u8; 32] = rng.gen();
+    let secret_hash = SecretHash::from_secret(SecretHashAlgo::Ripe160Sha256, &secret);
+
+    let payment = unwrap!(coin.send_maker_payment(
+        &[],
+        (now_ms() / 1000) as u32 - 200,
+        &coin.get_pubkey(),
+        &secret_hash,
+        "0.001".parse().unwrap(),
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &payment.tx_hex,
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+
+    let refund = unwrap!(coin.send_maker_refunds_payment(
+        &[],
+        &payment.tx_hex,
+        (now_ms() / 1000) as u32 - 200,
+        &coin.get_pubkey(),
+        &secret_hash,
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &refund.tx_hex(),
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+}
+
+#[test]
+fn send_and_refund_erc20_payment_v2() {
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Erc20("0x2b294f029fde858b2c62184e8390591755521d8e".into()), vec!["http://195.201.0.6:8565".into()], "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd");
+    let block = unwrap!(coin.current_block().wait());
+    let mut rng = rand::thread_rng();
+    let secret: [u8; 32] = rng.gen();
+    let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
+    let payment = unwrap!(coin.send_maker_payment(
+        &[],
+        (now_ms() / 1000) as u32 - 200,
+        &coin.get_pubkey(),
+        &secret_hash,
+        "0.001".parse().unwrap(),
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &payment.tx_hex,
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+
+    let refund = unwrap!(coin.send_maker_refunds_payment(
+        &[],
+        &payment.tx_hex,
+        (now_ms() / 1000) as u32 - 200,
+        &coin.get_pubkey(),
+        &secret_hash,
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &refund.tx_hex(),
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+}
+
+#[test]
+fn send_and_spend_eth_payment_v1() {
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd");
+    let block = unwrap!(coin.current_block().wait());
+    let secret = [0u8; 32];
+    let secret_hash = SecretHash::from_secret(SecretHashAlgo::Ripe160Sha256, &secret);
+
+    let payment = unwrap!(coin.send_maker_payment(
+        &[],
+        (now_ms() / 1000) as u32 + 4000,
+        &coin.get_pubkey(),
+        &secret_hash,
+        "0.001".parse().unwrap(),
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &payment.tx_hex,
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+
+    let spend = unwrap!(coin.send_taker_spends_maker_payment(
+        &[],
+        &payment.tx_hex,
+        (now_ms() / 1000) as u32 + 4000,
+        &coin.get_pubkey(),
+        &secret,
+        &secret_hash,
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &spend.tx_hex(),
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+}
+
+#[test]
+fn send_and_spend_eth_payment_v2() {
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd");
+    let block = unwrap!(coin.current_block().wait());
+    let mut rng = rand::thread_rng();
+    let secret: [u8; 32] = rng.gen();
+    let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
+
+    let payment = unwrap!(coin.send_maker_payment(
+        &[],
+        (now_ms() / 1000) as u32 + 4000,
+        &coin.get_pubkey(),
+        &secret_hash,
+        "0.001".parse().unwrap(),
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &payment.tx_hex,
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+
+    let spend = unwrap!(coin.send_taker_spends_maker_payment(
+        &[],
+        &payment.tx_hex,
+        (now_ms() / 1000) as u32 + 4000,
+        &coin.get_pubkey(),
+        &secret,
+        &secret_hash,
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &spend.tx_hex(),
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+}
+
+#[test]
+fn send_and_spend_erc20_payment_v1() {
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Erc20("0x2b294f029fde858b2c62184e8390591755521d8e".into()), vec!["http://195.201.0.6:8565".into()], "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd");
+    let block = unwrap!(coin.current_block().wait());
+    let mut rng = rand::thread_rng();
+    let secret: [u8; 32] = rng.gen();
+    let secret_hash = SecretHash::from_secret(SecretHashAlgo::Ripe160Sha256, &secret);
+
+    let payment = unwrap!(coin.send_maker_payment(
+        &[],
+        (now_ms() / 1000) as u32 + 4000,
+        &coin.get_pubkey(),
+        &secret_hash,
+        "0.001".parse().unwrap(),
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &payment.tx_hex,
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+
+    let spend = unwrap!(coin.send_taker_spends_maker_payment(
+        &[],
+        &payment.tx_hex,
+        (now_ms() / 1000) as u32 + 4000,
+        &coin.get_pubkey(),
+        &secret,
+        &secret_hash,
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &spend.tx_hex(),
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+}
+
+#[test]
+fn send_and_spend_erc20_payment_v2() {
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Erc20("0x2b294f029fde858b2c62184e8390591755521d8e".into()), vec!["http://195.201.0.6:8565".into()], "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd");
+    let block = unwrap!(coin.current_block().wait());
+    let mut rng = rand::thread_rng();
+    let secret: [u8; 32] = rng.gen();
+    let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
+    let payment = unwrap!(coin.send_maker_payment(
+        &[],
+        (now_ms() / 1000) as u32 + 4000,
+        &coin.get_pubkey(),
+        &secret_hash,
+        "0.001".parse().unwrap(),
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &payment.tx_hex,
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
+
+    let spend = unwrap!(coin.send_taker_spends_maker_payment(
+        &[],
+        &payment.tx_hex,
+        (now_ms() / 1000) as u32 + 4000,
+        &coin.get_pubkey(),
+        &secret,
+        &secret_hash,
+    ).wait());
+
+    unwrap!(coin.wait_for_confirmations(
+        &spend.tx_hex(),
+        1,
+        now_ms() / 1000 + 1000,
+        1,
+        block,
+    ).wait());
 }
 
 #[test]
@@ -287,7 +510,7 @@ fn test_nonce_several_urls() {
 
 #[test]
 fn test_wait_for_payment_spend_timeout() {
-    EthCoinImpl::spend_events.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(vec![]))));
+    EthCoinImpl::spend_events.mock_safe(|_, _, _| MockResult::Return(Box::new(futures01::future::ok(vec![]))));
 
     let secret_bytes = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
     let key_pair = KeyPair::from_secret_slice(&secret_bytes).unwrap();
@@ -321,7 +544,7 @@ fn test_wait_for_payment_spend_timeout() {
 
 #[test]
 fn test_withdraw_impl_manual_fee() {
-    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()]);
+    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://dummy.dummy".into()], "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd");
 
     EthCoin::my_balance.mock_safe(|_| {
         let balance = wei_from_big_decimal(&1000000000.into(), 18).unwrap();
@@ -352,7 +575,7 @@ fn test_withdraw_impl_manual_fee() {
 fn test_nonce_lock() {
     // send several transactions concurrently to check that they are not using same nonce
     // using real ETH dev node
-    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()]);
+    let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd");
     let mut futures = vec![];
     for _ in 0..5 {
         futures.push(sign_and_send_transaction_impl(
@@ -376,7 +599,7 @@ fn test_nonce_lock() {
 
 #[test]
 fn test_get_pubkey() {
-    let (_, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()]);
+    let (_, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd");
     let expected_pub = EcPubkey {
         curve_type: CurveType::SECP256K1,
         bytes: unwrap!(hex::decode("02031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3")),
@@ -386,7 +609,7 @@ fn test_get_pubkey() {
 
 #[test]
 fn test_version() {
-    let (_, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()]);
+    let (_, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd");
 
     let contract = Address::from("0x06964d4dab22f96c1c382ef6f2b6b8324950f9fd");
     let result = unwrap!(coin.get_contract_version(contract).wait());
