@@ -158,7 +158,6 @@ pub struct Web3Instance {
     is_parity: bool,
 }
 
-#[cfg_attr(test, mockable)]
 impl EthCoinImpl {
     /// Gets Transfer events from ERC20 smart contract `addr` between `from_block` and `to_block`
     fn erc20_transfer_events(
@@ -293,12 +292,12 @@ impl EthCoinImpl {
     }
 
     /// Gets `SenderRefunded` events from etomic swap smart contract (`self.swap_contract_address` ) since `from_block`
-    fn refund_events(&self, from_block: u64) -> Box<dyn Future<Item=Vec<Log>, Error=String> + Send> {
+    fn refund_events(&self, contract_addr: Address, from_block: u64) -> Box<dyn Future<Item=Vec<Log>, Error=String> + Send> {
         let contract_event = try_fus!(SWAP_CONTRACT_V2.event("SenderRefunded"));
         let filter = FilterBuilder::default()
             .topics(Some(vec![contract_event.signature()]), None, None, None)
             .from_block(BlockNumber::Number(from_block))
-            .address(vec![self.swap_contract_address])
+            .address(vec![contract_addr])
             .build();
 
         Box::new(self.web3.eth().logs(filter).map_err(|e| ERRL!("{}", e)))
@@ -317,17 +316,23 @@ impl EthCoinImpl {
             EthCoinType::Erc20(_token_addr) => "erc20Payment",
         };
 
-        let payment_func = try_s!(SWAP_CONTRACT_V2.function(func_name));
+        let contract_addr = match tx.action {
+            Action::Call(addr) => addr,
+            Action::Create => return ERR!("Transaction action must be Action::Call"),
+        };
+
+        let version = try_s!(self.get_contract_version(contract_addr).compat().await);
+        let payment_func = match version.as_u64() {
+            1 => try_s!(SWAP_CONTRACT_V1.function(func_name)),
+            2 => try_s!(SWAP_CONTRACT_V2.function(func_name)),
+            _ => return ERR!("Unsupported swap contract version {}", version),
+        };
         let decoded = try_s!(payment_func.decode_input(&tx.data));
         let id = match &decoded[0] {
             Token::FixedBytes(bytes) => bytes.clone(),
             _ => panic!(),
         };
 
-        let contract_addr = match tx.action {
-            Action::Call(addr) => addr,
-            Action::Create => return ERR!("Transaction action must be Action::Call"),
-        };
         let spend_events = try_s!(self.spend_events(contract_addr, search_from_block).compat().await);
         let found = spend_events.iter().find(|event| &event.data.0[..32] == id.as_slice());
 
@@ -345,7 +350,7 @@ impl EthCoinImpl {
             }
         }
 
-        let refund_events = try_s!(self.refund_events(search_from_block).compat().await);
+        let refund_events = try_s!(self.refund_events(contract_addr, search_from_block).compat().await);
         let found = refund_events.iter().find(|event| &event.data.0[..32] == id.as_slice());
 
         if let Some(event) = found {
@@ -363,6 +368,42 @@ impl EthCoinImpl {
         }
 
         Ok(None)
+    }
+
+    fn call_request(&self, to: Address, value: Option<U256>, data: Option<Bytes>) -> impl Future<Item=Bytes, Error=Web3Error> {
+        let request = CallRequest {
+            from: Some(self.my_address),
+            to,
+            gas: None,
+            gas_price: None,
+            value,
+            data
+        };
+
+        self.web3.eth().call(request, Some(BlockNumber::Latest))
+    }
+
+    fn get_contract_version(&self, addr: Address) -> impl Future<Item=U256, Error=String> {
+        // unwraps can't panic because VERSION_CONTRACT_ABI is hardcoded
+        let function = unwrap!(VERSION_CONTRACT.function("version"));
+        let data = unwrap!(function.encode_input(&[]));
+        self.call_request(addr, None, Some(data.into())).then(move |res| {
+            match res {
+                Ok(bytes) => {
+                    let tokens = try_s!(function.decode_output(&bytes.0));
+                    match tokens.first() {
+                        Some(Token::Uint(num)) => Ok(num.clone()),
+                        _ => ERR!("First token of {:?} version function output must be Some(Token::Uint), but got {:?}", addr, tokens.first()),
+                    }
+                },
+                Err(e) => {
+                    match e.0 {
+                        Web3ErrorKind::Rpc(_) => Ok(1.into()),
+                        _ => ERR!("{}", e),
+                    }
+                }
+            }
+        })
     }
 }
 
@@ -1093,7 +1134,11 @@ impl EthCoin {
         let secret_vec = secret.to_vec();
         let coin = self.clone();
         let fut = async move {
-            let version = try_s!(coin.get_contract_version(coin.swap_contract_address).compat().await).as_u64();
+            let contract_addr = match payment.action {
+                Action::Call(addr) => addr,
+                Action::Create => return ERR!("Swap payment action must be Action::Call"),
+            };
+            let version = try_s!(coin.get_contract_version(contract_addr).compat().await).as_u64();
             match version {
                 1 => {
                     let spend_func = try_s!(SWAP_CONTRACT_V1.function("receiverSpend"));
@@ -1102,7 +1147,7 @@ impl EthCoin {
                             let payment_func = try_s!(SWAP_CONTRACT_V1.function("ethPayment"));
                             let decoded = try_s!(payment_func.decode_input(&payment.data));
 
-                            let state = try_s!(coin.payment_status(coin.swap_contract_address, &SWAP_CONTRACT_V1, decoded[0].clone()).compat().await);
+                            let state = try_s!(coin.payment_status(contract_addr, &SWAP_CONTRACT_V1, decoded[0].clone()).compat().await);
                             if state != PAYMENT_STATE_SENT.into() {
                                 return ERR!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state);
                             }
@@ -1115,13 +1160,13 @@ impl EthCoin {
                                 Token::Address(payment.sender),
                             ]));
 
-                            coin.sign_and_send_transaction(0.into(), Action::Call(coin.swap_contract_address), data, U256::from(150000)).compat().await
+                            coin.sign_and_send_transaction(0.into(), Action::Call(contract_addr), data, U256::from(150000)).compat().await
                         },
                         EthCoinType::Erc20(token_addr) => {
                             let payment_func = try_s!(SWAP_CONTRACT_V1.function("erc20Payment"));
                             let decoded = try_s!(payment_func.decode_input(&payment.data));
 
-                            let state = try_s!(coin.payment_status(coin.swap_contract_address, &SWAP_CONTRACT_V1, decoded[0].clone()).compat().await);
+                            let state = try_s!(coin.payment_status(contract_addr, &SWAP_CONTRACT_V1, decoded[0].clone()).compat().await);
                             if state != PAYMENT_STATE_SENT.into() {
                                 return ERR!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state);
                             }
@@ -1135,7 +1180,7 @@ impl EthCoin {
                             ];
 
                             let data = try_s!(spend_func.encode_input(&input));
-                            coin.sign_and_send_transaction(0.into(), Action::Call(coin.swap_contract_address), data, U256::from(150000)).compat().await
+                            coin.sign_and_send_transaction(0.into(), Action::Call(contract_addr), data, U256::from(150000)).compat().await
                         }
                     }
                 },
@@ -1146,7 +1191,7 @@ impl EthCoin {
                             let payment_func = try_s!(SWAP_CONTRACT_V2.function("ethPayment"));
                             let decoded = try_s!(payment_func.decode_input(&payment.data));
 
-                            let state = try_s!(coin.payment_status(coin.swap_contract_address, &SWAP_CONTRACT_V2, decoded[0].clone()).compat().await);
+                            let state = try_s!(coin.payment_status(contract_addr, &SWAP_CONTRACT_V2, decoded[0].clone()).compat().await);
                             if state != PAYMENT_STATE_SENT.into() {
                                 return ERR!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state);
                             }
@@ -1159,13 +1204,13 @@ impl EthCoin {
                                 Token::Address(payment.sender()),
                             ]));
 
-                            coin.sign_and_send_transaction(0.into(), Action::Call(coin.swap_contract_address), data, U256::from(150000)).compat().await
+                            coin.sign_and_send_transaction(0.into(), Action::Call(contract_addr), data, U256::from(150000)).compat().await
                         },
                         EthCoinType::Erc20(token_addr) => {
                             let payment_func = try_s!(SWAP_CONTRACT_V2.function("erc20Payment"));
                             let decoded = try_s!(payment_func.decode_input(&payment.data));
 
-                            let state = try_s!(coin.payment_status(coin.swap_contract_address, &SWAP_CONTRACT_V2, decoded[0].clone()).compat().await);
+                            let state = try_s!(coin.payment_status(contract_addr, &SWAP_CONTRACT_V2, decoded[0].clone()).compat().await);
                             if state != PAYMENT_STATE_SENT.into() {
                                 return ERR!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state);
                             }
@@ -1178,7 +1223,7 @@ impl EthCoin {
                                 Token::Address(payment.sender()),
                             ]));
 
-                            coin.sign_and_send_transaction(0.into(), Action::Call(coin.swap_contract_address), data, U256::from(150000)).compat().await
+                            coin.sign_and_send_transaction(0.into(), Action::Call(contract_addr), data, U256::from(150000)).compat().await
                         }
                     }
                 },
@@ -1194,7 +1239,11 @@ impl EthCoin {
     ) -> EthTxFut {
         let coin = self.clone();
         let fut = async move {
-            let version = try_s!(coin.get_contract_version(coin.swap_contract_address).compat().await).as_u64();
+            let contract_addr = match payment.action {
+                Action::Call(addr) => addr,
+                Action::Create => return ERR!("Swap payment action must be Action::Call"),
+            };
+            let version = try_s!(coin.get_contract_version(contract_addr).compat().await).as_u64();
             match version {
                 1 => {
                     let refund_func = try_s!(SWAP_CONTRACT_V1.function("senderRefund"));
@@ -1203,7 +1252,7 @@ impl EthCoin {
                             let payment_func = try_s!(SWAP_CONTRACT_V1.function("ethPayment"));
                             let decoded = try_s!(payment_func.decode_input(&payment.data));
 
-                            let state = try_s!(coin.payment_status(coin.swap_contract_address, &SWAP_CONTRACT_V1, decoded[0].clone()).compat().await);
+                            let state = try_s!(coin.payment_status(contract_addr, &SWAP_CONTRACT_V1, decoded[0].clone()).compat().await);
                             if state != PAYMENT_STATE_SENT.into() {
                                 return ERR!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state);
                             }
@@ -1217,13 +1266,13 @@ impl EthCoin {
                                 decoded[1].clone(),
                             ]));
 
-                            coin.sign_and_send_transaction(0.into(), Action::Call(coin.swap_contract_address), data, U256::from(150000)).compat().await
+                            coin.sign_and_send_transaction(0.into(), Action::Call(contract_addr), data, U256::from(150000)).compat().await
                         },
                         EthCoinType::Erc20(token_addr) => {
                             let payment_func = try_s!(SWAP_CONTRACT_V1.function("erc20Payment"));
                             let decoded = try_s!(payment_func.decode_input(&payment.data));
 
-                            let state = try_s!(coin.payment_status(coin.swap_contract_address, &SWAP_CONTRACT_V1, decoded[0].clone()).compat().await);
+                            let state = try_s!(coin.payment_status(contract_addr, &SWAP_CONTRACT_V1, decoded[0].clone()).compat().await);
                             if state != PAYMENT_STATE_SENT.into() {
                                 return ERR!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state);
                             }
@@ -1237,7 +1286,7 @@ impl EthCoin {
                             ];
 
                             let data = try_s!(refund_func.encode_input(&input));
-                            coin.sign_and_send_transaction(0.into(), Action::Call(coin.swap_contract_address), data, U256::from(150000)).compat().await
+                            coin.sign_and_send_transaction(0.into(), Action::Call(contract_addr), data, U256::from(150000)).compat().await
                         }
                     }
                 },
@@ -1248,7 +1297,7 @@ impl EthCoin {
                             let payment_func = try_s!(SWAP_CONTRACT_V2.function("ethPayment"));
                             let decoded = try_s!(payment_func.decode_input(&payment.data));
 
-                            let state = try_s!(coin.payment_status(coin.swap_contract_address, &SWAP_CONTRACT_V2, decoded[0].clone()).compat().await);
+                            let state = try_s!(coin.payment_status(contract_addr, &SWAP_CONTRACT_V2, decoded[0].clone()).compat().await);
                             if state != PAYMENT_STATE_SENT.into() {
                                 return ERR!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state);
                             }
@@ -1262,13 +1311,13 @@ impl EthCoin {
                                 decoded[1].clone(),
                             ]));
 
-                            coin.sign_and_send_transaction(0.into(), Action::Call(coin.swap_contract_address), data, U256::from(150000)).compat().await
+                            coin.sign_and_send_transaction(0.into(), Action::Call(contract_addr), data, U256::from(150000)).compat().await
                         },
                         EthCoinType::Erc20(token_addr) => {
                             let payment_func = try_s!(SWAP_CONTRACT_V2.function("erc20Payment"));
                             let decoded = try_s!(payment_func.decode_input(&payment.data));
 
-                            let state = try_s!(coin.payment_status(coin.swap_contract_address, &SWAP_CONTRACT_V2, decoded[0].clone()).compat().await);
+                            let state = try_s!(coin.payment_status(contract_addr, &SWAP_CONTRACT_V2, decoded[0].clone()).compat().await);
                             if state != PAYMENT_STATE_SENT.into() {
                                 return ERR!("Payment {:?} state is not PAYMENT_STATE_SENT, got {}", payment, state);
                             }
@@ -1282,7 +1331,7 @@ impl EthCoin {
                             ];
 
                             let data = try_s!(refund_func.encode_input(&input));
-                            coin.sign_and_send_transaction(0.into(), Action::Call(coin.swap_contract_address), data, U256::from(150000)).compat().await
+                            coin.sign_and_send_transaction(0.into(), Action::Call(contract_addr), data, U256::from(150000)).compat().await
                         }
                     }
                 },
@@ -1317,19 +1366,6 @@ impl EthCoin {
 
     fn eth_balance(&self) -> Box<dyn Future<Item=U256, Error=String> + Send> {
         Box::new(self.web3.eth().balance(self.my_address, Some(BlockNumber::Latest)).map_err(|e| ERRL!("{}", e)))
-    }
-
-    fn call_request(&self, to: Address, value: Option<U256>, data: Option<Bytes>) -> impl Future<Item=Bytes, Error=Web3Error> {
-        let request = CallRequest {
-            from: Some(self.my_address),
-            to,
-            gas: None,
-            gas_price: None,
-            value,
-            data
-        };
-
-        self.web3.eth().call(request, Some(BlockNumber::Latest))
     }
 
     fn allowance(&self, spender: Address) -> Box<dyn Future<Item=U256, Error=String> + Send + 'static> {
@@ -1485,7 +1521,7 @@ impl EthCoin {
     fn payment_status(&self, addr: Address, contract: &'static Contract, token: Token) -> Box<dyn Future<Item=U256, Error=String> + Send + 'static> {
         let function = try_fus!(contract.function("payments"));
         let data = try_fus!(function.encode_input(&[token]));
-        let call_fut = self.call_request(self.swap_contract_address, None, Some(data.into())).map_err(|e| ERRL!("{:?}", e));
+        let call_fut = self.call_request(addr, None, Some(data.into())).map_err(|e| ERRL!("{:?}", e));
 
         Box::new(call_fut.and_then(move |bytes| {
             let decoded_tokens = try_s!(function.decode_output(&bytes.0));
@@ -1988,29 +2024,6 @@ impl EthCoin {
             }
         };
         Box::new(fut.boxed().compat())
-    }
-
-    fn get_contract_version(&self, addr: Address) -> impl Future<Item=U256, Error=String> {
-        // unwraps can't panic because VERSION_CONTRACT_ABI is hardcoded
-        let function = unwrap!(VERSION_CONTRACT.function("version"));
-        let data = unwrap!(function.encode_input(&[]));
-        self.call_request(addr, None, Some(data.into())).then(move |res| {
-            match res {
-                Ok(bytes) => {
-                    let tokens = try_s!(function.decode_output(&bytes.0));
-                    match tokens.first() {
-                        Some(Token::Uint(num)) => Ok(num.clone()),
-                        _ => ERR!("First token of {:?} version function output must be Some(Token::Uint), but got {:?}", addr, tokens.first()),
-                    }
-                },
-                Err(e) => {
-                    match e.0 {
-                        Web3ErrorKind::Rpc(_) => Ok(1.into()),
-                        _ => ERR!("{}", e),
-                    }
-                }
-            }
-        })
     }
 }
 

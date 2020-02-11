@@ -4,7 +4,7 @@ use common::mm_ctx::{MmArc, MmCtxBuilder};
 use common::for_tests::wait_for_log;
 use futures::future::join_all;
 use mocktopus::mocking::*;
-use rand::Rng;
+use rand::{Rng};
 use super::*;
 
 fn check_sum(addr: &str, expected: &str) {
@@ -160,6 +160,8 @@ fn send_and_refund_eth_payment_v1() {
         block,
     ).wait());
 
+    // recreate coin to reset swap contract address to ensure that contract address from payment is used
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0x0000000000000000000000000000000000000000");
     let refund = unwrap!(coin.send_maker_refunds_payment(
         &[],
         &payment.tx_hex,
@@ -175,6 +177,9 @@ fn send_and_refund_eth_payment_v1() {
         1,
         block,
     ).wait());
+
+    let find = unwrap!(block_on(coin.search_for_swap_tx_spend(&payment.tx_hex, block)));
+    assert_eq!(Some(FoundSwapTxSpend::Refunded(refund)), find);
 }
 
 #[test]
@@ -201,6 +206,8 @@ fn send_and_refund_eth_payment_v2() {
         block,
     ).wait());
 
+    // recreate coin to reset swap contract address to ensure that contract address from payment is used
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0x0000000000000000000000000000000000000000");
     let refund = unwrap!(coin.send_maker_refunds_payment(
         &[],
         &payment.tx_hex,
@@ -216,6 +223,9 @@ fn send_and_refund_eth_payment_v2() {
         1,
         block,
     ).wait());
+
+    let find = unwrap!(block_on(coin.search_for_swap_tx_spend(&payment.tx_hex, block)));
+    assert_eq!(Some(FoundSwapTxSpend::Refunded(refund)), find);
 }
 
 #[test]
@@ -242,6 +252,8 @@ fn send_and_refund_erc20_payment_v1() {
         block,
     ).wait());
 
+    // recreate coin to reset swap contract address to ensure that contract address from payment is used
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Erc20("0x2b294f029fde858b2c62184e8390591755521d8e".into()), vec!["http://195.201.0.6:8565".into()], "0x0000000000000000000000000000000000000000");
     let refund = unwrap!(coin.send_maker_refunds_payment(
         &[],
         &payment.tx_hex,
@@ -257,6 +269,9 @@ fn send_and_refund_erc20_payment_v1() {
         1,
         block,
     ).wait());
+
+    let find = unwrap!(block_on(coin.search_for_swap_tx_spend(&payment.tx_hex, block)));
+    assert_eq!(Some(FoundSwapTxSpend::Refunded(refund)), find);
 }
 
 #[test]
@@ -282,6 +297,8 @@ fn send_and_refund_erc20_payment_v2() {
         block,
     ).wait());
 
+    // recreate coin to reset swap contract address to ensure that contract address from payment is used
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Erc20("0x2b294f029fde858b2c62184e8390591755521d8e".into()), vec!["http://195.201.0.6:8565".into()], "0x0000000000000000000000000000000000000000");
     let refund = unwrap!(coin.send_maker_refunds_payment(
         &[],
         &payment.tx_hex,
@@ -297,13 +314,17 @@ fn send_and_refund_erc20_payment_v2() {
         1,
         block,
     ).wait());
+
+    let find = unwrap!(block_on(coin.search_for_swap_tx_spend(&payment.tx_hex, block)));
+    assert_eq!(Some(FoundSwapTxSpend::Refunded(refund)), find);
 }
 
 #[test]
 fn send_and_spend_eth_payment_v1() {
     let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd");
     let block = unwrap!(coin.current_block().wait());
-    let secret = [0u8; 32];
+    let mut rng = rand::thread_rng();
+    let secret: [u8; 32] = rng.gen();
     let secret_hash = SecretHash::from_secret(SecretHashAlgo::Ripe160Sha256, &secret);
 
     let payment = unwrap!(coin.send_maker_payment(
@@ -314,6 +335,8 @@ fn send_and_spend_eth_payment_v1() {
         "0.001".parse().unwrap(),
     ).wait());
 
+    // recreate coin to reset swap contract address to ensure that contract address from payment is used
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0x0000000000000000000000000000000000000000");
     unwrap!(coin.wait_for_confirmations(
         &payment.tx_hex,
         1,
@@ -338,6 +361,12 @@ fn send_and_spend_eth_payment_v1() {
         1,
         block,
     ).wait());
+
+    let extracted_secret = unwrap!(spend.extract_secret());
+    assert_eq!(secret.to_vec(), extracted_secret);
+
+    let find = unwrap!(block_on(coin.search_for_swap_tx_spend(&payment.tx_hex, block)));
+    assert_eq!(Some(FoundSwapTxSpend::Spent(spend)), find);
 }
 
 #[test]
@@ -364,6 +393,8 @@ fn send_and_spend_eth_payment_v2() {
         block,
     ).wait());
 
+    // recreate coin to reset swap contract address to ensure that contract address from payment is used
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], "0x0000000000000000000000000000000000000000");
     let spend = unwrap!(coin.send_taker_spends_maker_payment(
         &[],
         &payment.tx_hex,
@@ -380,6 +411,12 @@ fn send_and_spend_eth_payment_v2() {
         1,
         block,
     ).wait());
+
+    let extracted_secret = unwrap!(spend.extract_secret());
+    assert_eq!(secret.to_vec(), extracted_secret);
+
+    let find = unwrap!(block_on(coin.search_for_swap_tx_spend(&payment.tx_hex, block)));
+    assert_eq!(Some(FoundSwapTxSpend::Spent(spend)), find);
 }
 
 #[test]
@@ -406,6 +443,8 @@ fn send_and_spend_erc20_payment_v1() {
         block,
     ).wait());
 
+    // recreate coin to reset swap contract address to ensure that contract address from payment is used
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Erc20("0x2b294f029fde858b2c62184e8390591755521d8e".into()), vec!["http://195.201.0.6:8565".into()], "0x0000000000000000000000000000000000000000");
     let spend = unwrap!(coin.send_taker_spends_maker_payment(
         &[],
         &payment.tx_hex,
@@ -422,6 +461,12 @@ fn send_and_spend_erc20_payment_v1() {
         1,
         block,
     ).wait());
+
+    let extracted_secret = unwrap!(spend.extract_secret());
+    assert_eq!(secret.to_vec(), extracted_secret);
+
+    let find = unwrap!(block_on(coin.search_for_swap_tx_spend(&payment.tx_hex, block)));
+    assert_eq!(Some(FoundSwapTxSpend::Spent(spend)), find);
 }
 
 #[test]
@@ -447,6 +492,8 @@ fn send_and_spend_erc20_payment_v2() {
         block,
     ).wait());
 
+    // recreate coin to reset swap contract address to ensure that contract address from payment is used
+    let (_ctx, coin) = eth_coin_for_test(EthCoinType::Erc20("0x2b294f029fde858b2c62184e8390591755521d8e".into()), vec!["http://195.201.0.6:8565".into()], "0x0000000000000000000000000000000000000000");
     let spend = unwrap!(coin.send_taker_spends_maker_payment(
         &[],
         &payment.tx_hex,
@@ -463,6 +510,12 @@ fn send_and_spend_erc20_payment_v2() {
         1,
         block,
     ).wait());
+
+    let extracted_secret = unwrap!(spend.extract_secret());
+    assert_eq!(secret.to_vec(), extracted_secret);
+
+    let find = unwrap!(block_on(coin.search_for_swap_tx_spend(&payment.tx_hex, block)));
+    assert_eq!(Some(FoundSwapTxSpend::Spent(spend)), find);
 }
 
 #[test]
@@ -510,8 +563,6 @@ fn test_nonce_several_urls() {
 
 #[test]
 fn test_wait_for_payment_spend_timeout() {
-    EthCoinImpl::spend_events.mock_safe(|_, _, _| MockResult::Return(Box::new(futures01::future::ok(vec![]))));
-
     let secret_bytes = hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap();
     let key_pair = KeyPair::from_secret_slice(&secret_bytes).unwrap();
     let transport = Web3Transport::new(vec!["http://195.201.0.6:8555".into()]).unwrap();
