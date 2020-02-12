@@ -582,12 +582,12 @@ impl TezosCoinImpl {
                                 },
                                 key: uuid.clone(),
                             };
-                            let swap: TezosAtomicSwap = match try_s!(self.rpc_client.get_big_map(&self.swap_contract_address.to_string(), req).await) {
+                            let destination = self.contract_id_to_addr(&op.destination);
+                            let swap: TezosAtomicSwap = match try_s!(self.rpc_client.get_big_map(&destination.to_string(), req).await) {
                                 Some(s) => s,
                                 None => return ERR!("Swap with uuid {:?} is not found", uuid),
                             };
 
-                            let destination = self.contract_id_to_addr(&op.destination);
                             match swap.state {
                                 TezosAtomicSwapState::ReceiverSpent => {
                                     let found = try_s!(self.find_op_by_uuid_and_entry_path(
@@ -626,12 +626,12 @@ impl TezosCoinImpl {
                                 },
                                 key: uuid.clone(),
                             };
-                            let swap: TezosAtomicSwap = match try_s!(self.rpc_client.get_big_map(&self.swap_contract_address.to_string(), req).await) {
+                            let destination = self.contract_id_to_addr(&op.destination);
+                            let swap: TezosAtomicSwap = match try_s!(self.rpc_client.get_big_map(&destination.to_string(), req).await) {
                                 Some(s) => s,
                                 None => return ERR!("Swap with uuid {:?} is not found", uuid),
                             };
 
-                            let destination = self.contract_id_to_addr(&op.destination);
                             match swap.state {
                                 TezosAtomicSwapState::ReceiverSpent => {
                                     let found = try_s!(self.find_op_by_uuid_and_entry_path(
@@ -1014,12 +1014,13 @@ impl SwapOps for TezosCoin {
     fn send_maker_spends_taker_payment(
         &self,
         uuid: &[u8],
-        _taker_payment_tx: &[u8],
+        taker_payment_tx: &[u8],
         _time_lock: u32,
         _taker_pub: &EcPubkey,
         secret: &[u8],
         _secret_hash: &SecretHash,
     ) -> TransactionFut {
+        let operation: TezosOperation = try_fus!(deserialize(taker_payment_tx).map_err(|e| fomat!([e])));
         let uuid = tagged_swap_uuid(uuid, TradeActor::Taker);
         let args = receiver_spends_call(
             uuid.into(),
@@ -1029,7 +1030,8 @@ impl SwapOps for TezosCoin {
 
         let coin = self.clone();
         let fut = Box::pin(async move {
-            let dest = coin.swap_contract_address.clone();
+            let dest = try_s!(operation.first_tx_destination().ok_or(format!("Failed to get destination from operation {:?}", operation)));
+            let dest = coin.contract_id_to_addr(&dest);
             coin.sign_and_send_operation(BigUint::from(0u8), &dest, Some(args)).await
         }).compat().map(|tx| tx.into());
         Box::new(fut)
@@ -1212,7 +1214,7 @@ impl SwapOps for TezosCoin {
         secret_hash: &SecretHash,
         amount: BigDecimal,
     ) -> Box<dyn Future<Item=(), Error=String> + Send> {
-        let operation: TezosOperation = try_fus!(deserialize(payment_tx).map_err(|e|  fomat!([e])));
+        let operation: TezosOperation = try_fus!(deserialize(payment_tx).map_err(|e| fomat!([e])));
         let taker_addr = try_fus!(self.address_from_ec_pubkey(taker_pub));
         let uuid = tagged_swap_uuid(uuid, TradeActor::Taker);
         let secret_hash = secret_hash.clone();
@@ -2526,6 +2528,18 @@ pub struct TezosOperation {
     branch: H256,
     contents: Vec<TezosOperationEnum>,
     signature: Option<H512>,
+}
+
+impl TezosOperation {
+    fn first_tx_destination(&self) -> Option<ContractId> {
+        for op in self.contents.iter() {
+            match op {
+                TezosOperationEnum ::BabylonTransaction(t) => return Some(t.destination.clone()),
+                _ => (),
+            }
+        }
+        None
+    }
 }
 
 impl Deserializable for TezosOperation {

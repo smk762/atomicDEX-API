@@ -529,6 +529,8 @@ mod docker_tests {
             1
         ).wait());
 
+        // ensure that coin uses smart contract address from payment, not the one configured for coin
+        let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_MLA_CONTRACT.lock())));
         let spend = unwrap!(coin.send_maker_spends_taker_payment(
             uuid.as_bytes(),
             &payment.tx_hex,
