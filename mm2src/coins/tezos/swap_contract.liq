@@ -1,9 +1,5 @@
 contract type ERC = sig
-
-  type storage
-
-  val%entry transfer: address * address * nat -> storage -> operation list * storage
-
+  val%entry transfer: address * address * nat
 end
 
 type swap_state =
@@ -33,13 +29,16 @@ type atomic_swap =
   }
 type storage = {
   swaps: (bytes, atomic_swap) big_map;
-  field: unit;
+  version: nat;
 }
 
 let%init storage = {
   swaps = BigMap;
-  field = ();
+  version = 1p;
 }
+
+let%entry default ( to_forward : dun ) _ =
+  failwith ("Not implemented")
 
 let%entry init_tezos_swap (uuid, lock_time, secret_hash, secret_hash_type, receiver) storage =
   let expected_len = match secret_hash_type with
@@ -107,9 +106,9 @@ let%entry init_erc_swap (uuid, lock_time, secret_hash, secret_hash_type, receive
       }
     | Some _ -> failwith "Swap was initialized already" in
 
-  let my_address = Contract.address (Contract.self ()) in
+  let my_address = Contract.untype (Contract.self ()) in
   let new_swaps = Map.add uuid new_swap storage.swaps in
-  let op = match (Contract.at contract_addr : ERC.instance option) with
+  let op = match [%handle ERC.transfer] contract_addr with
     | None -> failwith ("Cannot recover erc contract from:", contract_addr)
     | Some my_contract -> my_contract.transfer (Current.source (), my_address, amount) ~amount:0tz
   in
@@ -143,11 +142,11 @@ let%entry receiver_spends (uuid, secret, send_to) storage =
   let timestamp = Current.time () in
   let swap = swap.state <- ReceiverSpent in
   let swap = swap.spent_at <- (Some timestamp) in
-  let my_address = Contract.address (Contract.self ()) in
+  let my_address = Contract.untype (Contract.self ()) in
 
   let op = match swap.contract_address with
     | None -> Account.transfer ~dest:send_to ~amount:swap.amount
-    | Some contract_addr -> match (Contract.at contract_addr : ERC.instance option) with
+    | Some contract_addr -> match [%handle ERC.transfer] contract_addr with
       | None -> failwith ("Cannot recover erc contract from:", contract_addr)
       | Some my_contract -> my_contract.transfer (my_address, swap.receiver, swap.amount_nat) ~amount:0tz
   in
@@ -175,11 +174,11 @@ let%entry sender_refunds (uuid, send_to) storage =
 
   let swap = swap.state <- SenderRefunded in
   let swap = swap.spent_at <- (Some timestamp) in
-  let my_address = Contract.address (Contract.self ()) in
+  let my_address = Contract.untype (Contract.self ()) in
 
   let op = match swap.contract_address with
     | None -> Account.transfer ~dest:send_to ~amount:swap.amount
-    | Some contract_addr -> match (Contract.at contract_addr : ERC.instance option) with
+    | Some contract_addr -> match [%handle ERC.transfer] contract_addr with
       | None -> failwith ("Cannot recover erc contract from:", contract_addr)
       | Some my_contract -> my_contract.transfer (my_address, swap.sender, swap.amount_nat) ~amount:0tz
   in
