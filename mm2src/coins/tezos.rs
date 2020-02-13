@@ -10,7 +10,7 @@ use common::mm_ctx::MmArc;
 use common::mm_number::MmNumber;
 use crate::{TradeInfo, FoundSwapTxSpend, WithdrawRequest};
 use derive_more::{Add, Deref, Display};
-use futures::TryFutureExt;
+use futures::{FutureExt, TryFutureExt};
 use futures::lock::{Mutex as AsyncMutex};
 use futures01::Future;
 use num_bigint::{BigInt, BigUint, ToBigInt};
@@ -759,6 +759,39 @@ impl TezosCoin {
             Timer::sleep(check_every as f64).await
         }
     }
+
+    fn spend_htlc_payment(&self, uuid: &[u8], tx: &[u8], secret: &[u8]) -> TransactionFut {
+        let operation: TezosOperation = try_fus!(deserialize(tx).map_err(|e| fomat!([e])));
+        let args = receiver_spends_call(
+            uuid.into(),
+            secret.to_vec().into(),
+            &self.my_address,
+        );
+
+        let dest = try_fus!(operation.first_tx_destination().ok_or(format!("Failed to get destination from operation {:?}", operation)));
+        let dest = self.contract_id_to_addr(&dest);
+        let coin = self.clone();
+        let fut = async move {
+            coin.sign_and_send_operation(BigUint::from(0u8), &dest, Some(args)).await
+        };
+        Box::new(fut.boxed().compat().map(|tx| tx.into()))
+    }
+
+    fn refund_htlc_payment(&self, uuid: &[u8], tx: &[u8]) -> TransactionFut {
+        let operation: TezosOperation = try_fus!(deserialize(tx).map_err(|e| fomat!([e])));
+        let args = sender_refunds_call(
+            uuid.into(),
+            &self.my_address,
+        );
+
+        let dest = try_fus!(operation.first_tx_destination().ok_or(format!("Failed to get destination from operation {:?}", operation)));
+        let dest = self.contract_id_to_addr(&dest);
+        let coin = self.clone();
+        let fut = async move {
+            coin.sign_and_send_operation(BigUint::from(0u8), &dest, Some(args)).await
+        };
+        Box::new(fut.boxed().compat().map(|tx| tx.into()))
+    }
 }
 
 impl MarketCoinOps for TezosCoin {
@@ -1020,81 +1053,45 @@ impl SwapOps for TezosCoin {
         secret: &[u8],
         _secret_hash: &SecretHash,
     ) -> TransactionFut {
-        let operation: TezosOperation = try_fus!(deserialize(taker_payment_tx).map_err(|e| fomat!([e])));
         let uuid = tagged_swap_uuid(uuid, TradeActor::Taker);
-        let args = receiver_spends_call(
-            uuid.into(),
-            secret.to_vec().into(),
-            self.my_address.clone(),
-        );
-
-        let coin = self.clone();
-        let fut = Box::pin(async move {
-            let dest = try_s!(operation.first_tx_destination().ok_or(format!("Failed to get destination from operation {:?}", operation)));
-            let dest = coin.contract_id_to_addr(&dest);
-            coin.sign_and_send_operation(BigUint::from(0u8), &dest, Some(args)).await
-        }).compat().map(|tx| tx.into());
-        Box::new(fut)
+        self.spend_htlc_payment(&uuid, taker_payment_tx, secret)
     }
 
     fn send_taker_spends_maker_payment(
         &self,
         uuid: &[u8],
-        _maker_payment_tx: &[u8],
+        maker_payment_tx: &[u8],
         _time_lock: u32,
         _maker_pub: &EcPubkey,
         secret: &[u8],
         _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Maker);
-        let args = receiver_spends_call(
-            uuid.into(),
-            secret.to_vec().into(),
-            self.my_address.clone(),
-        );
-
-        let coin = self.clone();
-        let fut = Box::pin(async move {
-            let dest = coin.swap_contract_address.clone();
-            coin.sign_and_send_operation(BigUint::from(0u8), &dest, Some(args)).await
-        }).compat().map(|tx| tx.into());
-        Box::new(fut)
+        self.spend_htlc_payment(&uuid, maker_payment_tx, secret)
     }
 
     fn send_taker_refunds_payment(
         &self,
         uuid: &[u8],
-        _taker_payment_tx: &[u8],
+        taker_payment_tx: &[u8],
         _time_lock: u32,
         _maker_pub: &EcPubkey,
         _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Taker);
-        let args = sender_refunds_call(uuid.into(), &self.my_address);
-        let coin = self.clone();
-        let fut = Box::pin(async move {
-            let dest = coin.swap_contract_address.clone();
-            coin.sign_and_send_operation(BigUint::from(0u8), &dest, Some(args)).await
-        }).compat().map(|tx| tx.into());
-        Box::new(fut)
+        self.refund_htlc_payment(&uuid, taker_payment_tx)
     }
 
     fn send_maker_refunds_payment(
         &self,
         uuid: &[u8],
-        _maker_payment_tx: &[u8],
+        maker_payment_tx: &[u8],
         _time_lock: u32,
         _taker_pub: &EcPubkey,
         _secret_hash: &SecretHash,
     ) -> TransactionFut {
         let uuid = tagged_swap_uuid(uuid, TradeActor::Maker);
-        let args = sender_refunds_call(uuid.into(), &self.my_address);
-        let coin = self.clone();
-        let fut = Box::pin(async move {
-            let dest = coin.swap_contract_address.clone();
-            coin.sign_and_send_operation(BigUint::from(0u8), &dest, Some(args)).await
-        }).compat().map(|tx| tx.into());
-        Box::new(fut)
+        self.refund_htlc_payment(&uuid, maker_payment_tx)
     }
 
     fn validate_fee(
@@ -2053,7 +2050,7 @@ fn init_tezos_erc_swap_call(
 fn receiver_spends_call(
     id: BytesJson,
     secret: BytesJson,
-    send_to: TezosAddress,
+    send_to: &TezosAddress,
 ) -> TransactionParameters {
     TransactionParameters {
         entrypoint: "receiver_spends".into(),

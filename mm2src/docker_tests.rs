@@ -506,7 +506,7 @@ mod docker_tests {
     }
 
     #[test]
-    fn send_and_spend_xtz_payment() {
+    fn send_and_spend_taker_xtz_payment() {
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock())));
         fill_xtz_address(&coin.my_address);
@@ -558,7 +558,59 @@ mod docker_tests {
     }
 
     #[test]
-    fn send_and_refund_xtz_payment() {
+    fn send_and_spend_maker_xtz_payment() {
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+        let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock())));
+        fill_xtz_address(&coin.my_address);
+        let uuid = new_uuid();
+        let secret = [0; 32];
+        let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
+
+        let payment = unwrap!(coin.send_maker_payment(
+            uuid.as_bytes(),
+            0,
+            &coin.get_pubkey(),
+            &secret_hash,
+            1.into(),
+        ).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &payment.tx_hex,
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
+
+        // ensure that coin uses smart contract address from payment, not the one configured for coin
+        let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_MLA_CONTRACT.lock())));
+        let spend = unwrap!(coin.send_taker_spends_maker_payment(
+            uuid.as_bytes(),
+            &payment.tx_hex,
+            0,
+            &coin.get_pubkey(),
+            &secret,
+            &secret_hash,
+        ).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &spend.tx_hex(),
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
+
+        let find = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
+            0,
+            &coin.get_pubkey(),
+            &secret_hash,
+            &payment.tx_hex,
+            1,
+        ).wait()));
+        assert_eq!(FoundSwapTxSpend::Spent(spend), find);
+    }
+
+    #[test]
+    fn send_and_refund_taker_xtz_payment() {
         let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
         let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock())));
         fill_xtz_address(&coin.my_address);
@@ -581,7 +633,60 @@ mod docker_tests {
             1
         ).wait());
 
+        // ensure that coin uses smart contract address from payment, not the one configured for coin
+        let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_MLA_CONTRACT.lock())));
         let refund = unwrap!(coin.send_taker_refunds_payment(
+            uuid.as_bytes(),
+            &payment.tx_hex,
+            0,
+            &coin.get_pubkey(),
+            &secret_hash,
+        ).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &refund.tx_hex(),
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
+
+        let find = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
+            0,
+            &coin.get_pubkey(),
+            &secret_hash,
+            &payment.tx_hex,
+            1,
+        ).wait()));
+        assert_eq!(FoundSwapTxSpend::Refunded(refund), find);
+    }
+
+    #[test]
+    fn send_and_refund_maker_xtz_payment() {
+        let priv_key = SecretKey::random(&mut rand4::thread_rng()).serialize();
+        let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_SWAP_CONTRACT.lock())));
+        fill_xtz_address(&coin.my_address);
+        let uuid = new_uuid();
+        let secret = [0; 32];
+        let secret_hash = SecretHash::from_secret(SecretHashAlgo::Sha256, &secret);
+
+        let payment = unwrap!(coin.send_maker_payment(
+            uuid.as_bytes(),
+            0,
+            &coin.get_pubkey(),
+            &secret_hash,
+            1.into(),
+        ).wait());
+        unwrap!(coin.wait_for_confirmations(
+            &payment.tx_hex,
+            1,
+            now_ms() / 1000 + 120,
+            1,
+            1
+        ).wait());
+
+        // ensure that coin uses smart contract address from payment, not the one configured for coin
+        let coin = block_on(tezos_coin_for_test(&priv_key, "http://localhost:20000", &unwrap!(XTZ_MLA_CONTRACT.lock())));
+        let refund = unwrap!(coin.send_maker_refunds_payment(
             uuid.as_bytes(),
             &payment.tx_hex,
             0,
