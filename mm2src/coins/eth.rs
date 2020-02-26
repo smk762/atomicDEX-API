@@ -944,6 +944,10 @@ impl MarketCoinOps for EthCoin {
         let hash = H256::from(hash);
         format!("{:#02x}", hash)
     }
+
+    fn display_priv_key(&self) -> String {
+        format!("{:#02x}", self.key_pair.secret())
+    }
 }
 
 pub fn signed_eth_tx_from_bytes(bytes: &[u8]) -> Result<SignedEthTx, String> {

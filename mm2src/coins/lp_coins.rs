@@ -268,6 +268,8 @@ pub trait MarketCoinOps {
     fn derive_address_from_ec_pubkey(&self, pubkey: &EcPubkey) -> Result<String, String>;
 
     fn tx_hash_to_string(&self, hash: &[u8]) -> String;
+
+    fn display_priv_key(&self) -> String;
 }
 
 #[derive(Deserialize)]
@@ -727,4 +729,20 @@ pub async fn set_required_confirmations(ctx: MmArc, req: Json) -> Result<Respons
 pub enum TradeActor {
     Maker,
     Taker,
+}
+
+pub async fn show_priv_key(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let ticker = try_s!(req["coin"].as_str().ok_or ("No 'coin' field")).to_owned();
+    let coin = match lp_coinfindᵃ(&ctx, &ticker).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return ERR!("No such coin: {}", ticker),
+        Err(err) => return ERR!("!lp_coinfind({}): {}", ticker, err),
+    };
+    let res = try_s!(json::to_vec(&json!({
+        "result": {
+            "coin": ticker,
+            "priv_key": coin.display_priv_key(),
+        }
+    })));
+    Ok(try_s!(Response::builder().body(res)))
 }

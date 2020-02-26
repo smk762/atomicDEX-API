@@ -1172,10 +1172,10 @@ fn test_withdraw_and_send() {
     let alice_passphrase = unwrap! (var ("ALICE_PASSPHRASE") .ok().or (alice_file_passphrase), "No ALICE_PASSPHRASE or .env.client/PASSPHRASE");
 
     let coins = json! ([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY_SEGWIT","asset":"MORTY_SEGWIT","txversion":4,"overwintered":1,"segwit":true},
-        {"coin":"ETOMIC","asset":"ETOMIC","txversion":4,"overwintered":1},
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"txfee":1000},
+        {"coin":"MORTY","asset":"MORTY","rpcport":8923,"txversion":4,"overwintered":1,"txfee":1000},
+        {"coin":"MORTY_SEGWIT","asset":"MORTY_SEGWIT","txversion":4,"overwintered":1,"segwit":true,"txfee":1000},
+        {"coin":"ETOMIC","asset":"ETOMIC","txversion":4,"overwintered":1,"txfee":1000},
         {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
         {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"},
         {"coin":"XTZ","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
@@ -1978,6 +1978,52 @@ fn orderbook_should_display_valid_address() {
     assert_eq!(asks.len(), 1, "XTZ/MORTY orderbook must have exactly 1 ask");
     let address_in_orderbook = asks[0]["address"].as_str().unwrap();
     assert_eq!("tz1bzbcrL5f2U5cAVMgCUD1V7WN4L9YP6hpn", address_in_orderbook);
+}
+
+fn check_priv_key(mm: &MarketMakerIt, coin: &str, expected_priv_key: &str) {
+    let rc = unwrap! (block_on (mm.rpc (json! ({
+        "userpass": mm.userpass,
+        "method": "show_priv_key",
+        "coin": coin
+    }))));
+    assert!(rc.0.is_success(), "!show_priv_key: {}", rc.1);
+    let privkey: Json = unwrap!(json::from_str(&rc.1));
+    assert_eq!(privkey["result"]["priv_key"], Json::from(expected_priv_key))
+}
+
+#[test]
+#[cfg(feature = "native")]
+fn test_show_priv_key() {
+    let coins = json! ([
+        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
+        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
+        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
+        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
+    ]);
+
+    let mut mm = unwrap!(MarketMakerIt::start (
+        json! ({
+            "gui": "nogui",
+            "netid": 9998,
+            "myipaddr": env::var ("BOB_TRADE_IP") .ok(),
+            "rpcip": env::var ("BOB_TRADE_IP") .ok(),
+            "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
+            "passphrase": "bob passphrase",
+            "coins": coins,
+            "rpc_password": "pass",
+            "i_am_seed": true,
+        }),
+        "pass".into(),
+        match var ("LOCAL_THREAD_MM") {Ok (ref e) if e == "bob" => Some (local_start()), _ => None}
+    ));
+
+    let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
+    log!({"Log path: {}", mm.log_path.display()});
+    unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
+    log! ({"enable_coins: {:?}", block_on (enable_coins_eth_electrum (&mm, vec!["http://195.201.0.6:8565"]))});
+
+    check_priv_key(&mm, "RICK", "UvCjJf4dKSs2vFGVtCnUTAhR5FTZGdg43DDRa9s7s5DV1sSDX14g");
+    check_priv_key(&mm, "ETH", "0xb8c774f071de08c7fd8f62b97f1a5726f6ce9f1bcf141b70b86689254ed6714e");
 }
 
 // HOWTO

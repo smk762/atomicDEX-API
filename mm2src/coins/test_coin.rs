@@ -65,6 +65,10 @@ impl MarketCoinOps for TestCoin {
     }
 
     fn tx_hash_to_string(&self, hash: &[u8]) -> String { unimplemented!() }
+
+    fn display_priv_key(&self) -> String {
+        unimplemented!()
+    }
 }
 
 #[mockable]
