@@ -946,7 +946,8 @@ impl MarketCoinOps for EthCoin {
     }
 
     fn display_priv_key(&self) -> String {
-        format!("{:#02x}", self.key_pair.secret())
+        let eth_secret = unwrap!(EthSecret::from_slice(&self.priv_key.get_bytes()));
+        format!("{:#02x}", eth_secret)
     }
 }
 

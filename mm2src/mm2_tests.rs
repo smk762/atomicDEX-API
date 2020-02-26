@@ -1994,13 +1994,6 @@ fn check_priv_key(mm: &MarketMakerIt, coin: &str, expected_priv_key: &str) {
 #[test]
 #[cfg(feature = "native")]
 fn test_show_priv_key() {
-    let coins = json! ([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
-    ]);
-
     let mut mm = unwrap!(MarketMakerIt::start (
         json! ({
             "gui": "nogui",
@@ -2009,7 +2002,7 @@ fn test_show_priv_key() {
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": "bob passphrase",
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "rpc_password": "pass",
             "i_am_seed": true,
         }),
@@ -2020,7 +2013,7 @@ fn test_show_priv_key() {
     let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
-    log! ({"enable_coins: {:?}", block_on (enable_coins_eth_electrum (&mm, vec!["http://195.201.0.6:8565"]))});
+    log! ({"enable_coins: {:?}", block_on (enable_coins_eth_electrum_xtz (&mm, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]))});
 
     check_priv_key(&mm, "RICK", "UvCjJf4dKSs2vFGVtCnUTAhR5FTZGdg43DDRa9s7s5DV1sSDX14g");
     check_priv_key(&mm, "ETH", "0xb8c774f071de08c7fd8f62b97f1a5726f6ce9f1bcf141b70b86689254ed6714e");

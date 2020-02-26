@@ -912,6 +912,10 @@ impl MarketCoinOps for TezosCoin {
             data,
         }.to_string()
     }
+
+    fn display_priv_key(&self) -> String {
+        unimplemented!()
+    }
 }
 
 async fn send_htlc_payment(
