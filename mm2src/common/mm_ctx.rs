@@ -1,3 +1,4 @@
+use bitcrypto::dhash160;
 use bytes::Bytes;
 use crossbeam::{channel, Sender, Receiver};
 use futures::channel::mpsc;
@@ -14,6 +15,7 @@ use serde_json::{self as json, Value as Json};
 use std::any::Any;
 use std::collections::HashSet;
 use std::collections::hash_map::{Entry, HashMap};
+use std::convert::TryInto;
 use std::fmt;
 use std::net::IpAddr;
 #[cfg(feature = "native")]
@@ -23,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::{bits256, small_rng, QueuedCommand};
+use crate::crypto::EcPrivkey;
 use crate::log::{self, LogState};
 
 /// MarketMaker state, shared between the various MarketMaker threads.
@@ -92,10 +95,10 @@ pub struct MmCtx {
     pub rmd160: Constructible<H160>,
     /// Seed node IPs, initialized in `fn lp_initpeers`.
     pub seeds: Mutex<Vec<IpAddr>>,
-    /// secp256k1 key pair derived from passphrase.
+    /// EcPrivkey from passphrase.
     /// cf. `key_pair_from_seed`.
     /// Replacement of `lp::G.LP_privkey`.
-    pub secp256k1_key_pair: Constructible<KeyPair>,
+    pub ec_privkey: Constructible<EcPrivkey>,
     /// Coins that should be enabled to kick start the interrupted swaps and orders.
     pub coins_needed_for_kick_start: Mutex<HashSet<String>>,
     /// The context belonging to the `lp_swap` mod: `SwapsContext`.
@@ -125,7 +128,7 @@ impl MmCtx {
             command_queueʰ: Mutex::new (None),
             rmd160: Constructible::default(),
             seeds: Mutex::new (Vec::new()),
-            secp256k1_key_pair: Constructible::default(),
+            ec_privkey: Constructible::default(),
             coins_needed_for_kick_start: Mutex::new (HashSet::new()),
             swaps_ctx: Mutex::new (None),
         }
@@ -230,21 +233,21 @@ impl MmCtx {
         });
     }
 
-    /// Get a reference to the secp256k1 key pair.
-    /// Panics if the key pair is not available.
-    pub fn secp256k1_key_pair (&self) -> &KeyPair {
-        match self.secp256k1_key_pair.as_option() {
-            Some (pair) => pair,
-            None => panic! ("secp256k1_key_pair not available")
+    /// Get a reference to the EC priv key.
+    /// Panics if the priv key is not available.
+    pub fn ec_privkey (&self) -> &EcPrivkey {
+        match self.ec_privkey.as_option() {
+            Some (key) => key,
+            None => panic! ("ec_privkey not available")
     }   }
 
     /// This is our public ID, allowing us to be different from other peers.
     /// This should also be our public key which we'd use for message verification.
     pub fn public_id (&self) -> Result<bits256, String> {
-        for pair in &self.secp256k1_key_pair {
-            let public = pair.public();  // Compressed public key is going to be 33 bytes.
+        for pair in &self.ec_privkey {
+            let public = pair.get_pubkey();  // Compressed public key is going to be 33 bytes.
             // First byte is a prefix, https://davidederosa.com/basic-blockchain-programming/elliptic-curve-keys/.
-            return Ok (bits256 {bytes: *array_ref! (public, 1, 32)})
+            return Ok (bits256 {bytes: try_s!(public.bytes[..32].try_into())})
         }
         ERR! ("Public ID is not yet available")
     }
@@ -388,6 +391,7 @@ impl MmArc {
     }
 }
 
+/*
 /// Receives a subset of a portable context in order to recreate a native copy of it.  
 /// Can be invoked with the same context multiple times, synchronizing some of the fields.  
 /// As of now we're expecting a one-to-one pairing between the portable and the native versions of MM
@@ -396,7 +400,7 @@ impl MmArc {
 pub async fn ctx2helpers (main_ctx: MmArc, req: Bytes) -> Result<Vec<u8>, String> {
     let ctxʷ: PortableCtx = try_s! (bdecode (&req));
     let private = try_s! (Private::from_layout (&ctxʷ.secp256k1_key_pair[..]));
-    let main_key = try_s! (main_ctx.secp256k1_key_pair.as_option().ok_or ("No key"));
+    let main_key = try_s! (main_ctx.ec_privkey.as_option().ok_or ("No key"));
 
     if *main_key.private() == private {
         // We have a match with the primary native context, the one configured on the command line.
@@ -442,6 +446,7 @@ pub async fn ctx2helpers (main_ctx: MmArc, req: Bytes) -> Result<Vec<u8>, String
 
     Ok (res)
 }
+*/
 
 /// Helps getting a crate context from a corresponding `MmCtx` field.
 /// 
@@ -465,7 +470,7 @@ where C: FnOnce()->Result<T, String>, T: 'static + Send + Sync {
 #[derive(Default)]
 pub struct MmCtxBuilder {
     conf: Option<Json>,
-    key_pair: Option<KeyPair>
+    ec_privkey: Option<EcPrivkey>
 }
 
 impl MmCtxBuilder {
@@ -478,8 +483,8 @@ impl MmCtxBuilder {
         self
     }
 
-    pub fn with_secp256k1_key_pair(mut self, key_pair: KeyPair) -> Self {
-        self.key_pair = Some (key_pair);
+    pub fn with_ec_privkey(mut self, privkey: EcPrivkey) -> Self {
+        self.ec_privkey = Some (privkey);
         self
     }
 
@@ -492,9 +497,9 @@ impl MmCtxBuilder {
             ctx.conf = conf
         }
 
-        if let Some (key_pair) = self.key_pair {
-            unwrap! (ctx.rmd160.pin (key_pair.public().address_hash()));
-            unwrap! (ctx.secp256k1_key_pair.pin (key_pair));
+        if let Some (priv_key) = self.ec_privkey {
+            unwrap! (ctx.rmd160.pin (dhash160(&priv_key.get_pubkey().bytes)));
+            unwrap! (ctx.ec_privkey.pin (priv_key));
         }
 
         MmArc (Arc::new (ctx))

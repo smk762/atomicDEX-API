@@ -117,9 +117,9 @@ pub struct TezosBlockHash {
 impl_base58_checksum_encoding!(TezosBlockHash, TezosBlockHashVisitor, (2, 38));
 
 #[derive(Debug, PartialEq)]
-struct TezosSecret {
-    prefix: [u8; 4],
-    data: Vec<u8>,
+pub struct TezosSecret {
+    pub prefix: [u8; 4],
+    pub data: Vec<u8>,
 }
 
 impl_base58_checksum_encoding!(TezosSecret, TezosSecretVisitor, (4, 40), (4, 72));
@@ -915,7 +915,17 @@ impl MarketCoinOps for TezosCoin {
     }
 
     fn display_priv_key(&self) -> String {
-        unimplemented!()
+        let tezos_secret = match self.priv_key {
+            EcPrivkey::ED25519(_) => TezosSecret {
+                prefix: ED_SK_PREFIX,
+                data: self.priv_key.get_bytes().to_vec(),
+            },
+            EcPrivkey::SECP256K1(_) => TezosSecret {
+                prefix: SECP_SK_PREFIX,
+                data: self.priv_key.get_bytes().to_vec(),
+            }
+        };
+        tezos_secret.to_string()
     }
 }
 

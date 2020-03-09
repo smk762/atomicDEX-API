@@ -63,6 +63,7 @@ macro_rules! try_fus {
 pub mod coins_tests;
 pub mod eth;
 use self::eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
+pub mod privkey;
 pub mod tezos;
 use self::tezos::{TezosCoin, tezos_coin_from_conf_and_request, TezosOperation};
 pub mod utxo;
@@ -517,7 +518,7 @@ pub async fn lp_coininit (ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoi
         "mm2 param is not set neither in coins config nor enable request, ",
         "assuming that coin is not supported"
     ))}
-    let secret = &*ctx.secp256k1_key_pair().private().secret;
+    let secret = &ctx.ec_privkey().get_bytes();
 
     let coin: MmCoinEnum = if coins_en["etomic"].is_null() {
         if coins_en["protocol"].is_null() {

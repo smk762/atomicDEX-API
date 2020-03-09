@@ -29,7 +29,7 @@ use common::wio::{slurp_reqʰ, CORE, CPUPOOL, HTTP};
 use common::lift_body::LiftBody;
 use common::mm_ctx::MmArc;
 #[cfg(feature = "native")]
-use common::mm_ctx::ctx2helpers;
+// use common::mm_ctx::ctx2helpers;
 #[cfg(feature = "native")]
 use common::for_tests::common_wait_for_log_re;
 use futures01::{self, Future, Stream};
@@ -130,7 +130,7 @@ async fn helpers (ctx: MmArc, client: SocketAddr, req: Parts,
         "broadcast_p2p_msg" => try_s! (lp_network::broadcast_p2p_msgʰ (reqᵇ) .await),
         "p2p_tap" => try_s! (lp_network::p2p_tapʰ (reqᵇ) .await),
         "common_wait_for_log_re" => try_s! (common_wait_for_log_re (reqᵇ) .await),
-        "ctx2helpers" => try_s! (ctx2helpers (ctx, reqᵇ) .await),
+        // "ctx2helpers" => try_s! (ctx2helpers (ctx, reqᵇ) .await),
         "peers_initialize" => try_s! (peers::peers_initialize (reqᵇ) .await),
         "peers_send" => try_s! (peers::peers_send (reqᵇ) .await),
         "peers_recv" => try_s! (peers::peers_recv (reqᵇ) .await),

@@ -798,7 +798,7 @@ impl PricePingRequest {
         let timestamp = now_ms() / 1000;
         let sig_hash = price_ping_sig_hash(
             timestamp as u32,
-            &**ctx.secp256k1_key_pair().public(),
+            &ctx.ec_privkey().get_pubkey().bytes,
             &my_coin.get_pubkey().bytes,
             order.base.as_bytes(),
             order.rel.as_bytes(),
@@ -829,7 +829,7 @@ impl PricePingRequest {
             price: order.price.clone(),
             price_rat: Some(order.price_rat.clone()),
             timestamp,
-            pubsecp: hex::encode(&**ctx.secp256k1_key_pair().public()),
+            pubsecp: hex::encode(ctx.ec_privkey().get_pubkey().bytes),
             sig: hex::encode(&*sig),
             balance: from_ratio_to_dec(&max_volume),
             balance_rat: Some(max_volume),

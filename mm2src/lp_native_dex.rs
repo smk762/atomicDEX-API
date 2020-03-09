@@ -21,6 +21,8 @@
 #![cfg_attr(not(feature = "native"), allow(unused_imports))]
 #![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
+use bitcrypto::dhash160;
+use coins::privkey::ec_privkey_from_seed;
 use futures01::{Future};
 use futures01::sync::oneshot::Sender;
 use futures::compat::Future01CompatExt;
@@ -45,7 +47,6 @@ use crate::common::lp;
 use crate::common::executor::{spawn, Timer};
 use crate::common::{slurp_url, MM_VERSION};
 use crate::common::mm_ctx::{MmCtx, MmArc};
-use crate::common::privkey::key_pair_from_seed;
 use crate::mm2::lp_network::{lp_command_q_loop, start_seednode_loop, start_client_p2p_loop};
 use crate::mm2::lp_ordermatch::{lp_ordermatch_loop, lp_trade_command, migrate_saved_orders, orders_kick_start};
 use crate::mm2::lp_swap::{migrate_swaps, swap_kick_starts};
@@ -1132,9 +1133,9 @@ pub unsafe fn lp_passphrase_init (ctx: &MmArc) -> Result<(), String> {
         Some (s) => s.to_string()
     };
 
-    let key_pair = try_s! (key_pair_from_seed (&passphrase));
-    let key_pair = try_s! (ctx.secp256k1_key_pair.pin (key_pair));
-    try_s! (ctx.rmd160.pin (key_pair.public().address_hash()));
+    let privkey = try_s! (ec_privkey_from_seed (&passphrase));
+    let privkey = try_s! (ctx.ec_privkey.pin (privkey));
+    try_s! (ctx.rmd160.pin (dhash160(&privkey.get_pubkey().bytes)));
     Ok(())
 }
 

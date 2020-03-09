@@ -1,12 +1,12 @@
 use common::{block_on, now_float, small_rng};
 #[cfg(not(feature = "native"))]
 use common::call_back;
+use common::crypto::{CurveType, EcPrivkey};
 use common::executor::Timer;
 #[cfg(feature = "native")]
 use common::wio::{drive, CORE};
 use common::for_tests::wait_for_log_re;
 use common::mm_ctx::{MmArc, MmCtxBuilder};
-use common::privkey::key_pair_from_seed;
 use crdts::CmRDT;
 use futures01::Future;
 use futures::future::{select, Either};
@@ -46,8 +46,9 @@ async fn peer (conf: Json, port: u16) -> MmArc {
     let ctx = MmCtxBuilder::new().with_conf (conf) .into_mm_arc();
     unwrap! (ctx.log.thread_gravity_on());
 
-    let seed = fomat! ((small_rng().next_u64()));
-    unwrap! (ctx.secp256k1_key_pair.pin (unwrap! (key_pair_from_seed (&seed))));
+    let priv_key: [u8; 32] = small_rng().gen();
+    let priv_key = unwrap!(EcPrivkey::new(CurveType::SECP256K1, &priv_key));
+    unwrap! (ctx.ec_privkey.pin (priv_key));
 
     if let Some (seednodes) = ctx.conf["seednodes"].as_array() {
         let mut seeds = unwrap! (ctx.seeds.lock());

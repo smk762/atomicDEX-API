@@ -1,5 +1,6 @@
+use bitcrypto::dhash160;
 use common::block_on;
-use common::privkey::key_pair_from_seed;
+use crate::privkey::ec_privkey_from_seed;
 use crate::WithdrawFee;
 use crate::utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes};
 use futures::future::join_all;
@@ -43,10 +44,19 @@ fn utxo_coin_for_test(rpc_client: UtxoRpcClientEnum, force_seed: Option<&str>) -
             Err(_) => default_seed.into(),
         }
     };
-    let key_pair = key_pair_from_seed(&seed).unwrap();
+    let priv_key = ec_privkey_from_seed(&seed).unwrap();
+
+    let private = Private {
+        prefix: 0,
+        secret: H256::from(priv_key.get_bytes()),
+        compressed: true,
+        checksum_type,
+    };
+
+    let key_pair = unwrap!(KeyPair::from_private(private));
     let my_address = Address {
         prefix: 60,
-        hash: key_pair.public().address_hash(),
+        hash: dhash160(&priv_key.get_pubkey().bytes),
         t_addr_prefix: 0,
         checksum_type,
     };

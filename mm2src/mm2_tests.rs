@@ -2,6 +2,7 @@
 #![cfg_attr(not(feature = "native"), allow(unused_variables))]
 
 use bigdecimal::BigDecimal;
+use coins::privkey::ec_privkey_from_seed;
 use common::{block_on, slurp};
 #[cfg(not(feature = "native"))]
 use common::call_back;
@@ -9,7 +10,6 @@ use common::executor::Timer;
 use common::for_tests::{enable_electrum, enable_native, from_env_file, mm_spat, LocalStart, MarketMakerIt};
 #[cfg(feature = "native")]
 use common::for_tests::mm_dump;
-use common::privkey::key_pair_from_seed;
 #[cfg(not(feature = "native"))]
 use common::mm_ctx::MmArc;
 use http::StatusCode;
@@ -1355,9 +1355,10 @@ fn test_order_errors_when_base_equal_rel() {
     assert! (rc.0.is_server_error(), "sell should have failed, but got {:?}", rc);
 }
 
-fn startup_passphrase(passphrase: &str, expected_address: &str) {
+fn startup_passphrase(passphrase: &str, expected_kmd_addr: &str, expected_xtz_addr: &str) {
     let coins = json!([
         {"coin":"KMD","rpcport":8923,"txversion":4},
+        {"coin":"XTZ","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
     ]);
 
     let mut mm = unwrap! (MarketMakerIt::start (
@@ -1380,7 +1381,11 @@ fn startup_passphrase(passphrase: &str, expected_address: &str) {
     unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
     let enable = block_on (enable_electrum (&mm, "KMD", vec!["electrum1.cipig.net:10001"]));
     let addr = addr_from_enable(&enable);
-    assert_eq!(Json::from(expected_address), addr);
+    assert_eq!(Json::from(expected_kmd_addr), addr);
+
+    let enable = block_on (enable_native (&mm, "XTZ", vec!["https://tezos-dev.cryptonomic-infra.tech"], "KT1KgsZcHkui8b9zcvJZyUGzG1NG15oYZjit"));
+    let addr = addr_from_enable(&enable);
+    assert_eq!(Json::from(expected_xtz_addr), addr);
     unwrap!(block_on(mm.stop()));
 }
 
@@ -1390,21 +1395,24 @@ fn startup_passphrase(passphrase: &str, expected_address: &str) {
 #[cfg(feature = "native")]
 fn test_startup_passphrase() {
     // seed phrase
-    startup_passphrase("bob passphrase", "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
+    startup_passphrase("bob passphrase", "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD", "tz1XAHKZm9PkpQFe55mc8vPv1eT4jvsPcmpJ");
+
+    // tezos base58 encoded secret
+    startup_passphrase("edsk45HDPLqb1685zFhMxhdBP6KKKKKvhUGpRYNG8B8Tgjfv8dqrsb", "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD", "tz1XAHKZm9PkpQFe55mc8vPv1eT4jvsPcmpJ");
 
     // WIF
-    assert!(key_pair_from_seed("UvCjJf4dKSs2vFGVtCnUTAhR5FTZGdg43DDRa9s7s5DV1sSDX14g").is_ok());
-    startup_passphrase("UvCjJf4dKSs2vFGVtCnUTAhR5FTZGdg43DDRa9s7s5DV1sSDX14g", "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
+    assert!(ec_privkey_from_seed("UvCjJf4dKSs2vFGVtCnUTAhR5FTZGdg43DDRa9s7s5DV1sSDX14g").is_ok());
+    startup_passphrase("UvCjJf4dKSs2vFGVtCnUTAhR5FTZGdg43DDRa9s7s5DV1sSDX14g", "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD", "tz1XAHKZm9PkpQFe55mc8vPv1eT4jvsPcmpJ");
     // WIF, Invalid network version
-    assert!(key_pair_from_seed("92Qba5hnyWSn5Ffcka56yMQauaWY6ZLd91Vzxbi4a9CCetaHtYj").is_err());
+    assert!(ec_privkey_from_seed("92Qba5hnyWSn5Ffcka56yMQauaWY6ZLd91Vzxbi4a9CCetaHtYj").is_err());
     // WIF, not compressed
-    assert!(key_pair_from_seed("5HpHagT65TZzG1PH3CSu63k8DbpvD8s5ip4nEB3kEsreAnchuDf").is_err());
+    assert!(ec_privkey_from_seed("5HpHagT65TZzG1PH3CSu63k8DbpvD8s5ip4nEB3kEsreAnchuDf").is_err());
 
     // 0x prefixed hex
-    assert!(key_pair_from_seed("0xb8c774f071de08c7fd8f62b97f1a5726f6ce9f1bcf141b70b86689254ed6714e").is_ok());
-    startup_passphrase("0xb8c774f071de08c7fd8f62b97f1a5726f6ce9f1bcf141b70b86689254ed6714e", "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD");
+    assert!(ec_privkey_from_seed("0xb8c774f071de08c7fd8f62b97f1a5726f6ce9f1bcf141b70b86689254ed6714e").is_ok());
+    startup_passphrase("0xb8c774f071de08c7fd8f62b97f1a5726f6ce9f1bcf141b70b86689254ed6714e", "RRnMcSeKiLrNdbp91qNVQwwXx5azD4S4CD", "tz1XAHKZm9PkpQFe55mc8vPv1eT4jvsPcmpJ");
     // Out of range, https://en.bitcoin.it/wiki/Private_key#Range_of_valid_ECDSA_private_keys
-    assert!(key_pair_from_seed("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141").is_err());
+    assert!(ec_privkey_from_seed("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141").is_err());
 }
 
 /// MM2 should allow to issue several buy/sell calls in a row without delays.
@@ -2017,6 +2025,7 @@ fn test_show_priv_key() {
 
     check_priv_key(&mm, "RICK", "UvCjJf4dKSs2vFGVtCnUTAhR5FTZGdg43DDRa9s7s5DV1sSDX14g");
     check_priv_key(&mm, "ETH", "0xb8c774f071de08c7fd8f62b97f1a5726f6ce9f1bcf141b70b86689254ed6714e");
+    check_priv_key(&mm, "XTZ", "edsk45HDPLqb1685zFhMxhdBP6KKKKKvhUGpRYNG8B8Tgjfv8dqrsb");
 }
 
 #[test]
@@ -2150,8 +2159,8 @@ mod wasm_bindgen_tests {
         use crate::mm2::lp_swap::{run_maker_swap, run_taker_swap, MakerSwap, TakerSwap};
 
         setInterval(&EXECUTOR_INTERVAL.closure, 200);
-        let key_pair_taker = key_pair_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid").unwrap();
-        let key_pair_maker = key_pair_from_seed("also shoot benefit prefer juice shell elder veteran woman mimic image kidney").unwrap();
+        let key_pair_taker = ec_privkey_from_seed("spice describe gravity federal blast come thank unfair canal monkey style afraid").unwrap();
+        let key_pair_maker = ec_privkey_from_seed("also shoot benefit prefer juice shell elder veteran woman mimic image kidney").unwrap();
         let conf = json!({
             "coins": [{
                 "coin": "ETH",
