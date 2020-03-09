@@ -155,6 +155,7 @@ fn send_and_refund_eth_payment_v1() {
     unwrap!(coin.wait_for_confirmations(
         &payment.tx_hex,
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -173,6 +174,7 @@ fn send_and_refund_eth_payment_v1() {
     unwrap!(coin.wait_for_confirmations(
         &refund.tx_hex(),
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -201,6 +203,7 @@ fn send_and_refund_eth_payment_v2() {
     unwrap!(coin.wait_for_confirmations(
         &payment.tx_hex,
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -219,6 +222,7 @@ fn send_and_refund_eth_payment_v2() {
     unwrap!(coin.wait_for_confirmations(
         &refund.tx_hex(),
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -247,6 +251,7 @@ fn send_and_refund_erc20_payment_v1() {
     unwrap!(coin.wait_for_confirmations(
         &payment.tx_hex,
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -265,6 +270,7 @@ fn send_and_refund_erc20_payment_v1() {
     unwrap!(coin.wait_for_confirmations(
         &refund.tx_hex(),
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -292,6 +298,7 @@ fn send_and_refund_erc20_payment_v2() {
     unwrap!(coin.wait_for_confirmations(
         &payment.tx_hex,
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -310,6 +317,7 @@ fn send_and_refund_erc20_payment_v2() {
     unwrap!(coin.wait_for_confirmations(
         &refund.tx_hex(),
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -340,6 +348,7 @@ fn send_and_spend_eth_payment_v1() {
     unwrap!(coin.wait_for_confirmations(
         &payment.tx_hex,
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -357,6 +366,7 @@ fn send_and_spend_eth_payment_v1() {
     unwrap!(coin.wait_for_confirmations(
         &spend.tx_hex(),
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -388,6 +398,7 @@ fn send_and_spend_eth_payment_v2() {
     unwrap!(coin.wait_for_confirmations(
         &payment.tx_hex,
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -407,6 +418,7 @@ fn send_and_spend_eth_payment_v2() {
     unwrap!(coin.wait_for_confirmations(
         &spend.tx_hex(),
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -438,6 +450,7 @@ fn send_and_spend_erc20_payment_v1() {
     unwrap!(coin.wait_for_confirmations(
         &payment.tx_hex,
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -457,6 +470,7 @@ fn send_and_spend_erc20_payment_v1() {
     unwrap!(coin.wait_for_confirmations(
         &spend.tx_hex(),
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -487,6 +501,7 @@ fn send_and_spend_erc20_payment_v2() {
     unwrap!(coin.wait_for_confirmations(
         &payment.tx_hex,
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,
@@ -506,6 +521,7 @@ fn send_and_spend_erc20_payment_v2() {
     unwrap!(coin.wait_for_confirmations(
         &spend.tx_hex(),
         1,
+        false,
         now_ms() / 1000 + 1000,
         1,
         block,

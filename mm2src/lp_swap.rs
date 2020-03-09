@@ -130,8 +130,8 @@ mod maker_swap;
 #[path = "lp_swap/taker_swap.rs"]
 mod taker_swap;
 
-use maker_swap::{MakerSavedSwap, MakerSwapEvent, stats_maker_swap_file_path};
-use taker_swap::{TakerSavedSwap, TakerSwapEvent, stats_taker_swap_file_path};
+use maker_swap::{MakerSavedSwap, MakerSwapEvent, migrate_maker_saved_swap, stats_maker_swap_file_path};
+use taker_swap::{TakerSavedSwap, TakerSwapEvent, migrate_taker_saved_swap, stats_taker_swap_file_path};
 pub use maker_swap::{MakerSwap, run_maker_swap};
 pub use taker_swap::{TakerSwap, run_taker_swap};
 

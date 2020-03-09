@@ -833,6 +833,7 @@ impl MarketCoinOps for TezosCoin {
         &self,
         tx: &[u8],
         confirmations: u64,
+        _requires_nota: bool,
         wait_until: u64,
         check_every: u64,
         _since_block: u64
@@ -1486,8 +1487,14 @@ impl MmCoin for TezosCoin {
         self.required_confirmations.load(AtomicOrdering::Relaxed)
     }
 
+    fn requires_notarization(&self) -> bool { false }
+
     fn set_required_confirmations(&self, confirmations: u64) {
         self.required_confirmations.store(confirmations, AtomicOrdering::Relaxed);
+    }
+
+    fn set_requires_notarization(&self, _requires_nota: bool) {
+        log!("Warning: set_requires_notarization doesn't take any effect on XTZ coins");
     }
 }
 

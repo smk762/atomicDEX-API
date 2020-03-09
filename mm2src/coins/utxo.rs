@@ -60,7 +60,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrderding};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::thread;
 use std::time::Duration;
 
@@ -1808,14 +1808,14 @@ impl MmCoin for UtxoCoin {
         self.required_confirmations.load(AtomicOrdering::Relaxed)
     }
 
-    fn requires_notarization(&self) -> bool { self.requires_notarization.load(AtomicOrderding::Relaxed) }
+    fn requires_notarization(&self) -> bool { self.requires_notarization.load(AtomicOrdering::Relaxed) }
 
     fn set_required_confirmations(&self, confirmations: u64) {
         self.required_confirmations.store(confirmations, AtomicOrdering::Relaxed);
     }
 
     fn set_requires_notarization(&self, requires_nota: bool) {
-        self.requires_notarization.store(requires_nota, AtomicOrderding::Relaxed);
+        self.requires_notarization.store(requires_nota, AtomicOrdering::Relaxed);
     }
 }
 

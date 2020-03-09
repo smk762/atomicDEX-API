@@ -230,7 +230,7 @@ mod docker_tests {
             unwrap!(client.import_address(&coin.my_address(), &coin.my_address(), false).wait());
             let hash = client.send_to_address(address, &amount.into()).wait().unwrap();
             let tx_bytes = client.get_transaction_bytes(hash).wait().unwrap();
-            unwrap!(coin.wait_for_confirmations(&tx_bytes, 1, false, timeout, 1).wait());
+            unwrap!(coin.wait_for_confirmations(&tx_bytes, 1, false, timeout, 1, 0).wait());
             log!({ "{:02x}", tx_bytes });
             loop {
                 let unspents = client.list_unspent(0, std::i32::MAX, vec![coin.my_address().into()]).wait().unwrap();
@@ -256,6 +256,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &op.tx_hex(),
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1,
@@ -270,6 +271,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &operation.tx_hex(),
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1,
@@ -290,7 +292,7 @@ mod docker_tests {
             1.into(),
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, false, timeout, 1).wait());
+        unwrap!(coin.wait_for_confirmations(&tx.tx_hex, 1, false, timeout, 1, 0).wait());
 
         let refund_tx = coin.send_taker_refunds_payment(
             &[],
@@ -300,7 +302,7 @@ mod docker_tests {
             &SecretHash::default(),
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&refund_tx.tx_hex(), 1, false, timeout, 1).wait());
+        unwrap!(coin.wait_for_confirmations(&refund_tx.tx_hex(), 1, false, timeout, 1, 0).wait());
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
@@ -328,7 +330,7 @@ mod docker_tests {
             1.into(),
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&tx.tx_hex(), 1, false, timeout, 1).wait());
+        unwrap!(coin.wait_for_confirmations(&tx.tx_hex, 1, false, timeout, 1, 0).wait());
 
         let spend_tx = coin.send_maker_spends_taker_payment(
             &[],
@@ -339,7 +341,7 @@ mod docker_tests {
             &secret_hash,
         ).wait().unwrap();
 
-        unwrap!(coin.wait_for_confirmations(&spend_tx.tx_hex(), 1, false, timeout, 1).wait());
+        unwrap!(coin.wait_for_confirmations(&spend_tx.tx_hex(), 1, false, timeout, 1, 0).wait());
 
         let found = unwrap!(unwrap!(coin.search_for_swap_tx_spend_my(
             time_lock,
@@ -524,6 +526,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &payment.tx_hex,
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1
@@ -542,6 +545,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &spend.tx_hex(),
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1
@@ -576,6 +580,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &payment.tx_hex,
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1
@@ -594,6 +599,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &spend.tx_hex(),
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1
@@ -628,6 +634,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &payment.tx_hex,
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1
@@ -645,6 +652,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &refund.tx_hex(),
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1
@@ -679,6 +687,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &payment.tx_hex,
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1
@@ -696,6 +705,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &refund.tx_hex(),
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1
@@ -729,6 +739,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &withdraw.tx_hex.0,
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1,
@@ -761,6 +772,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &payment.tx_hex,
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1
@@ -778,6 +790,7 @@ mod docker_tests {
         unwrap!(coin.wait_for_confirmations(
             &refund.tx_hex(),
             1,
+            false,
             now_ms() / 1000 + 120,
             1,
             1
