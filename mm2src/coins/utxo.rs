@@ -60,7 +60,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrderding};
 use std::thread;
 use std::time::Duration;
 
@@ -75,6 +75,9 @@ use crate::{TransactionDetailsFut};
 
 #[cfg(test)]
 pub mod utxo_tests;
+
+const SWAP_TX_SPEND_SIZE: u64 = 305;
+const KILO_BYTE: u64 = 1000;
 
 #[cfg(windows)]
 #[cfg(feature = "native")]
@@ -193,7 +196,7 @@ pub struct UtxoCoinImpl {  // pImpl idiom.
     decimals: u8,
     /// Does coin require transactions to be notarized to be considered as confirmed?
     /// https://komodoplatform.com/security-delayed-proof-of-work-dpow/
-    requires_notarization: bool,
+    requires_notarization: AtomicBool,
     /// RPC client
     rpc_client: UtxoRpcClientEnum,
     /// ECDSA key pair
@@ -660,7 +663,7 @@ impl UtxoCoin {
                         let transaction = UtxoTx::from(tx.clone());
                         let transaction_bytes = serialize(&transaction);
                         let tx_size = transaction_bytes.len() + transaction.inputs().len() * 107;
-                        (f * tx_size as u64) / 1024
+                        (f * tx_size as u64) / KILO_BYTE
                     },
                 };
                 match fee_policy {
@@ -669,8 +672,8 @@ impl UtxoCoin {
                         if value_to_spend >= target_value {
                             if value_to_spend - target_value > DUST {
                                 if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
-                                    tx_fee += (f * 34) / 1024;
-                                    target_value += (f * 34) / 1024;
+                                    tx_fee += (f * 34) / KILO_BYTE;
+                                    target_value += (f * 34) / KILO_BYTE;
                                 }
                             }
                             if value_to_spend >= target_value {
@@ -683,7 +686,7 @@ impl UtxoCoin {
                         if value_to_spend >= sum_outputs_value {
                             if value_to_spend - sum_outputs_value > DUST {
                                 if let ActualTxFee::Dynamic(ref f) = coin_tx_fee {
-                                    tx_fee += (f * 34) / 1024;
+                                    tx_fee += (f * 34) / KILO_BYTE;
                                 }
                             }
                             break;
@@ -1016,8 +1019,8 @@ impl SwapOps for UtxoCoin {
         Box::new(self.get_tx_fee().map_err(|e| ERRL!("{}", e)).and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
                 ActualTxFee::Fixed(fee) => fee,
-                // atomic swap payment spend transaction is ~300 bytes in average as of now
-                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * 300) / 1024,
+                // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
+                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * SWAP_TX_SPEND_SIZE) / KILO_BYTE,
             };
 
             let output = TransactionOutput {
@@ -1069,8 +1072,8 @@ impl SwapOps for UtxoCoin {
         Box::new(self.get_tx_fee().map_err(|e| ERRL!("{}", e)).and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
                 ActualTxFee::Fixed(fee) => fee,
-                // atomic swap payment spend transaction is ~300 bytes in average as of now
-                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * 300) / 1024,
+                // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
+                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * SWAP_TX_SPEND_SIZE) / KILO_BYTE,
             };
 
             let output = TransactionOutput {
@@ -1120,8 +1123,8 @@ impl SwapOps for UtxoCoin {
         Box::new(self.get_tx_fee().map_err(|e| ERRL!("{}", e)).and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
                 ActualTxFee::Fixed(fee) => fee,
-                // atomic swap payment spend transaction is ~300 bytes in average as of now
-                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * 300) / 1024,
+                // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
+                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * SWAP_TX_SPEND_SIZE) / KILO_BYTE,
             };
 
             let output = TransactionOutput {
@@ -1174,8 +1177,8 @@ impl SwapOps for UtxoCoin {
         Box::new(self.get_tx_fee().map_err(|e| ERRL!("{}", e)).and_then(move |coin_fee| -> TransactionFut {
             let fee = match coin_fee {
                 ActualTxFee::Fixed(fee) => fee,
-                // atomic swap payment spend transaction is ~300 bytes in average as of now
-                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * 300) / 1024,
+                // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
+                ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * SWAP_TX_SPEND_SIZE) / KILO_BYTE,
             };
 
             let output = TransactionOutput {
@@ -1383,6 +1386,7 @@ impl MarketCoinOps for UtxoCoin {
         &self,
         tx: &[u8],
         confirmations: u64,
+        requires_nota: bool,
         wait_until: u64,
         check_every: u64,
         _since_block: u64
@@ -1391,7 +1395,7 @@ impl MarketCoinOps for UtxoCoin {
         self.rpc_client.wait_for_confirmations(
             &tx,
             confirmations as u32,
-            self.requires_notarization,
+            requires_nota,
             wait_until,
             check_every,
         )
@@ -1715,7 +1719,7 @@ impl MmCoin for UtxoCoin {
         let hash = H256Json::from(hash);
         let selfi = self.clone();
         let fut = async move {
-            let verbose_tx = try_s!(selfi.rpc_client.get_verbose_transaction(hash).wait());
+            let verbose_tx = try_s!(selfi.rpc_client.get_verbose_transaction(hash).compat().await);
             let tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
             let mut input_transactions: HashMap<&H256, UtxoTx> = HashMap::new();
             let mut input_amount = 0;
@@ -1728,7 +1732,7 @@ impl MmCoin for UtxoCoin {
                 let input_tx = match input_transactions.entry(&input.previous_output.hash) {
                     Entry::Vacant(e) => {
                         let prev_hash = input.previous_output.hash.reversed();
-                        let prev: BytesJson = try_s!(selfi.rpc_client.get_transaction_bytes(prev_hash.clone().into()).wait());
+                        let prev: BytesJson = try_s!(selfi.rpc_client.get_transaction_bytes(prev_hash.clone().into()).compat().await);
                         let prev_tx: UtxoTx = try_s!(deserialize(prev.as_slice()).map_err(|e| ERRL!("{:?}, tx: {:?}", e, prev_hash)));
                         e.insert(prev_tx)
                     },
@@ -1804,8 +1808,14 @@ impl MmCoin for UtxoCoin {
         self.required_confirmations.load(AtomicOrdering::Relaxed)
     }
 
+    fn requires_notarization(&self) -> bool { self.requires_notarization.load(AtomicOrderding::Relaxed) }
+
     fn set_required_confirmations(&self, confirmations: u64) {
         self.required_confirmations.store(confirmations, AtomicOrdering::Relaxed);
+    }
+
+    fn set_requires_notarization(&self, requires_nota: bool) {
+        self.requires_notarization.store(requires_nota, AtomicOrderding::Relaxed);
     }
 }
 
@@ -2088,13 +2098,21 @@ pub async fn utxo_coin_from_conf_and_request(
         HistorySyncState::NotEnabled
     };
 
+    // param from request should override the config
+    let required_confirmations = req["required_confirmations"].as_u64().unwrap_or(
+        conf["required_confirmations"].as_u64().unwrap_or(1)
+    );
+    let requires_notarization = req["requires_notarization"].as_bool().unwrap_or(
+        conf["requires_notarization"].as_bool().unwrap_or(false)
+    ).into();
+
     let coin = UtxoCoinImpl {
         ticker: ticker.into(),
         decimals,
         rpc_client,
         key_pair,
         is_pos: conf["isPoS"].as_u64() == Some(1),
-        requires_notarization: conf["requires_notarization"].as_bool().unwrap_or (false),
+        requires_notarization,
         overwintered,
         pub_addr_prefix,
         p2sh_addr_prefix: conf["p2shtype"].as_u64().unwrap_or (if ticker == "BTC" {5} else {85}) as u8,
@@ -2113,7 +2131,7 @@ pub async fn utxo_coin_from_conf_and_request(
         signature_version,
         fork_id,
         history_sync_state: Mutex::new(initial_history_state),
-        required_confirmations: conf["required_confirmations"].as_u64().unwrap_or(1).into(),
+        required_confirmations: required_confirmations.into(),
     };
     Ok(UtxoCoin(Arc::new(coin)))
 }

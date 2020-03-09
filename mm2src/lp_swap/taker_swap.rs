@@ -203,7 +203,7 @@ pub async fn run_taker_swap(swap: TakerSwap, initial_command: Option<TakerSwapCo
                 event: event.clone(),
             };
             unwrap!(save_my_taker_swap_event(&ctx, &running_swap, to_save), "!save_my_taker_swap_event");
-            if event.should_ban_maker() { ban_pubkey(&ctx, running_swap.maker.bytes.into()) }
+            if event.should_ban_maker() { ban_pubkey(&ctx, running_swap.maker.bytes.into(), &running_swap.uuid, event.clone().into()) }
             status.status(&[&"swap", &("uuid", &uuid[..])], &event.status_str());
             unwrap!(running_swap.apply_event(event), "!apply_event");
         }
@@ -228,7 +228,9 @@ pub struct TakerSwapData {
     maker_amount: BigDecimal,
     taker_amount: BigDecimal,
     maker_payment_confirmations: u64,
+    maker_payment_requires_nota: Option<bool>,
     taker_payment_confirmations: u64,
+    taker_payment_requires_nota: Option<bool>,
     taker_payment_lock: u64,
     /// Allows to recognize one SWAP from the other in the logs. #274.
     uuid: String,
@@ -274,7 +276,7 @@ pub struct TakerPaymentSpentData {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-struct MakerNegotiationData {
+pub struct MakerNegotiationData {
     maker_payment_locktime: u64,
     maker_coin_pubkey: EcPubkey,
     taker_coin_pubkey: EcPubkey,
@@ -283,7 +285,7 @@ struct MakerNegotiationData {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", content = "data")]
-enum TakerSwapEvent {
+pub enum TakerSwapEvent {
     Started(TakerSwapData),
     StartFailed(SwapError),
     Negotiated(MakerNegotiationData),
@@ -522,7 +524,9 @@ impl TakerSwap {
             maker_amount: self.maker_amount.clone(),
             taker_amount: self.taker_amount.clone(),
             maker_payment_confirmations: self.maker_coin.required_confirmations(),
+            maker_payment_requires_nota: Some(self.maker_coin.requires_notarization()),
             taker_payment_confirmations: self.taker_coin.required_confirmations(),
+            taker_payment_requires_nota: Some(self.taker_coin.requires_notarization()),
             taker_payment_lock: started_at + lock_duration,
             uuid: self.uuid.clone(),
             maker_payment_wait: started_at + (lock_duration * 2) / 5,
@@ -730,6 +734,7 @@ impl TakerSwap {
         let f = self.maker_coin.wait_for_confirmations(
             &unwrap!(self.r().maker_payment.clone()).tx_hex,
             self.r().data.maker_payment_confirmations,
+            self.r().data.maker_payment_requires_nota.unwrap_or(false),
             self.r().data.maker_payment_wait,
             WAIT_CONFIRM_INTERVAL,
             self.r().data.maker_coin_start_block
@@ -818,6 +823,7 @@ impl TakerSwap {
         let wait_f = self.taker_coin.wait_for_confirmations(
             &unwrap!(self.r().taker_payment.clone()).tx_hex,
             self.r().data.taker_payment_confirmations,
+            self.r().data.taker_payment_requires_nota.unwrap_or(false),
             wait_taker_payment,
             WAIT_CONFIRM_INTERVAL,
             self.r().data.taker_coin_start_block,

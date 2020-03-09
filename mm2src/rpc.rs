@@ -22,7 +22,7 @@
 
 use bytes::Bytes;
 use coins::{get_enabled_coins, get_trade_fee, my_tx_history, send_raw_transaction, set_required_confirmations,
-            show_priv_key, withdraw};
+            set_requires_notarization, show_priv_key, withdraw};
 use common::{err_to_rpc_json_string, HyRes};
 #[cfg(feature = "native")]
 use common::wio::{slurp_reqʰ, CORE, CPUPOOL, HTTP};
@@ -49,8 +49,8 @@ use tokio_core::net::TcpListener;
 
 use crate::mm2::lp_network;
 use crate::mm2::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders, order_status, orderbook, sell, set_price};
-use crate::mm2::lp_swap::{coins_needed_for_kick_start, import_swaps,  my_swap_status, my_recent_swaps,
-                          recover_funds_of_swap, stats_swap_status};
+use crate::mm2::lp_swap::{coins_needed_for_kick_start, import_swaps, list_banned_pubkeys, my_swap_status, my_recent_swaps,
+                          recover_funds_of_swap, stats_swap_status, unban_pubkeys};
 
 #[path = "rpc/lp_commands.rs"]
 pub mod lp_commands;
@@ -217,6 +217,7 @@ pub fn dispatcher (req: Json, ctx: MmArc) -> DispatcherRes {
             #[cfg(not(feature = "native"))] {return DispatcherRes::NoMatch (req)}
         },
         // "inventory" => inventory (ctx, req),
+        "list_banned_pubkeys" => hyres (list_banned_pubkeys (ctx)),
         "my_balance" => my_balance (ctx, req),
         "my_orders" => my_orders (ctx),
         "my_recent_swaps" => my_recent_swaps(ctx, req),
@@ -236,9 +237,11 @@ pub fn dispatcher (req: Json, ctx: MmArc) -> DispatcherRes {
         "show_priv_key" => hyres(show_priv_key(ctx, req)),
         "send_raw_transaction" => hyres (send_raw_transaction (ctx, req)),
         "set_required_confirmations" => hyres(set_required_confirmations(ctx, req)),
+        "set_requires_notarization" => hyres(set_requires_notarization(ctx, req)),
         "setprice" => hyres(set_price (ctx, req)),
         "stats_swap_status" => stats_swap_status(ctx, req),
         "stop" => stop (ctx),
+        "unban_pubkeys" => hyres( unban_pubkeys (ctx, req)),
         "version" => version(),
         "withdraw" => hyres (withdraw (ctx, req)),
         _ => return DispatcherRes::NoMatch (req)
