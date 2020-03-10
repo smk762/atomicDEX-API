@@ -48,6 +48,25 @@ pub enum EcPrivkey {
     SECP256K1(SecpSecret),
 }
 
+impl PartialEq for EcPrivkey {
+    fn eq(&self, other: &EcPrivkey) -> bool {
+        match self {
+            EcPrivkey::ED25519(lhs) => {
+                match other {
+                    EcPrivkey::ED25519(rhs) => lhs.as_bytes() == rhs.as_bytes(),
+                    EcPrivkey::SECP256K1(_) => false,
+                }
+            },
+            EcPrivkey::SECP256K1(lhs) => {
+                match other {
+                    EcPrivkey::ED25519(_) => false,
+                    EcPrivkey::SECP256K1(rhs) => lhs == rhs,
+                }
+            }
+        }
+    }
+}
+
 impl EcPrivkey {
     pub fn new(curve_type: CurveType, bytes: &[u8]) -> Result<EcPrivkey, String> {
         match curve_type {
@@ -174,6 +193,69 @@ impl Deserializable for EcPubkey {
             curve_type,
             bytes
         })
+    }
+}
+
+impl Serializable for EcPrivkey {
+    fn serialize(&self, s: &mut Stream) {
+        match self {
+            EcPrivkey::SECP256K1(secret) => {
+                s.append(&0u8);
+                s.append_slice(&secret.serialize())
+            },
+            EcPrivkey::ED25519(secret) => {
+                s.append(&1u8);
+                s.append_slice(secret.as_bytes())
+            },
+        };
+    }
+}
+
+impl Deserializable for EcPrivkey {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, serialization::Error>
+        where Self: Sized, T: std::io::Read
+    {
+        let tag: u8 = reader.read()?;
+        let curve_type = match tag {
+            0 => CurveType::SECP256K1,
+            1 => CurveType::ED25519,
+            _ => return Err(serialization::Error::Custom(ERRL!("Unknown tag {}", tag)))
+        };
+        let mut bytes = [0; 32];
+        reader.read_slice(&mut bytes)?;
+        let privkey = EcPrivkey::new(curve_type, &bytes).map_err(|e| serialization::Error::Custom(ERRL!("!EcPrivkey::new {}", e)))?;
+        Ok(privkey)
+    }
+}
+
+impl Serialize for EcPrivkey {
+    fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        let bytes = serialize(self).take();
+        s.serialize_str(&hex::encode(&bytes))
+    }
+}
+
+impl<'de> Deserialize<'de> for EcPrivkey {
+    fn deserialize<D>(d: D) -> Result<EcPrivkey, D::Error> where D: Deserializer<'de> {
+        struct EcPrivkeyVisitor;
+
+        impl<'de> Visitor<'de> for EcPrivkeyVisitor {
+            type Value = EcPrivkey;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a string containing EcPrivkey data")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+            {
+                let bytes = hex::decode(v).map_err(E::custom)?;
+                deserialize(bytes.as_slice()).map_err(|e| E::custom(fomat!([e])))
+            }
+        }
+
+        d.deserialize_any(EcPrivkeyVisitor)
     }
 }
 

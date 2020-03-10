@@ -10,7 +10,6 @@ use primitives::hash::H160;
 use rand::Rng;
 use serde_bencode::ser::to_bytes as bencode;
 use serde_bencode::de::from_bytes as bdecode;
-use serde_bytes::ByteBuf;
 use serde_json::{self as json, Value as Json};
 use std::any::Any;
 use std::collections::HashSet;
@@ -313,7 +312,7 @@ lazy_static! {
 struct PortableCtx {
     // Sending the `conf` as a string in order for bencode not to mess with JSON, and for wire readability.
     conf: String,
-    secp256k1_key_pair: ByteBuf,
+    ec_privkey: Option<EcPrivkey>,
     ffi_handle: Option<u32>
 }
 
@@ -391,7 +390,6 @@ impl MmArc {
     }
 }
 
-/*
 /// Receives a subset of a portable context in order to recreate a native copy of it.  
 /// Can be invoked with the same context multiple times, synchronizing some of the fields.  
 /// As of now we're expecting a one-to-one pairing between the portable and the native versions of MM
@@ -399,10 +397,9 @@ impl MmArc {
 #[cfg(feature = "native")]
 pub async fn ctx2helpers (main_ctx: MmArc, req: Bytes) -> Result<Vec<u8>, String> {
     let ctxʷ: PortableCtx = try_s! (bdecode (&req));
-    let private = try_s! (Private::from_layout (&ctxʷ.secp256k1_key_pair[..]));
     let main_key = try_s! (main_ctx.ec_privkey.as_option().ok_or ("No key"));
 
-    if *main_key.private() == private {
+    if Some(main_key) == ctxʷ.ec_privkey.as_ref() {
         // We have a match with the primary native context, the one configured on the command line.
         let res = try_s! (bencode (&NativeCtx {
             ffi_handle: try_s! (main_ctx.ffi_handle())
@@ -412,8 +409,8 @@ pub async fn ctx2helpers (main_ctx: MmArc, req: Bytes) -> Result<Vec<u8>, String
 
     if let Some (ffi_handle) = ctxʷ.ffi_handle {
         if let Ok (ctx) = MmArc::from_ffi_handle (ffi_handle) {
-            let key = try_s! (ctx.secp256k1_key_pair.as_option().ok_or ("No key"));
-            if *key.private() != private {return ERR! ("key mismatch")}
+            let key = try_s! (ctx.ec_privkey.as_option().ok_or ("No key"));
+            if Some(key) != ctxʷ.ec_privkey.as_ref() {return ERR! ("key mismatch")}
             let res = try_s! (bencode (&NativeCtx {
                 ffi_handle: try_s! (ctx.ffi_handle())
             }));
@@ -421,15 +418,9 @@ pub async fn ctx2helpers (main_ctx: MmArc, req: Bytes) -> Result<Vec<u8>, String
     }   }
 
     // Create a native copy of the portable context.
-
-    let pair: Option<KeyPair> = if ctxʷ.secp256k1_key_pair.is_empty() {None} else {
-        let private = try_s! (Private::from_layout (&ctxʷ.secp256k1_key_pair[..]));
-        Some (try_s! (KeyPair::from_private (private)))
-    };
-
     let ctx = MmCtx {
         conf: try_s! (json::from_str (&ctxʷ.conf)),
-        secp256k1_key_pair: pair.into(),
+        ec_privkey: ctxʷ.ec_privkey.into(),
         ffi_handle: ctxʷ.ffi_handle.into(),
         ..MmCtx::with_log_state (LogState::in_memory())
     };
@@ -446,7 +437,6 @@ pub async fn ctx2helpers (main_ctx: MmArc, req: Bytes) -> Result<Vec<u8>, String
 
     Ok (res)
 }
-*/
 
 /// Helps getting a crate context from a corresponding `MmCtx` field.
 /// 
