@@ -7,7 +7,8 @@ use common::{block_on, slurp};
 #[cfg(not(feature = "native"))]
 use common::call_back;
 use common::executor::Timer;
-use common::for_tests::{enable_electrum, enable_native, from_env_file, mm_spat, LocalStart, MarketMakerIt};
+use common::for_tests::{enable_electrum, enable_native, from_env_file, get_passphrase, mm_spat,
+                        LocalStart, MarketMakerIt};
 #[cfg(feature = "native")]
 use common::for_tests::mm_dump;
 #[cfg(not(feature = "native"))]
@@ -2153,13 +2154,6 @@ fn check_too_low_volume_order_creation_fails(mm: &MarketMakerIt, base: &str, rel
 fn setprice_buy_sell_min_volume() {
     let bob_passphrase = unwrap! (get_passphrase (&".env.seed", "BOB_PASSPHRASE"));
 
-    let coins = json! ([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","rpcport":11608,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
-    ]);
-
     let mut mm = unwrap!(MarketMakerIt::start (
         json! ({
             "gui": "nogui",
@@ -2168,7 +2162,7 @@ fn setprice_buy_sell_min_volume() {
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": bob_passphrase,
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "rpc_password": "pass",
             "i_am_seed": true,
         }),
@@ -2180,7 +2174,7 @@ fn setprice_buy_sell_min_volume() {
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
 
-    log!([block_on(enable_coins_eth_electrum(&mm, vec!["http://195.201.0.6:8565"]))]);
+    log!([block_on(enable_coins_eth_electrum_xtz(&mm, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]))]);
 
     check_too_low_volume_order_creation_fails(&mm, "MORTY", "ETH");
     check_too_low_volume_order_creation_fails(&mm, "ETH", "MORTY");
