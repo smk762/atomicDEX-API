@@ -84,7 +84,7 @@ pub struct BlockHeader {
     priority: Option<u64>,
     proof_of_work_nonce: Option<String>,
     seed_nonce_hash: Option<String>,
-    signature: String,
+    signature: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
