@@ -45,11 +45,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "native")]
 use crate::common::lp;
 use crate::common::executor::{spawn, Timer};
-use crate::common::{slurp_url, MM_VERSION};
+use crate::common::{slurp_url, MM_DATETIME, MM_VERSION};
 use crate::common::mm_ctx::{MmCtx, MmArc};
 use crate::mm2::lp_network::{lp_command_q_loop, start_seednode_loop, start_client_p2p_loop};
 use crate::mm2::lp_ordermatch::{lp_ordermatch_loop, lp_trade_command, migrate_saved_orders, orders_kick_start};
 use crate::mm2::lp_swap::{migrate_swaps, swap_kick_starts};
+use crate::mm2::lp_swap::{running_swaps_num, swap_kick_starts};
 use crate::mm2::rpc::{spawn_rpc};
 
 /// Process a previously queued command that wasn't handled by the RPC `dispatcher`.  
@@ -1217,7 +1218,7 @@ fn test_ip (_ctx: &MmArc, _ip: IpAddr) -> Result<(Sender<()>, u16), String> {
 /// * `ctx_cb` - callback used to share the `MmCtx` ID with the call site.
 pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
     BITCOIND_RPC_INITIALIZING.store (true, Ordering::Relaxed);
-    log! ({"version: {}", MM_VERSION});
+    log! ({"lp_init] version: {} DT {}", MM_VERSION, MM_DATETIME});
     unsafe {try_s! (lp_passphrase_init (&ctx))}
 
     try_s! (fix_directories (&ctx));
@@ -1366,5 +1367,7 @@ pub async fn lp_init (mypubport: u16, ctx: MmArc) -> Result<(), String> {
     // In the mobile version we might depend on `lp_init` staying around until the context stops.
     loop {if ctx.is_stopping() {break}; Timer::sleep (0.2) .await}
 
+    // wait for swaps to stop
+    loop { if running_swaps_num(&ctx) == 0 { break }; Timer::sleep (0.2) .await }
     Ok(())
 }

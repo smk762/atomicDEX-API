@@ -63,6 +63,7 @@ pub mod jsonrpc_client;
 #[macro_use]
 pub mod log;
 
+pub mod file_lock;
 #[cfg(feature = "native")]
 pub mod for_c;
 pub mod custom_futures;
@@ -131,6 +132,7 @@ use wasm_bindgen::prelude::*;
 #[allow(dead_code,non_upper_case_globals,non_camel_case_types,non_snake_case)]
 pub mod lp {include! ("c_headers/LP_include.rs");}
 
+pub const MM_DATETIME: &'static str = env! ("MM_DATETIME");
 pub const MM_VERSION: &'static str = env! ("MM_VERSION");
 
 pub const SATOSHIS: u64 = 100000000;

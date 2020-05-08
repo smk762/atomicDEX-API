@@ -50,7 +50,7 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use crate::mm2::lp_swap::{dex_fee_amount, get_locked_amount, is_pubkey_banned, MakerSwap,
-                          run_maker_swap, run_taker_swap, TakerSwap};
+                          RunMakerSwapInput, RunTakerSwapInput, run_maker_swap, run_taker_swap, TakerSwap};
 
 #[cfg(test)]
 #[cfg(feature = "native")]
@@ -78,6 +78,8 @@ struct TakerRequest {
     method: String,
     sender_pubkey: H256Json,
     dest_pub_key: H256Json,
+    #[serde(default)]
+    match_by: MatchBy,
 }
 
 impl TakerRequest {
@@ -97,10 +99,34 @@ impl TakerRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", content = "data")]
+enum MatchBy {
+    Any,
+    Orders(HashSet<Uuid>),
+    Pubkeys(HashSet<H256Json>)
+}
+
+impl Default for MatchBy {
+    fn default() -> Self { MatchBy::Any }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", content = "data")]
+enum OrderType {
+    FillOrKill,
+    GoodTillCancelled,
+}
+
+impl Default for OrderType {
+    fn default() -> Self { OrderType::GoodTillCancelled }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct TakerOrder {
     created_at: u64,
     request: TakerRequest,
-    matches: HashMap<Uuid, TakerMatch>
+    matches: HashMap<Uuid, TakerMatch>,
+    order_type: OrderType,
 }
 
 /// Result of match_reserved function
@@ -118,6 +144,16 @@ impl TakerOrder {
     }
 
     fn match_reserved(&self, reserved: &MakerReserved) -> MatchReservedResult {
+        match &self.request.match_by {
+            MatchBy::Any => (),
+            MatchBy::Orders(uuids) => if !uuids.contains(&reserved.maker_order_uuid) {
+                return MatchReservedResult::NotMatched;
+            },
+            MatchBy::Pubkeys(pubkeys) => if !pubkeys.contains(&reserved.sender_pubkey) {
+                return MatchReservedResult::NotMatched;
+            },
+        }
+
         let my_base_amount: MmNumber = self.request.get_base_amount();
         let my_rel_amount: MmNumber = self.request.get_rel_amount();
         let other_base_amount: MmNumber = reserved.get_base_amount();
@@ -323,7 +359,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
         let taker_amount = maker_match.reserved.get_rel_amount().into();
         let uuid = maker_match.request.uuid.to_string();
 
-        log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
+        log!("Entering the maker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()) " with uuid: " (uuid));
         let maker_swap = MakerSwap::new(
             ctx.clone(),
             alice.into(),
@@ -333,7 +369,7 @@ fn lp_connect_start_bob(ctx: MmArc, maker_match: MakerMatch) {
             taker_amount,
             uuid,
         );
-        run_maker_swap(maker_swap, None).await;
+        run_maker_swap(RunMakerSwapInput::StartNew(maker_swap), ctx).await;
     });
 }
 
@@ -369,9 +405,9 @@ fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
         let taker_amount = taker_match.reserved.get_rel_amount().into();
         let uuid = taker_match.reserved.taker_order_uuid.to_string();
 
-        log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker()));
+        log!("Entering the taker_swap_loop " (maker_coin.ticker()) "/" (taker_coin.ticker())  " with uuid: " (uuid));
         let taker_swap = TakerSwap::new(
-            ctx,
+            ctx.clone(),
             maker.into(),
             maker_coin,
             taker_coin,
@@ -379,7 +415,7 @@ fn lp_connected_alice(ctx: MmArc, taker_match: TakerMatch) {
             taker_amount,
             uuid,
         );
-        run_taker_swap(taker_swap, None).await
+        run_taker_swap(RunTakerSwapInput::StartNew(taker_swap), ctx).await
     });
 }
 
@@ -394,10 +430,10 @@ pub async fn lp_ordermatch_loop(ctx: MmArc) {
             let mut my_taker_orders = unwrap!(ordermatch_ctx.my_taker_orders.lock());
             let mut my_maker_orders = unwrap!(ordermatch_ctx.my_maker_orders.lock());
             let mut my_cancelled_orders = unwrap!(ordermatch_ctx.my_cancelled_orders.lock());
-            // move the timed out and unmatched taker orders to maker
+            // transform the timed out and unmatched GTC taker orders to maker
             *my_taker_orders = my_taker_orders.drain().filter_map(|(uuid, order)| if order.created_at + ORDERMATCH_TIMEOUT < now_ms() {
                 delete_my_taker_order(&ctx, &order);
-                if order.matches.is_empty() {
+                if order.matches.is_empty() && order.order_type == OrderType::GoodTillCancelled {
                     let maker_order = order.into();
                     save_my_maker_order(&ctx, &maker_order);
                     my_maker_orders.insert(uuid, maker_order);
@@ -656,7 +692,11 @@ pub struct AutoBuyInput {
     gui: Option<String>,
     #[serde(rename="destpubkey")]
     #[serde(default)]
-    dest_pub_key: H256Json
+    dest_pub_key: H256Json,
+    #[serde(default)]
+    match_by: MatchBy,
+    #[serde(default)]
+    order_type: OrderType,
 }
 
 pub async fn buy(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
@@ -753,6 +793,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         dest_pub_key: input.dest_pub_key,
         sender_pubkey: H256Json::from(our_public_id.bytes),
         action,
+        match_by: input.match_by,
     };
     ctx.broadcast_p2p_msg(&unwrap!(json::to_string(&request)));
     let result = json!({
@@ -762,6 +803,7 @@ pub fn lp_auto_buy(ctx: &MmArc, input: AutoBuyInput) -> Result<String, String> {
         created_at: now_ms(),
         matches: HashMap::new(),
         request,
+        order_type: input.order_type,
     };
     save_my_taker_order(ctx, &order);
     my_taker_orders.insert(uuid, order);
@@ -1287,12 +1329,20 @@ fn save_my_taker_order(ctx: &MmArc, order: &TakerOrder) {
 
 #[cfg_attr(test, mockable)]
 fn delete_my_maker_order(ctx: &MmArc, order: &MakerOrder) {
-    unwrap!(remove_file(&my_maker_order_file_path(ctx, &order.uuid)));
+    let path = my_maker_order_file_path(ctx, &order.uuid);
+    match remove_file(&path) {
+        Ok(_) => (),
+        Err(e) => log!("Warning, could not remove order file " (path.display()) ", error " (e)),
+    }
 }
 
 #[cfg_attr(test, mockable)]
 fn delete_my_taker_order(ctx: &MmArc, order: &TakerOrder) {
-    unwrap!(remove_file(&my_taker_order_file_path(ctx, &order.request.uuid)));
+    let path = my_taker_order_file_path(ctx, &order.request.uuid);
+    match remove_file(&path) {
+        Ok(_) => (),
+        Err(e) => log!("Warning, could not remove order file " (path.display()) ", error " (e)),
+    }
 }
 
 pub fn orders_kick_start(ctx: &MmArc) -> Result<HashSet<String>, String> {
@@ -1438,6 +1488,7 @@ pub struct OrderbookEntry {
     pubkey: EcPubkey,
     age: i64,
     zcredits: u64,
+    uuid: Uuid,
 }
 
 #[derive(Serialize)]
@@ -1476,7 +1527,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let asks = match orderbook.get(&(req.base.clone(), req.rel.clone())) {
         Some(asks) => {
             let mut orderbook_entries = vec![];
-            for (_, ask) in asks.iter() {
+            for (uuid, ask) in asks.iter() {
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.base.clone(),
                     address: try_s!(base_coin.derive_address_from_ec_pubkey(&ask.pubkey)),
@@ -1487,6 +1538,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,
+                    uuid: *uuid,
                 })
             }
             orderbook_entries
@@ -1496,7 +1548,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let bids = match orderbook.get(&(req.rel.clone(), req.base.clone())) {
         Some(asks) => {
             let mut orderbook_entries = vec![];
-            for (_, ask) in asks.iter() {
+            for (uuid, ask) in asks.iter() {
                 orderbook_entries.push(OrderbookEntry {
                     coin: req.rel.clone(),
                     address: try_s!(rel_coin.derive_address_from_ec_pubkey(&ask.pubkey)),
@@ -1509,6 +1561,7 @@ pub async fn orderbook(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                     pubkey: ask.pubkey.clone(),
                     age: (now_ms() as i64 / 1000) - ask.timestamp as i64,
                     zcredits: 0,
+                    uuid: *uuid,
                 })
             }
             orderbook_entries
