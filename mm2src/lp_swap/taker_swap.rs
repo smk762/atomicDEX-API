@@ -2,12 +2,9 @@
 
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use common::crypto::{CurveType, EcPubkey, SecretHash};
-use common::executor::Timer;
-use common::{bits256, now_ms, now_float, slurp, write, MM_VERSION};
-use common::mm_ctx::MmArc;
 use common::{
     bits256, now_ms, now_float, slurp, write, MM_VERSION,
+    crypto::{CurveType, EcPubkey, SecretHash},
     executor::Timer,
     file_lock::FileLock,
     mm_ctx::MmArc,
@@ -20,8 +17,6 @@ use futures::{
     future::Either,
 };
 use futures01::Future;
-use futures::compat::Future01CompatExt;
-use futures::future::Either;
 use parking_lot::Mutex as PaMutex;
 use peers::FixedValidator;
 use rpc::v1::types::{H160 as H160Json, H256 as H256Json, H264 as H264Json};

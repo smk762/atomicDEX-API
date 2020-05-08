@@ -18,11 +18,11 @@
 //  marketmaker
 //
 
-use bitcrypto::{ChecksumType, sha256};
+use bitcrypto::{sha256};
 use common::crypto::{CurveType, EcPrivkey};
 use crate::tezos::TezosSecret;
 use crate::tezos::tezos_constants::*;
-use keys::{Error as KeysError, KeyPair, Private as UtxoWif};
+use keys::{Error as KeysError, Private as UtxoWif};
 use primitives::hash::H256;
 
 pub fn ec_privkey_from_seed(seed: &str) -> Result<EcPrivkey, String> {

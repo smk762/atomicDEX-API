@@ -10,7 +10,7 @@ use common::mm_ctx::{MmArc, MmCtxBuilder};
 use crdts::CmRDT;
 use futures01::Future;
 use futures::future::{select, Either};
-use rand::{self, Rng, RngCore};
+use rand::{self, Rng};
 use serde_bytes::ByteBuf;
 use serde_json::Value as Json;
 use std::net::{Ipv4Addr, SocketAddr};

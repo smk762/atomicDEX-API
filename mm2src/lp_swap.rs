@@ -59,18 +59,15 @@
 
 use async_std::{sync as async_std_sync};
 use bigdecimal::BigDecimal;
-use coins::{lp_coinfind, TransactionEnum};
+use coins::{lp_coinfind, MmCoinEnum, TransactionEnum};
 use common::{
-    block_on, HyRes, read_dir, rpc_response, slurp, write,
+    block_on, first_slice_intersection, HyRes, json_dir_entries, read_dir, rpc_response, slurp, write,
     executor::spawn,
     mm_ctx::{from_ctx, MmArc}
 };
-use coins::{lp_coinfind, MmCoinEnum, TransactionEnum};
-use common::{block_on, first_slice_intersection, read_dir, rpc_response, slurp, write, HyRes, json_dir_entries};
 use common::crypto::{EcPubkey, SecretHash, SecretHashAlgo};
-use common::mm_ctx::{from_ctx, MmArc};
 use http::Response;
-use primitives::hash::{H160, H256, H264};
+use primitives::hash::{H256};
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use serde_json::{self as json, Value as Json};
 use std::collections::{HashSet, HashMap};
@@ -139,8 +136,8 @@ mod taker_swap;
 
 use maker_swap::{MakerSavedSwap, MakerSwapEvent, stats_maker_swap_file_path};
 use taker_swap::{TakerSavedSwap, TakerSwapEvent, stats_taker_swap_file_path};
-pub use maker_swap::{MakerSwap, RunMakerSwapInput, run_maker_swap};
-pub use taker_swap::{RunTakerSwapInput, TakerSwap, run_taker_swap};
+pub use maker_swap::{MakerSwap, migrate_maker_saved_swap, RunMakerSwapInput, run_maker_swap};
+pub use taker_swap::{RunTakerSwapInput, migrate_taker_saved_swap, TakerSwap, run_taker_swap};
 
 /// Includes the grace time we add to the "normal" timeouts
 /// in order to give different and/or heavy communication channels a chance.

@@ -30,7 +30,6 @@ use chain::{TransactionOutput, TransactionInput, OutPoint};
 use chain::constants::{SEQUENCE_FINAL};
 use common::{first_char_to_upper, small_rng};
 use common::crypto::{CryptoOps, CurveType, EcPubkey, SecretHash, SecretHashAlgo};
-use common::custom_futures::join_all_sequential;
 use common::executor::{spawn, Timer};
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::mm_ctx::MmArc;

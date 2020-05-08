@@ -2,17 +2,13 @@
 
 use atomic::Atomic;
 use bigdecimal::BigDecimal;
-use bitcrypto::dhash160;
 use common::{
     bits256, now_ms, now_float, slurp, write, MM_VERSION,
+    crypto::{CurveType, EcPubkey, SecretHash, SecretHashAlgo},
     executor::Timer,
     file_lock::FileLock,
     mm_ctx::MmArc,
 };
-use common::executor::Timer;
-use common::{bits256, now_ms, now_float, slurp, write, MM_VERSION};
-use common::crypto::{CurveType, EcPubkey, SecretHash, SecretHashAlgo};
-use common::mm_ctx::MmArc;
 use coins::{FoundSwapTxSpend, MmCoinEnum, TradeInfo, TransactionDetails};
 use crc::crc32;
 use futures::{
@@ -21,8 +17,6 @@ use futures::{
     future::Either,
 };
 use futures01::Future;
-use futures::compat::Future01CompatExt;
-use futures::future::Either;
 use parking_lot::Mutex as PaMutex;
 use peers::FixedValidator;
 use rand::Rng;

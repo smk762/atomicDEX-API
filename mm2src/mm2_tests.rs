@@ -42,7 +42,7 @@ lazy_static! {
         {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
         {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"},
         {"coin":"XTZ","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
-        {"coin":"XTZ_MLA","name":"tezosbabylonnet_mla","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"MLA","contract_address":"KT1DAJcbk3P8ReXsfWvWPWEfBP4ptNtyT2Ut"},"mm2":1},
+        {"coin":"XTZ_MLA","name":"tezosbabylonnet_mla","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"MLA","contract_address":"KT1FuCivdibSvet6HKKvBjSFEPcPRJYAtGem"},"mm2":1},
     ]);
 }
 
@@ -1172,16 +1172,9 @@ fn test_withdraw_and_send() {
 
     let alice_passphrase = unwrap! (var ("ALICE_PASSPHRASE") .ok().or (alice_file_passphrase), "No ALICE_PASSPHRASE or .env.client/PASSPHRASE");
 
-    let coins = json! ([
-        {"coin":"RICK","asset":"RICK","rpcport":8923,"txversion":4,"overwintered":1,"txfee":1000},
-        {"coin":"MORTY","asset":"MORTY","rpcport":8923,"txversion":4,"overwintered":1,"txfee":1000},
-        {"coin":"MORTY_SEGWIT","asset":"MORTY_SEGWIT","txversion":4,"overwintered":1,"segwit":true,"txfee":1000},
-        {"coin":"ETOMIC","asset":"ETOMIC","txversion":4,"overwintered":1,"txfee":1000},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"},
-        {"coin":"XTZ","name":"tezosbabylonnet","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"TEZOS"},"mm2":1},
-        {"coin":"XTZ_MLA","name":"tezosbabylonnet_mla","ed25519_addr_prefix":[6, 161, 159],"secp256k1_addr_prefix":[6, 161, 161],"p256_addr_prefix":[6, 161, 164],"protocol":{"platform":"TEZOS","token_type":"MLA","contract_address":"KT1DAJcbk3P8ReXsfWvWPWEfBP4ptNtyT2Ut"},"mm2":1},
-    ]);
+    let mut coins: Json = COINS_CONFIG.clone();
+    let morty_segwit = json!({"coin":"MORTY_SEGWIT","asset":"MORTY_SEGWIT","txversion":4,"overwintered":1,"segwit":true,"txfee":1000});
+    coins.as_array_mut().unwrap().push(morty_segwit);
 
     let mut mm_alice = unwrap! (MarketMakerIt::start (
         json! ({
@@ -1955,8 +1948,8 @@ fn orderbook_should_display_valid_address() {
     let (_dump_log, _dump_dashboard) = mm_dump (&mm.log_path);
     log!({"Log path: {}", mm.log_path.display()});
     unwrap! (block_on (mm.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
-    block_on(enable_electrum(&mm, "MORTY", vec!["electrum3.cipig.net:10018", "electrum2.cipig.net:10018", "electrum1.cipig.net:10018"]));
-    block_on(enable_native(&mm, "XTZ", vec!["https://tezos-dev.cryptonomic-infra.tech"], "KT1NeiPn2baKGyofShT4B4NzVnXomgSLj6UK"));
+    log!([block_on(enable_electrum(&mm, "MORTY", vec!["electrum3.cipig.net:10018", "electrum2.cipig.net:10018", "electrum1.cipig.net:10018"]))]);
+    log!([block_on(enable_native(&mm, "XTZ", vec!["https://tezos-dev.cryptonomic-infra.tech"], "KT1NeiPn2baKGyofShT4B4NzVnXomgSLj6UK"))]);
 
     let price = BigRational::new(9.into(), 10.into());
     let volume = BigRational::new(9.into(), 10.into());
@@ -2187,15 +2180,6 @@ fn setprice_buy_sell_min_volume() {
 #[cfg(feature = "native")]
 fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
     let bob_passphrase = unwrap! (get_passphrase (&".env.client", "BOB_PASSPHRASE"));
-
-    let coins = json! ([
-        {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETOMIC","asset":"ETOMIC","required_confirmations":0,"txversion":4,"overwintered":1},
-        {"coin":"ETH","name":"ethereum","etomic":"0x0000000000000000000000000000000000000000"},
-        {"coin":"JST","name":"jst","etomic":"0x2b294F029Fde858b2c62184e8390591755521d8E"}
-    ]);
-
     let mut mm_bob = unwrap! (MarketMakerIt::start (
         json! ({
             "gui": "nogui",
@@ -2205,7 +2189,7 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
             "rpcip": env::var ("BOB_TRADE_IP") .ok(),
             "canbind": env::var ("BOB_TRADE_PORT") .ok().map (|s| unwrap! (s.parse::<i64>())),
             "passphrase": bob_passphrase,
-            "coins": coins,
+            "coins": *COINS_CONFIG,
             "rpc_password": "password",
             "i_am_seed": true,
         }),
@@ -2216,7 +2200,7 @@ fn test_fill_or_kill_taker_order_should_not_transform_to_maker() {
     let (_bob_dump_log, _bob_dump_dashboard) = mm_bob.mm_dump();
     log! ({"Bob log path: {}", mm_bob.log_path.display()});
     unwrap! (block_on (mm_bob.wait_for_log (22., |log| log.contains (">>>>>>>>> DEX stats "))));
-    log!([block_on(enable_coins_eth_electrum(&mm_bob, vec!["http://195.201.0.6:8565"]))]);
+    log!([block_on(enable_coins_eth_electrum_xtz(&mm_bob, vec!["http://195.201.0.6:8565"], vec!["https://tezos-dev.cryptonomic-infra.tech"]))]);
 
     log!("Issue bob ETH/JST sell request");
     let rc = unwrap! (block_on(mm_bob.rpc (json! ({

@@ -1,9 +1,6 @@
 use bitcrypto::dhash160;
 use common::block_on;
 use crate::privkey::ec_privkey_from_seed;
-use crate::WithdrawFee;
-use crate::utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes};
-use common::privkey::key_pair_from_seed;
 use crate::{
     WithdrawFee,
     utxo::rpc_clients::{ElectrumProtocol, ListSinceBlockRes, NetworkInfo}

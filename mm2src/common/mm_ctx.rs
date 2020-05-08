@@ -5,7 +5,6 @@ use futures::channel::mpsc;
 use gstuff::Constructible;
 #[cfg(not(feature = "native"))]
 use http::Response;
-use keys::{DisplayLayout, KeyPair, Private};
 use primitives::hash::H160;
 use rand::Rng;
 use serde_bencode::ser::to_bytes as bencode;
