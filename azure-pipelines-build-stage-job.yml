@@ -43,7 +43,11 @@ jobs:
           if [ $AGENT_OS = "Linux" ]
           then
             docker build -f Dockerfile.ubuntu.ci -t mm2_builder .
-            docker run -v $PWD:/mm2 mm2_builder cargo build --features native -vv
+            docker run \
+            -v $PWD:/mm2 mm2_builder \
+            -v /home/azureagent/docker-cargo-cache/git:/root/.cargo/git \
+            -v /home/azureagent/docker-cargo-cache/registry:/root/.cargo/registry \
+            cargo build --features native -vv
           else
             cargo build --features native -vv
           fi
