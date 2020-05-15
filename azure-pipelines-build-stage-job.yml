@@ -56,7 +56,21 @@ jobs:
       # Cargo uses CPU threads count by default running only 2 concurrent tests on Linux.
       # Explicit --test-threads=8 makes the process faster
       - bash: |
-          cargo test --features native --all -- --test-threads=8
+          if [ $AGENT_OS = "Linux" ]
+          then
+            docker run \
+            -v $PWD:/mm2 \
+            -v /home/azureagent/docker-cargo-cache/git:/root/.cargo/git \
+            -v /home/azureagent/docker-cargo-cache/registry:/root/.cargo/registry \
+            -e BOB_PASSPHRASE \
+            -e BOB_USERPASS \
+            -e ALICE_PASSPHRASE \
+            -e ALICE_USERPASS \
+            mm2_builder \
+            cargo test --features native --all
+          else
+            cargo test --features native --all -- --test-threads=8
+          fi
         displayName: 'Test MM2'
         timeoutInMinutes: 22
         env:
