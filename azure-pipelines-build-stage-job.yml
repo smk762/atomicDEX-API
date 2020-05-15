@@ -44,9 +44,10 @@ jobs:
           then
             docker build -f Dockerfile.ubuntu.ci -t mm2_builder .
             docker run \
-            -v $PWD:/mm2 mm2_builder \
+            -v $PWD:/mm2 \
             -v /home/azureagent/docker-cargo-cache/git:/root/.cargo/git \
             -v /home/azureagent/docker-cargo-cache/registry:/root/.cargo/registry \
+            mm2_builder \
             cargo build --features native -vv
           else
             cargo build --features native -vv
