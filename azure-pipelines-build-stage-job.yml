@@ -40,37 +40,12 @@ jobs:
           echo 2.0.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Debug > MM_VERSION
           cat MM_VERSION
           touch mm2src/common/build.rs
-          if [ $AGENT_OS = "Linux" ]
-          then
-            docker build -f Dockerfile.ubuntu.ci -t mm2_builder .
-            docker run \
-            -v $PWD:/mm2 \
-            -v /home/azureagent/docker-cargo-cache/git:/root/.cargo/git \
-            -v /home/azureagent/docker-cargo-cache/registry:/root/.cargo/registry \
-            mm2_builder \
-            cargo build --features native -vv
-          else
-            cargo build --features native -vv
-          fi
+          cargo build --features native -vv
         displayName: 'Build MM2 Debug'
       # Cargo uses CPU threads count by default running only 2 concurrent tests on Linux.
       # Explicit --test-threads=8 makes the process faster
       - bash: |
-          if [ $AGENT_OS = "Linux" ]
-          then
-            docker run \
-            -v $PWD:/mm2 \
-            -v /home/azureagent/docker-cargo-cache/git:/root/.cargo/git \
-            -v /home/azureagent/docker-cargo-cache/registry:/root/.cargo/registry \
-            -e BOB_PASSPHRASE \
-            -e BOB_USERPASS \
-            -e ALICE_PASSPHRASE \
-            -e ALICE_USERPASS \
-            mm2_builder \
-            cargo test --features native --all
-          else
-            cargo test --features native --all -- --test-threads=8
-          fi
+          cargo test --features native --all -- --test-threads=8
         displayName: 'Test MM2'
         timeoutInMinutes: 22
         env:
