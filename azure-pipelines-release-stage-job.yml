@@ -51,10 +51,14 @@ jobs:
           if [ $AGENT_OS = "Linux" ]
           then
             docker build -f Dockerfile.ubuntu.ci -t mm2_builder .
+            export UID=$(id -u)
+            export GID=$(id -g)
             docker run \
-            -v $PWD:/mm2 \
+            --user $UID:$GID \
             -v /home/azureagent/docker-cargo-cache/git:/root/.cargo/git \
             -v /home/azureagent/docker-cargo-cache/registry:/root/.cargo/registry \
+            -v $PWD:$PWD \
+            -w $PWD \
             mm2_builder \
             cargo build --features native -vv --target-dir target-xenial
           else
@@ -83,10 +87,14 @@ jobs:
           if [ $AGENT_OS = "Linux" ]
           then
             docker build -f Dockerfile.ubuntu.ci -t mm2_builder .
+            export UID=$(id -u)
+            export GID=$(id -g)
             docker run \
-            -v $PWD:/mm2 \
+            --user $UID:$GID \
             -v /home/azureagent/docker-cargo-cache/git:/root/.cargo/git \
             -v /home/azureagent/docker-cargo-cache/registry:/root/.cargo/registry \
+            -v $PWD:$PWD \
+            -w $PWD \
             mm2_builder \
             cargo build --features native --release -vv --target-dir target-xenial
           else
