@@ -19,7 +19,8 @@ RUN \
     rustup default nightly-2020-02-01 &&\
     # It seems that bindgen won't prettify without it:
     rustup component add rustfmt-preview &&\
-    rm -f /tmp/rustup-init.sh
+    rm -f /tmp/rustup-init.sh &&\
+    chmod -R 777 /root
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /mm2

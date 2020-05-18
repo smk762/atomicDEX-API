@@ -59,8 +59,9 @@ jobs:
             -v /home/azureagent/docker-cargo-cache/registry:/root/.cargo/registry \
             -v $PWD:$PWD \
             -w $PWD \
+            -e HOME=/root \
             mm2_builder \
-            cargo build --features native -vv --target-dir target-xenial
+            /bin/bash -c "source /root/.cargo/env && cargo build --features native -vv --target-dir target-xenial"
           else
             cargo build --features native -vv
           fi
@@ -95,8 +96,9 @@ jobs:
             -v /home/azureagent/docker-cargo-cache/registry:/root/.cargo/registry \
             -v $PWD:$PWD \
             -w $PWD \
+            -e HOME=/root \
             mm2_builder \
-            cargo build --features native --release -vv --target-dir target-xenial
+            /bin/bash -c "source /root/.cargo/env && cargo build --features native --release -vv --target-dir target-xenial"
           else
             cargo build --features native --release -vv
           fi
