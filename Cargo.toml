@@ -5,10 +5,10 @@
 # and separating stack tracing into raw trace and symbolication parts.
 
 [package]
-name = "mm2"
+name = "AtomicDeFi"
 version = "0.1.0"
 edition = "2018"
-default-run = "mm2"
+default-run = "atomic_defi"
 
 [features]
 native = [
@@ -21,19 +21,19 @@ w-bindgen = [
 ]
 
 [[bin]]
-name = "mm2"
-path = "mm2src/mm2_bin.rs"
+name = "atomic_defi"
+path = "src/atomic_defi_bin.rs"
 test = false
 doctest = false
 bench = false
 
 [[bin]]
 name = "docker_tests"
-path = "mm2src/docker_tests.rs"
+path = "src/docker_tests.rs"
 
 [lib]
-name = "mm2"
-path = "mm2src/mm2_lib.rs"
+name = "atomic_defi"
+path = "src/atomic_defi_lib.rs"
 crate-type = ["staticlib"]
 test = false
 doctest = false
@@ -69,8 +69,8 @@ atomic = "0.4"
 bigdecimal = { version = "0.1", features = ["serde"] }
 bitcrypto = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 bytes = "0.4"
-coins = { path = "mm2src/coins" }
-common = { path = "mm2src/common" }
+coins = { path = "src/coins" }
+common = { path = "src/common" }
 crc = "1.8"
 crc32fast = { version = "1.2", features = ["std", "nightly"] }
 crossbeam = "0.7"
@@ -95,10 +95,10 @@ num-rational = { version = "0.2", features = ["serde", "bigint", "bigint-std"] }
 num-traits = "0.2"
 rpc = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 parking_lot = { version = "0.7", features = ["nightly"] }
-peers = { path = "mm2src/peers" }
+peers = { path = "src/peers" }
 # AP: portfolio RPCs are not documented and not used as of now
 # so the crate is disabled to speed up the entire removal of C code
-# portfolio = { path = "mm2src/portfolio" }
+# portfolio = { path = "src/portfolio" }
 primitives = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 rand = { version = "0.7", features = ["std", "small_rng"] }
 # TODO: Reduce the size of regex by disabling the features we don't use.
@@ -141,7 +141,7 @@ testcontainers = { git = "https://github.com/artemii235/testcontainers-rs.git" }
 
 [workspace]
 members = [
-  "mm2src/coins",
+  "src/coins",
 ]
 
 # The backtrace disables build.define("HAVE_DL_ITERATE_PHDR", "1"); for android which results in "unknown" function

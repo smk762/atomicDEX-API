@@ -48,9 +48,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-use crate::mm2::lp_swap::{check_balance_for_maker_swap, check_balance_for_taker_swap, get_locked_amount,
-                          is_pubkey_banned, lp_atomic_locktime, run_maker_swap, run_taker_swap, AtomicLocktimeVersion,
-                          MakerSwap, RunMakerSwapInput, RunTakerSwapInput, SwapConfirmationsSettings, TakerSwap};
+use crate::atomic_defi::lp_swap::{check_balance_for_maker_swap, check_balance_for_taker_swap, get_locked_amount,
+                                  is_pubkey_banned, lp_atomic_locktime, run_maker_swap, run_taker_swap,
+                                  AtomicLocktimeVersion, MakerSwap, RunMakerSwapInput, RunTakerSwapInput,
+                                  SwapConfirmationsSettings, TakerSwap};
 
 #[cfg(test)]
 #[cfg(feature = "native")]

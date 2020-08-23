@@ -12,7 +12,7 @@
 #[macro_use] extern crate serialization_derive;
 #[macro_use] extern crate unwrap;
 
-#[path = "mm2.rs"] mod mm2;
+#[path = "atomic_defi.rs"] mod atomic_defi;
 
 use crate::common::block_on;
 #[cfg(feature = "native")] use crate::common::log::LOG_OUTPUT;
@@ -83,7 +83,7 @@ pub unsafe extern "C" fn mm2_main(conf: *const c_char, log_cb: extern "C" fn(lin
             return;
         }
         let ctx_cb = &|ctx| CTX.store(ctx, Ordering::Relaxed);
-        match catch_unwind(move || mm2::run_lp_main(Some(&conf), ctx_cb)) {
+        match catch_unwind(move || atomic_defi::run_lp_main(Some(&conf), ctx_cb)) {
             Ok(Ok(_)) => log!("run_lp_main finished"),
             Ok(Err(err)) => log!("run_lp_main error: "(err)),
             Err(err) => log!("run_lp_main panic: "[any_to_str(&*err)]),
@@ -149,7 +149,7 @@ pub extern "C" fn mm2_test(torch: i32, log_cb: extern "C" fn(line: *const c_char
             },
         };
         let conf = unwrap!(json::to_string(&ctx.conf));
-        let hy_res = mm2::rpc::lp_commands::stop(ctx);
+        let hy_res = atomic_defi::rpc::lp_commands::stop(ctx);
         let r = match hy_res.wait() {
             Ok(r) => r,
             Err(err) => {

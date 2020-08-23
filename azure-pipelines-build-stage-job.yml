@@ -1,4 +1,4 @@
-# Job template for MM2 Build
+# Job template for atomic_defi Build
 
 parameters:
   name: ''  # defaults for any parameters that aren't specified
@@ -39,14 +39,14 @@ jobs:
           mkdir upload
           echo 2.0.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Debug > MM_VERSION
           cat MM_VERSION
-          touch mm2src/common/build.rs
+          touch atomic_defisrc/common/build.rs
           cargo build --features native -vv
-        displayName: 'Build MM2 Debug'
+        displayName: 'Build atomic_defi Debug'
       # Cargo uses CPU threads count by default running only 2 concurrent tests on Linux.
       # Explicit --test-threads=8 makes the process faster
       - bash: |
           cargo test --features native --all -- --test-threads=8
-        displayName: 'Test MM2'
+        displayName: 'Test atomic_defi'
         timeoutInMinutes: 22
         env:
           BOB_PASSPHRASE: $(${{ parameters.bob_passphrase }})
@@ -62,16 +62,16 @@ jobs:
         displayName: 'Check rustfmt warnings'
         condition: eq( variables['Agent.OS'], 'Linux' )
       - bash: |
-          zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Debug target/debug/mm2 -j
+          zip upload/atomic_defi-$(COMMIT_HASH)-$(Agent.OS)-Debug target/debug/atomic_defi -j
         displayName: 'Prepare debug build upload Linux'
         condition: eq( variables['Agent.OS'], 'Linux' )
       - bash: |
           cd target/debug
-          zip ../../upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Debug mm2.dSYM mm2 -r
+          zip ../../upload/atomic_defi-$(COMMIT_HASH)-$(Agent.OS)-Debug atomic_defi.dSYM atomic_defi -r
         displayName: 'Prepare debug build upload MacOS'
         condition: eq( variables['Agent.OS'], 'Darwin' )
       - powershell: |
-          7z a .\upload\mm2-$(COMMIT_HASH)-$(Agent.OS)-Debug.zip .\target\debug\mm2.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
+          7z a .\upload\atomic_defi-$(COMMIT_HASH)-$(Agent.OS)-Debug.zip .\target\debug\atomic_defi.exe .\target\debug\*.dll "$Env:windir\system32\msvcr100.dll" "$Env:windir\system32\msvcp140.dll" "$Env:windir\system32\vcruntime140.dll"
         displayName: 'Prepare debug build upload Windows'
         condition: eq( variables['Agent.OS'], 'Windows_NT' )
       # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/deploy/copy-files-over-ssh?view=vsts
@@ -83,4 +83,4 @@ jobs:
           targetFolder: "uploads/$(Build.SourceBranchName)" # Optional
           overwrite: true
         displayName: 'Upload nightly'
-        condition: ne(variables['build.sourceBranch'], 'refs/heads/mm2')
+        condition: ne(variables['build.sourceBranch'], 'refs/heads/atomic_defi')

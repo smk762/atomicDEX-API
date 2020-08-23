@@ -1,16 +1,16 @@
-# AtomicDEX Marketmaker V2
+# AtomicDeFi
 
 This repository contains the `work in progress` code of brand new Marketmaker version built mainly on Rust.  
-The current state can be considered as very early alpha.  
-**Use with test coins only. You risk to lose your money in case of trying to trade assets with real market cost.**
+The current state project is *beta*.  
+**It is strongly recommended to use AtomicDeFi with amounts that you can afford to lose.**
 
 ## Rewrite goals
 
-[MM2 README](mm2src/README.md)
+[MM2 README](src/README.md)
 
 ## Project structure
 
-[mm2src](mm2src) - Rust code, contains some parts ported from C `as is` (e.g. `lp_ordermatch`) to reach the most essential/error prone code. Some other modules/crates are reimplemented from scratch.  
+[src](src) - Rust code, contains some parts ported from C `as is` (e.g. `lp_ordermatch`) to reach the most essential/error prone code. Some other modules/crates are reimplemented from scratch.  
 [iguana](iguana) - Old C code that is still used and linked to Rust binary. According to gradual port goals this code will be either ported/removed in favor of Rust.  
  
 ## How to build

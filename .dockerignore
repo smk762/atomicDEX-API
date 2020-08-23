@@ -5,8 +5,8 @@ cmake-build-debug
 /Dockerfile
 
 /target
-!/target/release/mm2
-/mm2src/*/target
+!/target/release/atomic_defi
+/src/*/target
 
 /build
 /x64

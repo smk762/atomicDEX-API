@@ -180,7 +180,7 @@ fn local_start_impl(folder: PathBuf, log_path: PathBuf, mut conf: Json) {
 /// Starts the WASM version of MM.
 #[cfg(not(feature = "native"))]
 fn wasm_start_impl(ctx: MmArc) {
-    crate::mm2::rpc::init_header_slots();
+    crate::atomic_defi::rpc::init_header_slots();
 
     let netid = ctx.conf["netid"].as_u64().unwrap_or(0) as u16;
     let (_, pubport, _) = unwrap!(super::lp_ports(netid));
@@ -3751,7 +3751,7 @@ mod wasm_bindgen_tests {
 
     #[wasm_bindgen_test]
     async fn test_swap() {
-        use crate::mm2::lp_swap::{run_maker_swap, run_taker_swap, MakerSwap, TakerSwap};
+        use crate::atomic_defi::lp_swap::{run_maker_swap, run_taker_swap, MakerSwap, TakerSwap};
         use coins::lp_coininit;
         use common::mm_ctx::MmCtxBuilder;
         use futures::future::join;

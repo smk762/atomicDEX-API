@@ -13,8 +13,7 @@
  *                                                                            *
  ******************************************************************************/
 //
-//  mm2.rs
-//  marketmaker
+//  atomicdefi.rs
 //
 //  Copyright © 2017-2019 SuperNET. All rights reserved.
 //
@@ -48,8 +47,8 @@ use self::lp_native_dex::{lp_init, lp_ports};
 #[path = "rpc.rs"] pub mod rpc;
 
 #[cfg(any(test, not(feature = "native")))]
-#[path = "mm2_tests.rs"]
-mod mm2_tests;
+#[path = "atomic_defi_tests.rs"]
+mod atomic_defi_tests;
 
 /// * `ctx_cb` - callback used to share the `MmCtx` ID with the call site.
 pub fn lp_main(conf: Json, ctx_cb: &dyn Fn(u32)) -> Result<(), String> {
@@ -116,7 +115,7 @@ fn help() {
             "  dbdir          ..  MM database path. 'DB' by default.\n"
             "  gui            ..  The information about GUI app using MM2 instance. Included in swap statuses shared with network.\n"
             "                 ..  It's recommended to put essential info to this field (application name, OS, version, etc).\n"
-            "                 ..  e.g. AtomicDEX iOS 1.0.1000.\n"
+            "                 ..  e.g. AtomicDeFi iOS 1.0.1000.\n"
             "  myipaddr       ..  IP address to bind to for P2P networking.\n"
             "  netid          ..  Subnetwork. Affects ports and keys.\n"
             "  passphrase *   ..  Wallet seed.\n"
@@ -160,11 +159,11 @@ fn help() {
 
 #[cfg(feature = "native")]
 #[allow(dead_code)] // Not used by mm2_lib.
-pub fn mm2_main() {
+pub fn atomic_defi_main() {
     use libc::c_char;
 
     init_crash_reports();
-    log!({"AtomicDEX MarketMaker {} DT {}", MM_VERSION, MM_DATETIME});
+    log!({"AtomicDeFi {} DT {}", MM_VERSION, MM_DATETIME});
 
     // Temporarily simulate `argv[]` for the C version of the main method.
     let args: Vec<String> = env::args()

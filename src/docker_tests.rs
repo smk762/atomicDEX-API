@@ -33,8 +33,8 @@ extern crate serialization_derive;
 extern crate unwrap;
 
 #[cfg(test)]
-#[path = "mm2.rs"]
-pub mod mm2;
+#[path = "atomic_defi.rs"]
+pub mod atomic_defi;
 
 fn main() { unimplemented!() }
 

@@ -43,7 +43,7 @@ use futures::SinkExt;
 /// Any function directly using `MmCtx` is automatically a stateful function.
 /// In the future we might want to replace direct state access with traceable and replayable
 /// state modifications
-/// (cf. https://github.com/artemii235/SuperNET/blob/mm2-dice/mm2src/README.md#purely-functional-core).
+/// (cf. https://github.com/artemii235/SuperNET/blob/mm2-dice/src/README.md#purely-functional-core).
 ///
 /// `MmCtx` never moves in memory (and it isn't `Send`), it is created and then destroyed in place
 /// (this invariant should make it a bit simpler thinking about aliasing and thread-safety,

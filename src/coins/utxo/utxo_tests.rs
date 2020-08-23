@@ -1184,7 +1184,7 @@ fn test_one_unavailable_electrum_proto_version() {
     let result = client
         .server_version(
             "electrum-mona.bitbank.cc:50001",
-            "AtomicDEX",
+            "AtomicDeFi",
             &OrdRange::new(1.4, 1.4).unwrap(),
         )
         .wait();

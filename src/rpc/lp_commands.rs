@@ -29,8 +29,8 @@ use http::Response;
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
 
-use crate::mm2::lp_ordermatch::{cancel_orders_by, CancelBy};
-use crate::mm2::lp_swap::active_swaps_using_coin;
+use crate::atomic_defi::lp_ordermatch::{cancel_orders_by, CancelBy};
+use crate::atomic_defi::lp_swap::active_swaps_using_coin;
 
 /// Attempts to disable the coin
 pub fn disable_coin(ctx: MmArc, req: Json) -> HyRes {

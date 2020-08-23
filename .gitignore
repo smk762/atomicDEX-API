@@ -42,18 +42,18 @@ iguana/exchanges/manychains
 /iguana/exchanges/etomicswap/target
 
 # Subcrate artefacts
-/mm2src/common/c_headers
-/mm2src/*/target
+/src/common/c_headers
+/src/*/target
 
 # Private IDE configuration
-/mm2src/peers/.vscode/tasks.json
+/src/peers/.vscode/tasks.json
 /.vscode/settings.json
 /.vscode/tasks.json
 /.vscode/c_cpp_properties.json
 
 # IDE artefacts
 /.vscode/ipch
-/mm2src/*/.vscode/ipch
+/src/*/.vscode/ipch
 
 # coins configuration file
 /coins

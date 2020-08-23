@@ -44,11 +44,12 @@ use std::future::Future as Future03;
 use std::net::SocketAddr;
 #[cfg(feature = "native")] use tokio_core::net::TcpListener;
 
-use crate::mm2::lp_network;
-use crate::mm2::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders, order_status, orderbook, sell,
-                                set_price};
-use crate::mm2::lp_swap::{coins_needed_for_kick_start, import_swaps, list_banned_pubkeys, max_taker_vol,
-                          my_recent_swaps, my_swap_status, recover_funds_of_swap, stats_swap_status, unban_pubkeys};
+use crate::atomic_defi::lp_network;
+use crate::atomic_defi::lp_ordermatch::{buy, cancel_all_orders, cancel_order, my_orders, order_status, orderbook,
+                                        sell, set_price};
+use crate::atomic_defi::lp_swap::{coins_needed_for_kick_start, import_swaps, list_banned_pubkeys, max_taker_vol,
+                                  my_recent_swaps, my_swap_status, recover_funds_of_swap, stats_swap_status,
+                                  unban_pubkeys};
 
 #[path = "rpc/lp_commands.rs"] pub mod lp_commands;
 use self::lp_commands::*;

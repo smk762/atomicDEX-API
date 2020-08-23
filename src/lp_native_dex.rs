@@ -40,15 +40,15 @@ use std::str;
 use std::str::from_utf8;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::atomic_defi::lp_network::{lp_command_q_loop, start_client_p2p_loop, start_seednode_loop};
+use crate::atomic_defi::lp_ordermatch::{lp_ordermatch_loop, lp_trade_command, migrate_saved_orders, orders_kick_start};
+use crate::atomic_defi::lp_swap::{running_swaps_num, swap_kick_starts};
+use crate::atomic_defi::rpc::spawn_rpc;
 use crate::common::executor::{spawn, Timer};
 #[cfg(feature = "native")] use crate::common::lp;
 use crate::common::mm_ctx::{MmArc, MmCtx};
 use crate::common::privkey::key_pair_from_seed;
 use crate::common::{slurp_url, MM_DATETIME, MM_VERSION};
-use crate::mm2::lp_network::{lp_command_q_loop, start_client_p2p_loop, start_seednode_loop};
-use crate::mm2::lp_ordermatch::{lp_ordermatch_loop, lp_trade_command, migrate_saved_orders, orders_kick_start};
-use crate::mm2::lp_swap::{running_swaps_num, swap_kick_starts};
-use crate::mm2::rpc::spawn_rpc;
 
 /// Process a previously queued command that wasn't handled by the RPC `dispatcher`.  
 /// NB: It might be preferable to port more commands into the RPC `dispatcher`, rather than `lp_command_process`, because:  

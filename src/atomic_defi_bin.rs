@@ -10,11 +10,11 @@
 #[macro_use] extern crate serialization_derive;
 #[macro_use] extern crate unwrap;
 
-#[path = "mm2.rs"] mod mm2;
+#[path = "atomic_defi.rs"] mod atomic_defi;
 
 fn main() {
     #[cfg(feature = "native")]
     {
-        mm2::mm2_main()
+        atomic_defi::atomic_defi_main()
     }
 }

@@ -41,10 +41,10 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::net::TcpListener as AsyncTcpListener;
 
-use crate::mm2::lp_native_dex::lp_command_process;
-use crate::mm2::lp_ordermatch::lp_post_price_recv;
-use crate::mm2::lp_swap::save_stats_swap_status;
-use crate::mm2::rpc::lp_signatures::lp_notify_recv;
+use crate::atomic_defi::lp_native_dex::lp_command_process;
+use crate::atomic_defi::lp_ordermatch::lp_post_price_recv;
+use crate::atomic_defi::lp_swap::save_stats_swap_status;
+use crate::atomic_defi::rpc::lp_signatures::lp_notify_recv;
 
 /// Result of `fn dispatcher`.
 pub enum DispatcherRes {
