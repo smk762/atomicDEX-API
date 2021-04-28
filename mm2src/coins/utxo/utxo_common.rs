@@ -2470,6 +2470,24 @@ fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Pu
         .into_script()
 }
 
+pub fn dex_fee_script(uuid: [u8; 16], time_lock: u32, watcher_pub: &Public, sender_pub: &Public) -> Script {
+    let builder = Builder::default();
+    builder
+        .push_bytes(&uuid)
+        .push_opcode(Opcode::OP_DROP)
+        .push_opcode(Opcode::OP_IF)
+        .push_bytes(&time_lock.to_le_bytes())
+        .push_opcode(Opcode::OP_CHECKLOCKTIMEVERIFY)
+        .push_opcode(Opcode::OP_DROP)
+        .push_bytes(sender_pub)
+        .push_opcode(Opcode::OP_CHECKSIG)
+        .push_opcode(Opcode::OP_ELSE)
+        .push_bytes(watcher_pub)
+        .push_opcode(Opcode::OP_CHECKSIG)
+        .push_opcode(Opcode::OP_ENDIF)
+        .into_script()
+}
+
 /// Creates signed input spending hash time locked p2sh output
 fn p2sh_spend(
     signer: &TransactionInputSigner,
