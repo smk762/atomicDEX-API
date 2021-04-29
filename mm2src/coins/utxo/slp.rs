@@ -2,6 +2,7 @@
 #![allow(unused_variables)]
 
 use super::utxo_standard::UtxoStandardCoin;
+use crate::utxo::utxo_common::big_decimal_from_sat_unsigned;
 use crate::utxo::{UtxoCommonOps, UtxoTx};
 use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
             SwapOps, TradeFee, TradePreimageFut, TradePreimageValue, TransactionEnum, TransactionFut,
@@ -15,8 +16,9 @@ use primitives::hash::H256;
 use rpc::v1::types::Bytes as BytesJson;
 use script::Script;
 use serde_json::Value as Json;
-use serialization::deserialize;
+use serialization::{deserialize, Deserializable, Error, Reader};
 use serialization_derive::Deserializable;
+use std::convert::TryInto;
 
 #[derive(Clone, Debug)]
 struct SlpToken {
@@ -26,14 +28,39 @@ struct SlpToken {
     platform_utxo: UtxoStandardCoin,
 }
 
-#[derive(Deserializable, Default)]
+#[derive(Debug, Eq, PartialEq)]
+enum SlpTransaction {
+    Send { token_id: Vec<u8>, amount: Vec<u8> },
+}
+
+impl Deserializable for SlpTransaction {
+    fn deserialize<T>(reader: &mut Reader<T>) -> Result<Self, Error>
+    where
+        Self: Sized,
+        T: std::io::Read,
+    {
+        let transaction_type: String = reader.read()?;
+        match transaction_type.as_str() {
+            "SEND" => Ok(SlpTransaction::Send {
+                token_id: reader.read_list()?,
+                amount: reader.read_list()?,
+            }),
+            _ => {
+                return Err(Error::Custom(format!(
+                    "Unsupported transaction type {}",
+                    transaction_type
+                )))
+            },
+        }
+    }
+}
+
+#[derive(Deserializable)]
 struct SlpTxDetails {
     op_code: u8,
     lokad_id: String,
     token_type: String,
-    transaction_type: String,
-    token_id: Vec<u8>,
-    amount: Vec<u8>,
+    transaction: SlpTransaction,
 }
 
 #[derive(Debug)]
@@ -59,6 +86,7 @@ impl MarketCoinOps for SlpToken {
                 .platform_utxo
                 .list_unspent_ordered(&coin.platform_utxo.as_ref().my_address)
                 .await?;
+            let mut spendable = 0.into();
             for unspent in unspents {
                 if unspent.value != coin.platform_utxo.as_ref().dust_amount {
                     continue;
@@ -72,9 +100,22 @@ impl MarketCoinOps for SlpToken {
                     .await?;
                 let prev_tx: UtxoTx = deserialize(prev_tx_bytes.0.as_slice()).unwrap();
                 let script: Script = prev_tx.outputs[0].script_pubkey.clone().into();
+                if let Ok(slp_data) = parse_slp_script(&script) {
+                    match slp_data.transaction {
+                        SlpTransaction::Send { token_id, amount } => {
+                            if H256::from(token_id.as_slice()) == coin.token_id {
+                                if amount.len() == 8 {
+                                    let satoshi = u64::from_be_bytes(amount.try_into().unwrap());
+                                    let decimal = big_decimal_from_sat_unsigned(satoshi, coin.decimals);
+                                    spendable += decimal;
+                                }
+                            }
+                        },
+                    }
+                }
             }
             Ok(CoinBalance {
-                spendable: 0.into(),
+                spendable,
                 unspendable: 0.into(),
             })
         };
@@ -309,13 +350,14 @@ impl MmCoin for SlpToken {
 
 #[test]
 fn test_parse_slp_script() {
-    use std::convert::TryInto;
-
     let script = hex::decode("6a04534c500001010453454e4420e73b2b28c14db8ebbf97749988b539508990e1708021067f206f49d55807dbf4080000000005f5e100").unwrap();
     let slp_data = parse_slp_script(&script).unwrap();
     assert_eq!(slp_data.lokad_id, "SLP\0");
-    assert_eq!(slp_data.transaction_type, "SEND");
-    let expected_amount = 100000000u64;
-    let actual_amount = u64::from_be_bytes(slp_data.amount.try_into().unwrap());
-    assert_eq!(expected_amount, actual_amount);
+    let expected_amount = 100000000u64.to_be_bytes().to_vec();
+    let expected_transaction = SlpTransaction::Send {
+        token_id: hex::decode("e73b2b28c14db8ebbf97749988b539508990e1708021067f206f49d55807dbf4").unwrap(),
+        amount: expected_amount,
+    };
+
+    assert_eq!(expected_transaction, slp_data.transaction);
 }
