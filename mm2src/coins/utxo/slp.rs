@@ -45,12 +45,10 @@ impl Deserializable for SlpTransaction {
                 token_id: reader.read_list()?,
                 amount: reader.read_list()?,
             }),
-            _ => {
-                return Err(Error::Custom(format!(
-                    "Unsupported transaction type {}",
-                    transaction_type
-                )))
-            },
+            _ => Err(Error::Custom(format!(
+                "Unsupported transaction type {}",
+                transaction_type
+            ))),
         }
     }
 }
@@ -103,12 +101,10 @@ impl MarketCoinOps for SlpToken {
                 if let Ok(slp_data) = parse_slp_script(&script) {
                     match slp_data.transaction {
                         SlpTransaction::Send { token_id, amount } => {
-                            if H256::from(token_id.as_slice()) == coin.token_id {
-                                if amount.len() == 8 {
-                                    let satoshi = u64::from_be_bytes(amount.try_into().unwrap());
-                                    let decimal = big_decimal_from_sat_unsigned(satoshi, coin.decimals);
-                                    spendable += decimal;
-                                }
+                            if H256::from(token_id.as_slice()) == coin.token_id && amount.len() == 8 {
+                                let satoshi = u64::from_be_bytes(amount.try_into().unwrap());
+                                let decimal = big_decimal_from_sat_unsigned(satoshi, coin.decimals);
+                                spendable += decimal;
                             }
                         },
                     }
