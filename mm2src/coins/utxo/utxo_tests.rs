@@ -2624,7 +2624,21 @@ fn send_and_redeem_dex_fee() {
         value: 10000,
         script_pubkey: Builder::build_p2sh(&dhash160(&dex_fee_script)).into(),
     };
-    let transaction = block_on(send_outputs_from_my_address_impl(coin.clone(), vec![output])).unwrap();
+
+    let op_return = Builder::default()
+        .push_opcode(Opcode::OP_RETURN)
+        .push_data(&dex_fee_script)
+        .into_bytes();
+    let op_return_output = TransactionOutput {
+        value: 0,
+        script_pubkey: op_return,
+    };
+
+    let transaction = block_on(send_outputs_from_my_address_impl(coin.clone(), vec![
+        output,
+        op_return_output,
+    ]))
+    .unwrap();
     println!("tx hash {:?}", transaction.hash().reversed());
 
     let script_data = Builder::default().push_opcode(Opcode::OP_0).into_script();
@@ -2646,4 +2660,24 @@ fn send_and_redeem_dex_fee() {
     let tx = serialize(&refund);
     let tx_hash = coin.send_raw_tx(&hex::encode(tx.take())).wait().unwrap();
     println!("redeem {}", tx_hash);
+}
+
+#[test]
+fn op_return_redeem_script() {
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10017",
+        "electrum2.cipig.net:10017",
+        "electrum3.cipig.net:10017",
+    ]);
+    let coin = utxo_coin_for_test(electrum.into(), Some("dex fee script test"));
+    let keypair = key_pair_from_seed("dex fee script test").unwrap();
+    let lock_time = 1619582440;
+    let secret = [0; 32];
+    let secret_hash = dhash160(&secret);
+    let amount = "0.1".parse().unwrap();
+    let payment = coin
+        .send_maker_payment(lock_time, &*keypair.public(), &*secret_hash, amount, &None)
+        .wait()
+        .unwrap();
+    println!("{}", hex::encode(payment.tx_hash().0));
 }

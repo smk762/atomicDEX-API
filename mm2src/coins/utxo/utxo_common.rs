@@ -2428,7 +2428,7 @@ where
     // lock time may be easily brute forced so it is not mandatory to record it
     let secret_hash_op_return_script = Builder::default()
         .push_opcode(Opcode::OP_RETURN)
-        .push_bytes(secret_hash)
+        .push_data(&redeem_script)
         .into_bytes();
     let secret_hash_op_return_out = TransactionOutput {
         value: 0,
