@@ -2426,13 +2426,20 @@ where
     };
     // record secret hash to blockchain too making it impossible to lose
     // lock time may be easily brute forced so it is not mandatory to record it
-    let secret_hash_op_return_script = Builder::default()
-        .push_opcode(Opcode::OP_RETURN)
-        .push_data(&redeem_script)
-        .into_bytes();
-    let secret_hash_op_return_out = TransactionOutput {
+    let mut op_return_builder = Builder::default().push_opcode(Opcode::OP_RETURN);
+
+    // add the full redeem script to the OP_RETURN for ARRR to simplify the validation for the daemon
+    op_return_builder = if coin.as_ref().conf.ticker == "ARRR" {
+        op_return_builder.push_data(&redeem_script)
+    } else {
+        op_return_builder.push_bytes(secret_hash)
+    };
+
+    let op_return_script = op_return_builder.into_bytes();
+
+    let op_return_out = TransactionOutput {
         value: 0,
-        script_pubkey: secret_hash_op_return_script,
+        script_pubkey: op_return_script,
     };
 
     let payment_address = Address {
@@ -2443,7 +2450,7 @@ where
     };
     let result = SwapPaymentOutputsResult {
         payment_address,
-        outputs: vec![htlc_out, secret_hash_op_return_out],
+        outputs: vec![htlc_out, op_return_out],
     };
     Ok(result)
 }
