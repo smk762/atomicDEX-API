@@ -2433,7 +2433,6 @@ fn verus_mtp() {
 }
 
 #[test]
-#[ignore]
 fn mint_slp_token() {
     use bitcoin_cash_slp::{slp_genesis_output, SlpTokenType};
     let ctx = MmCtxBuilder::new().into_mm_arc();
@@ -2464,9 +2463,13 @@ fn mint_slp_token() {
     println!("{}", balance.spendable);
 
     let output = slp_genesis_output(SlpTokenType::Fungible, "ADEX", "ADEX", "", "", 8, None, 1000_0000_0000);
+    let script_pubkey = output.script.serialize().unwrap().to_vec().into();
+
+    println!("{}", hex::encode(&script_pubkey));
+
     let op_return_output = TransactionOutput {
         value: output.value,
-        script_pubkey: output.script.serialize().unwrap().to_vec().into(),
+        script_pubkey,
     };
     let mint_output = TransactionOutput {
         value: 546,
