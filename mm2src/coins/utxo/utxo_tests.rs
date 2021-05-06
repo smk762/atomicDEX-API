@@ -2590,7 +2590,7 @@ fn send_and_refund_dex_fee() {
         script_pubkey: Builder::build_p2pkh(&keypair.public().address_hash()).into(),
     };
     let refund = p2sh_spending_tx(
-        coin.as_ref(),
+        &coin,
         transaction,
         dex_fee_script.into(),
         vec![output],
@@ -2647,7 +2647,7 @@ fn send_and_redeem_dex_fee() {
         script_pubkey: Builder::build_p2pkh(&keypair.public().address_hash()).into(),
     };
     let refund = p2sh_spending_tx(
-        coin.as_ref(),
+        &coin,
         transaction,
         dex_fee_script.into(),
         vec![output],
