@@ -66,7 +66,8 @@ fn zombie_coin_send_htlc_maker_payment() {
     let taker_pub = coin.utxo_arc.key_pair.public();
     let secret_hash = [0; 20];
     let tx = coin
-        .send_maker_payment(lock_time, &*taker_pub, &secret_hash, "0.1".parse().unwrap(), &None)
+        .send_maker_payment(lock_time, &*taker_pub, &secret_hash, "0.01".parse().unwrap(), &None)
         .wait()
         .unwrap();
+    println!("{:?}", hex::encode(&tx.tx_hash().0));
 }

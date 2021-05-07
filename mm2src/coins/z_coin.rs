@@ -3,6 +3,8 @@ use crate::utxo::{utxo_common::UtxoArcBuilder, UtxoArc, UtxoCoinBuilder};
 use crate::z_coin::z_rpc::ZSendManyItem;
 use crate::{BalanceFut, CoinBalance, FoundSwapTxSpend, MarketCoinOps, SwapOps, TransactionEnum, TransactionFut};
 use bitcrypto::dhash160;
+use chain::Transaction as UtxoTx;
+use common::executor::Timer;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::{BigDecimal, MmNumber};
@@ -12,13 +14,14 @@ use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
 use keys::{Address, Public};
 use rpc::v1::types::Bytes;
-use script::{Builder as ScriptBuilder, Opcode};
 use serde_json::Value as Json;
+use serialization::deserialize;
 use zcash_client_backend::encoding::{encode_extended_spending_key, encode_payment_address};
 use zcash_primitives::{constants::mainnet as z_mainnet_constants, primitives::PaymentAddress,
                        zip32::ExtendedSpendingKey};
 
 mod z_rpc;
+use z_rpc::ZOperationStatus;
 
 #[cfg(test)] mod z_coin_tests;
 
@@ -148,16 +151,53 @@ impl SwapOps for ZCoin {
                 address: htlc_address.to_string(),
             };
             println!("send_item {:?}", send_item);
-            let op_id = selfi
-                .utxo_arc
-                .rpc_client
-                .as_ref()
-                .z_send_many(&from_addr, vec![send_item])
-                .compat()
-                .await
-                .unwrap();
+            let op_id = try_s!(
+                selfi
+                    .utxo_arc
+                    .rpc_client
+                    .as_ref()
+                    .z_send_many(&from_addr, vec![send_item])
+                    .compat()
+                    .await
+            );
+
             println!("{}", op_id);
-            unimplemented!()
+
+            loop {
+                let operation_statuses = try_s!(
+                    selfi
+                        .utxo_arc
+                        .rpc_client
+                        .as_ref()
+                        .z_get_operation_status(&[&op_id])
+                        .compat()
+                        .await
+                );
+
+                println!("{:?}", operation_statuses);
+                match operation_statuses.first() {
+                    Some(ZOperationStatus::Executing { .. }) => {
+                        Timer::sleep(1.).await;
+                        continue;
+                    },
+                    Some(ZOperationStatus::Failed { .. }) => {
+                        break ERR!("Operation {:?} failed", operation_statuses);
+                    },
+                    Some(ZOperationStatus::Success { result, .. }) => {
+                        let tx_bytes = try_s!(
+                            selfi
+                                .utxo_arc
+                                .rpc_client
+                                .get_transaction_bytes(result.txid.clone())
+                                .compat()
+                                .await
+                        );
+                        let tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| format!("{:?}", e)));
+                        break Ok(tx.into());
+                    },
+                    None => break ERR!("operation_statuses are empty"),
+                }
+            }
         };
         Box::new(fut.boxed().compat())
     }
