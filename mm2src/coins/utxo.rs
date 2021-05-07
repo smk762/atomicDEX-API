@@ -24,7 +24,6 @@ pub mod rpc_clients;
 pub mod slp;
 pub mod utxo_common;
 pub mod utxo_standard;
-pub mod z_swaps;
 
 #[cfg(not(target_arch = "wasm32"))] pub mod tx_cache;
 
@@ -81,7 +80,6 @@ use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, Coins
             WithdrawError, WithdrawFee, WithdrawRequest};
 
 #[cfg(test)] pub mod utxo_tests;
-#[cfg(test)] mod z_swaps_tests;
 
 const SWAP_TX_SPEND_SIZE: u64 = 305;
 const KILO_BYTE: u64 = 1000;

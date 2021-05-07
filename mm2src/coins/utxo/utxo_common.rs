@@ -2455,7 +2455,7 @@ where
     Ok(result)
 }
 
-fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {
+pub fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {
     let builder = Builder::default();
     builder
         .push_opcode(Opcode::OP_IF)
