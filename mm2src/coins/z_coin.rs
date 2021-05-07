@@ -139,16 +139,12 @@ impl SwapOps for ZCoin {
             hash,
             checksum_type: self.utxo_arc.conf.checksum_type,
         };
-        let op_return_script = ScriptBuilder::default()
-            .push_opcode(Opcode::OP_RETURN)
-            .push_data(&payment_script)
-            .into_bytes();
         let selfi = self.clone();
         let fut = async move {
             let from_addr = encode_payment_address(z_mainnet_constants::HRP_SAPLING_PAYMENT_ADDRESS, &selfi.z_addr);
             let send_item = ZSendManyItem {
                 amount,
-                op_return: Some(op_return_script.into()),
+                op_return: Some(payment_script.to_vec().into()),
                 address: htlc_address.to_string(),
             };
             println!("send_item {:?}", send_item);
