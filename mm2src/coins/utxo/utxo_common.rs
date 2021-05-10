@@ -2496,7 +2496,7 @@ pub fn dex_fee_script(uuid: [u8; 16], time_lock: u32, watcher_pub: &Public, send
 }
 
 /// Creates signed input spending hash time locked p2sh output
-fn p2sh_spend(
+pub fn p2sh_spend(
     signer: &TransactionInputSigner,
     input_index: usize,
     key_pair: &KeyPair,

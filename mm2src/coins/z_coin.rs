@@ -1,6 +1,6 @@
-use crate::utxo::utxo_common::payment_script;
+use crate::utxo::utxo_common::{big_decimal_from_sat_unsigned, p2sh_spend, payment_script};
 use crate::utxo::{utxo_common::UtxoArcBuilder, UtxoArc, UtxoCoinBuilder};
-use crate::z_coin::z_rpc::ZSendManyItem;
+use crate::z_coin::z_rpc::{ZSendManyHtlcParams, ZSendManyItem};
 use crate::{BalanceFut, CoinBalance, FoundSwapTxSpend, MarketCoinOps, SwapOps, TransactionEnum, TransactionFut};
 use bitcrypto::dhash160;
 use chain::Transaction as UtxoTx;
@@ -10,17 +10,20 @@ use common::mm_error::prelude::*;
 use common::mm_number::{BigDecimal, MmNumber};
 use common::privkey::key_pair_from_seed;
 use futures::compat::Future01CompatExt;
-use futures::{FutureExt, TryFutureExt};
+use futures::{FutureExt, TryFutureExt, TryStreamExt};
 use futures01::Future;
 use keys::{Address, Public};
 use rpc::v1::types::Bytes;
-use serde_json::Value as Json;
-use serialization::deserialize;
+use script::{Builder as ScriptBuilder, Opcode};
+use serde_json::{self as json, Value as Json};
+use serialization::{deserialize, serialize};
 use zcash_client_backend::encoding::{encode_extended_spending_key, encode_payment_address};
 use zcash_primitives::{constants::mainnet as z_mainnet_constants, primitives::PaymentAddress,
                        zip32::ExtendedSpendingKey};
 
 mod z_rpc;
+use common::now_ms;
+use script::TransactionInputSigner;
 use z_rpc::ZOperationStatus;
 
 #[cfg(test)] mod z_coin_tests;
@@ -150,7 +153,7 @@ impl SwapOps for ZCoin {
                 op_return: Some(payment_script.to_vec().into()),
                 address: htlc_address.to_string(),
             };
-            println!("send_item {:?}", send_item);
+
             let op_id = try_s!(
                 selfi
                     .utxo_arc
@@ -161,20 +164,17 @@ impl SwapOps for ZCoin {
                     .await
             );
 
-            println!("{}", op_id);
-
             loop {
                 let operation_statuses = try_s!(
                     selfi
                         .utxo_arc
                         .rpc_client
                         .as_ref()
-                        .z_get_operation_status(&[&op_id])
+                        .z_get_send_many_status(&[&op_id])
                         .compat()
                         .await
                 );
 
-                println!("{:?}", operation_statuses);
                 match operation_statuses.first() {
                     Some(ZOperationStatus::Executing { .. }) => {
                         Timer::sleep(1.).await;
@@ -254,7 +254,107 @@ impl SwapOps for ZCoin {
         secret_hash: &[u8],
         swap_contract_address: &Option<Bytes>,
     ) -> TransactionFut {
-        todo!()
+        let tx: UtxoTx = deserialize(maker_payment_tx).unwrap();
+        let amount = big_decimal_from_sat_unsigned(tx.outputs[0].value - 10000, self.utxo_arc.decimals);
+        let send_to = ZSendManyItem {
+            amount,
+            op_return: None,
+            address: encode_payment_address(z_mainnet_constants::HRP_SAPLING_PAYMENT_ADDRESS, &self.z_addr),
+        };
+
+        println!("{}", json::to_string(&send_to).unwrap());
+        let slice: &[u8] = &*self.utxo_arc.key_pair.public();
+        let htlc_params = ZSendManyHtlcParams {
+            pubkey: taker_pub.into(),
+            refund_pubkey: slice.into(),
+            secret_hash: secret_hash.into(),
+            input_txid: tx.hash().reversed().into(),
+            input_index: 0,
+            input_amount: tx.outputs[0].value.into(),
+            locktime: time_lock,
+        };
+        println!("{}", json::to_string(&htlc_params).unwrap());
+
+        let redeem_script = payment_script(
+            time_lock,
+            secret_hash,
+            self.utxo_arc.key_pair.public(),
+            &Public::from_slice(taker_pub).unwrap(),
+        )
+        .to_vec();
+        let from_addr = Address {
+            prefix: self.utxo_arc.conf.p2sh_addr_prefix,
+            t_addr_prefix: self.utxo_arc.conf.p2sh_t_addr_prefix,
+            hash: dhash160(&redeem_script),
+            checksum_type: self.utxo_arc.conf.checksum_type,
+        }
+        .to_string();
+        println!("{}", from_addr);
+        let selfi = self.clone();
+        let fut = async move {
+            let op_id = try_s!(
+                selfi
+                    .utxo_arc
+                    .rpc_client
+                    .as_ref()
+                    .z_send_many_template(&from_addr, vec![send_to], htlc_params)
+                    .compat()
+                    .await
+            );
+
+            loop {
+                let operation_statuses = try_s!(
+                    selfi
+                        .utxo_arc
+                        .rpc_client
+                        .as_ref()
+                        .z_get_send_many_template_status(&[&op_id])
+                        .compat()
+                        .await
+                );
+
+                match operation_statuses.first() {
+                    Some(ZOperationStatus::Executing { .. }) => {
+                        Timer::sleep(1.).await;
+                        continue;
+                    },
+                    Some(ZOperationStatus::Failed { .. }) => {
+                        break ERR!("Operation {:?} failed", operation_statuses);
+                    },
+                    Some(ZOperationStatus::Success { result, .. }) => {
+                        let mut refund_tx: UtxoTx =
+                            try_s!(deserialize(result.hex.0.as_slice()).map_err(|e| format!("{:?}", e)));
+                        let mut signer: TransactionInputSigner = refund_tx.clone().into();
+                        signer.consensus_branch_id = selfi.utxo_arc.conf.consensus_branch_id;
+                        signer.inputs[0].amount = tx.outputs[0].value;
+                        let script_data = ScriptBuilder::default().push_opcode(Opcode::OP_1).into_script();
+                        let signed_input = p2sh_spend(
+                            &signer,
+                            0,
+                            &selfi.utxo_arc.key_pair,
+                            script_data,
+                            redeem_script.clone().into(),
+                            selfi.utxo_arc.conf.signature_version,
+                            selfi.utxo_arc.conf.fork_id,
+                        )
+                        .unwrap();
+                        refund_tx.inputs[0] = signed_input;
+                        let tx_bytes = serialize(&refund_tx);
+                        try_s!(
+                            selfi
+                                .utxo_arc
+                                .rpc_client
+                                .send_raw_transaction(tx_bytes.into())
+                                .compat()
+                                .await
+                        );
+                        break Ok(refund_tx.into());
+                    },
+                    None => break ERR!("operation_statuses are empty"),
+                }
+            }
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn validate_fee(

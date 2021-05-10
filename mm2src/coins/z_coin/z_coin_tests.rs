@@ -4,42 +4,7 @@ use common::mm_ctx::MmCtxBuilder;
 use zcash_client_backend::encoding::decode_extended_spending_key;
 
 #[test]
-fn zombie_coin_init() {
-    let conf = json!({
-        "coin": "ZOMBIE",
-        "asset": "ZOMBIE",
-        "fname": "ZOMBIE (TESTCOIN)",
-        "txversion": 4,
-        "overwintered": 1,
-        "mm2": 1,
-    });
-    let req = json!({
-        "method": "enable",
-        "coin": "ZOMBIE"
-    });
-
-    let ctx = MmCtxBuilder::default().into_mm_arc();
-    let seed = "spice describe gravity federal blast come thank unfair canal monkey style afraid";
-    let secp_keypair = key_pair_from_seed(seed).unwrap();
-    let z_key = ExtendedSpendingKey::master(&*secp_keypair.private().secret);
-
-    let coin = block_on(z_coin_from_conf_and_request(
-        &ctx,
-        "ZOMBIE",
-        &conf,
-        &req,
-        &*secp_keypair.private().secret,
-        z_key,
-    ))
-    .unwrap();
-
-    let balance = coin.my_balance().wait().unwrap();
-    let expected_balance: BigDecimal = 1.into();
-    assert_eq!(expected_balance, balance.spendable);
-}
-
-#[test]
-fn zombie_coin_send_htlc_maker_payment() {
+fn zombie_coin_send_and_refund_maker_payment() {
     let conf = json!({
         "coin": "ZOMBIE",
         "asset": "ZOMBIE",
@@ -62,7 +27,7 @@ fn zombie_coin_send_htlc_maker_payment() {
     ))
     .unwrap();
 
-    let lock_time = 1620382880;
+    let lock_time = (now_ms() / 1000) as u32 - 1000;
     let taker_pub = coin.utxo_arc.key_pair.public();
     let secret_hash = [0; 20];
     let tx = coin
@@ -70,4 +35,11 @@ fn zombie_coin_send_htlc_maker_payment() {
         .wait()
         .unwrap();
     println!("{:?}", hex::encode(&tx.tx_hash().0));
+
+    let refund_tx = coin
+        .send_maker_refunds_payment(&tx.tx_hex(), lock_time, &*taker_pub, &secret_hash, &None)
+        .wait()
+        .unwrap();
+    println!("{:?}", hex::encode(&refund_tx.tx_hash().0));
+    println!("{:?}", hex::encode(refund_tx.tx_hex()));
 }
