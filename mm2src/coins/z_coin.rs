@@ -10,21 +10,24 @@ use common::mm_error::prelude::*;
 use common::mm_number::{BigDecimal, MmNumber};
 use common::privkey::key_pair_from_seed;
 use futures::compat::Future01CompatExt;
-use futures::{FutureExt, TryFutureExt, TryStreamExt};
+use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
 use keys::{Address, Public};
 use rpc::v1::types::Bytes;
 use script::{Builder as ScriptBuilder, Opcode};
+use secp256k1_bindings::SecretKey;
 use serde_json::{self as json, Value as Json};
 use serialization::{deserialize, serialize};
 use zcash_client_backend::encoding::{encode_extended_spending_key, encode_payment_address};
-use zcash_primitives::{constants::mainnet as z_mainnet_constants, primitives::PaymentAddress,
-                       zip32::ExtendedSpendingKey};
+use zcash_primitives::{consensus, constants::mainnet as z_mainnet_constants, legacy::Script as ZCashScript,
+                       primitives::PaymentAddress, transaction::builder::Builder as ZTxBuilder,
+                       transaction::components::OutPoint as ZCashOutpoint, zip32::ExtendedSpendingKey};
 
 mod z_rpc;
 use common::now_ms;
 use script::TransactionInputSigner;
 use z_rpc::ZOperationStatus;
+use zcash_primitives::transaction::components::{Amount, TxOut};
 
 #[cfg(test)] mod z_coin_tests;
 
@@ -292,6 +295,26 @@ impl SwapOps for ZCoin {
         println!("{}", from_addr);
         let selfi = self.clone();
         let fut = async move {
+            let current_block = try_s!(selfi.utxo_arc.rpc_client.get_block_count().compat().await) as u32;
+            let mut tx_builder = ZTxBuilder::new(consensus::MAIN_NETWORK, current_block.into());
+
+            let secp_secret = SecretKey::from_slice(&*selfi.utxo_arc.key_pair.private().secret).unwrap();
+
+            let outpoint = ZCashOutpoint::new(tx.hash().into(), 0);
+            let tx_out = TxOut {
+                value: Amount::from_u64(tx.outputs[0].value).unwrap(),
+                script_pubkey: ZCashScript(redeem_script.clone()),
+            };
+            tx_builder.add_transparent_input(secp_secret, outpoint, tx_out).unwrap();
+            tx_builder
+                .add_sapling_output(
+                    None,
+                    selfi.z_addr,
+                    Amount::from_u64(tx.outputs[0].value - 10000).unwrap(),
+                    None,
+                )
+                .unwrap();
+
             let op_id = try_s!(
                 selfi
                     .utxo_arc

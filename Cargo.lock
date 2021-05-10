@@ -896,6 +896,7 @@ dependencies = [
  "rust-ini",
  "rustls 0.18.1",
  "script",
+ "secp256k1 0.20.2",
  "ser_error",
  "ser_error_derive",
  "serde",
@@ -3277,7 +3278,7 @@ dependencies = [
  "num-rational 0.2.4",
  "rand 0.6.5",
  "rmp-serde",
- "secp256k1",
+ "secp256k1 0.19.0",
  "serde",
  "serde_bytes 0.11.5",
  "sha2 0.9.1",
@@ -4587,13 +4588,31 @@ version = "0.19.0"
 source = "git+https://github.com/artemii235/rust-secp256k1.git#4ec0b58ace8d8196156f2b54603dca59d3318315"
 dependencies = [
  "rand 0.6.5",
- "secp256k1-sys",
+ "secp256k1-sys 0.3.0",
+]
+
+[[package]]
+name = "secp256k1"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee5070fdc6f26ca5be6dcfc3d07c76fdb974a63a8b246b459854274145f5a258"
+dependencies = [
+ "secp256k1-sys 0.4.0",
 ]
 
 [[package]]
 name = "secp256k1-sys"
 version = "0.3.0"
 source = "git+https://github.com/artemii235/rust-secp256k1.git#4ec0b58ace8d8196156f2b54603dca59d3318315"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "secp256k1-sys"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67e4b6455ee49f5901c8985b88f98fb0a0e1d90a6661f5a03f4888bd987dad29"
 dependencies = [
  "cc",
 ]
@@ -6379,6 +6398,8 @@ dependencies = [
  "log 0.4.11",
  "rand 0.7.3",
  "rand_core 0.5.1",
+ "ripemd160 0.9.1",
+ "secp256k1 0.20.2",
  "sha2 0.9.1",
  "subtle 2.2.3",
 ]

@@ -47,6 +47,7 @@ rand = { version = "0.7", features = ["std", "small_rng"] }
 rlp = { git = "https://github.com/artemii235/parity-common" }
 rpc = { git = "https://github.com/artemii235/parity-bitcoin.git" }
 script = { git = "https://github.com/artemii235/parity-bitcoin.git" }
+secp256k1_bindings = { version = "0.20", package = "secp256k1" }
 ser_error = { path = "../derives/ser_error" }
 ser_error_derive = { path = "../derives/ser_error_derive" }
 serde = "1.0"
@@ -61,7 +62,7 @@ sha3 = "0.8"
 web3 = { git = "https://github.com/artemii235/rust-web3", default-features = false }
 winapi = "0.3"
 zcash_client_backend = "0.5.0"
-zcash_primitives = "0.5.0"
+zcash_primitives = { version = "0.5.0", features = ["transparent-inputs"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = { version = "0.3.27" }
