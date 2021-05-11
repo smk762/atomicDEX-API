@@ -15,6 +15,7 @@ use zcash_client_backend::encoding::encode_payment_address;
 use zcash_primitives::constants::mainnet as z_mainnet_constants;
 
 #[derive(Debug, Display)]
+#[allow(clippy::large_enum_variant)]
 pub enum ZSendHtlcError {
     ParseOtherPubFailed(KeysError),
     #[display(fmt = "z operation failed with statuses {:?}", _0)]
@@ -75,7 +76,7 @@ pub async fn z_send_htlc(
                     .compat()
                     .await?;
                 let tx: UtxoTx = deserialize(tx_bytes.0.as_slice()).expect("rpc returns valid tx bytes");
-                break Ok(tx.into());
+                break Ok(tx);
             },
             None => break Err(MmError::new(ZSendHtlcError::ZOperationStatusesEmpty)),
         }

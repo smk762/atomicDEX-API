@@ -2433,6 +2433,7 @@ fn verus_mtp() {
 }
 
 #[test]
+#[ignore]
 fn mint_slp_token() {
     use bitcoin_cash_slp::{slp_genesis_output, SlpTokenType};
     let ctx = MmCtxBuilder::new().into_mm_arc();
@@ -2566,6 +2567,7 @@ fn btc_mtp() {
 }
 
 #[test]
+#[ignore]
 fn send_and_refund_dex_fee() {
     let electrum = electrum_client_for_test(&[
         "electrum1.cipig.net:10017",
@@ -2609,6 +2611,7 @@ fn send_and_refund_dex_fee() {
 }
 
 #[test]
+#[ignore]
 fn send_and_redeem_dex_fee() {
     let electrum = electrum_client_for_test(&[
         "electrum1.cipig.net:10017",
