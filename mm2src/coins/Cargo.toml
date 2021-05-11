@@ -61,8 +61,9 @@ sha3 = "0.8"
 # We don't need the default web3 features at all since we added our own web3 transport using shared HYPER instance.
 web3 = { git = "https://github.com/artemii235/rust-web3", default-features = false }
 winapi = "0.3"
-zcash_client_backend = "0.5.0"
-zcash_primitives = { version = "0.5.0", features = ["transparent-inputs"] }
+zcash_client_backend = { git = "https://github.com/KomodoPlatform/librustzcash.git" }
+zcash_primitives = { features = ["transparent-inputs"], git = "https://github.com/KomodoPlatform/librustzcash.git" }
+zcash_proofs = { features = ["bundled-prover"], git = "https://github.com/KomodoPlatform/librustzcash.git" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = { version = "0.3.27" }
