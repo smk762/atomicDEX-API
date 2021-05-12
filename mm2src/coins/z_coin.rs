@@ -8,6 +8,7 @@ use chain::Transaction as UtxoTx;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::{BigDecimal, MmNumber};
+use futures::lock::Mutex as AsyncMutex;
 use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
 use keys::Public;
@@ -15,8 +16,10 @@ use rpc::v1::types::Bytes;
 use script::{Builder as ScriptBuilder, Opcode};
 use serde_json::Value as Json;
 use serialization::deserialize;
+use std::sync::Arc;
 use zcash_client_backend::encoding::encode_payment_address;
 use zcash_primitives::{constants::mainnet as z_mainnet_constants, sapling::PaymentAddress, zip32::ExtendedSpendingKey};
+use zcash_proofs::prover::LocalTxProver;
 
 mod z_htlc;
 use z_htlc::{z_p2sh_spend, z_send_htlc};
@@ -26,11 +29,29 @@ use z_rpc::ZRpcOps;
 
 #[cfg(test)] mod z_coin_tests;
 
+pub struct ZCoinFields {
+    z_spending_key: ExtendedSpendingKey,
+    z_addr: PaymentAddress,
+    z_addr_encoded: String,
+    z_tx_prover: LocalTxProver,
+    /// Mutex preventing concurrent transaction generation/same input usage
+    z_tx_mutex: AsyncMutex<()>,
+}
+
+impl std::fmt::Debug for ZCoinFields {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "ZCoinFields {{ z_addr: {:?}, z_addr_encoded: {} }}",
+            self.z_addr, self.z_addr_encoded
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ZCoin {
     utxo_arc: UtxoArc,
-    z_spending_key: ExtendedSpendingKey,
-    z_addr: PaymentAddress,
+    z_fields: Arc<ZCoinFields>,
 }
 
 impl ZCoin {
@@ -62,10 +83,19 @@ pub async fn z_coin_from_conf_and_request(
     let (_, z_addr) = z_spending_key
         .default_address()
         .map_err(|_| MmError::new(ZCoinBuildError::GetAddressError))?;
-    Ok(ZCoin {
-        utxo_arc,
+
+    let z_tx_prover = LocalTxProver::bundled();
+    let z_addr_encoded = encode_payment_address(z_mainnet_constants::HRP_SAPLING_PAYMENT_ADDRESS, &z_addr);
+    let z_fields = ZCoinFields {
         z_spending_key,
         z_addr,
+        z_addr_encoded,
+        z_tx_prover,
+        z_tx_mutex: AsyncMutex::new(()),
+    };
+    Ok(ZCoin {
+        utxo_arc,
+        z_fields: Arc::new(z_fields),
     })
 }
 
@@ -75,13 +105,12 @@ impl MarketCoinOps for ZCoin {
     fn my_address(&self) -> Result<String, String> { todo!() }
 
     fn my_balance(&self) -> BalanceFut<CoinBalance> {
-        let my_address = encode_payment_address(z_mainnet_constants::HRP_SAPLING_PAYMENT_ADDRESS, &self.z_addr);
         let min_conf = 0;
         let fut = self
             .utxo_arc
             .rpc_client
             .as_ref()
-            .z_get_balance(&my_address, min_conf)
+            .z_get_balance(&self.z_fields.z_addr_encoded, min_conf)
             // at the moment Z coins do not have an unspendable balance
             .map(|spendable| CoinBalance {
                 spendable: spendable.to_decimal(),

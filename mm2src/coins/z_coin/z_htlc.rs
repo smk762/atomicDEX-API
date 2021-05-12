@@ -13,13 +13,10 @@ use keys::{Address, Error as KeysError, Public};
 use script::Script;
 use secp256k1_bindings::SecretKey;
 use serialization::deserialize;
-use zcash_client_backend::encoding::encode_payment_address;
 use zcash_primitives::consensus;
-use zcash_primitives::constants::mainnet as z_mainnet_constants;
 use zcash_primitives::legacy::Script as ZCashScript;
 use zcash_primitives::transaction::builder::{Builder as ZTxBuilder, Error as ZTxBuilderError};
 use zcash_primitives::transaction::components::{Amount, OutPoint as ZCashOutpoint, TxOut};
-use zcash_proofs::prover::LocalTxProver;
 
 #[derive(Debug, Display)]
 #[allow(clippy::large_enum_variant)]
@@ -47,6 +44,7 @@ pub async fn z_send_htlc(
     secret_hash: &[u8],
     amount: BigDecimal,
 ) -> Result<UtxoTx, MmError<ZSendHtlcError>> {
+    let _lock = coin.z_fields.z_tx_mutex.lock().await;
     let taker_pub = Public::from_slice(other_pub).map_to_mm(ZSendHtlcError::from)?;
     let payment_script = payment_script(time_lock, secret_hash, coin.utxo_arc.key_pair.public(), &taker_pub);
     let hash = dhash160(&payment_script);
@@ -57,14 +55,17 @@ pub async fn z_send_htlc(
         checksum_type: coin.utxo_arc.conf.checksum_type,
     };
 
-    let from_addr = encode_payment_address(z_mainnet_constants::HRP_SAPLING_PAYMENT_ADDRESS, &coin.z_addr);
     let send_item = ZSendManyItem {
         amount,
         op_return: Some(payment_script.to_vec().into()),
         address: htlc_address.to_string(),
     };
 
-    let op_id = coin.z_rpc().z_send_many(&from_addr, vec![send_item]).compat().await?;
+    let op_id = coin
+        .z_rpc()
+        .z_send_many(&coin.z_fields.z_addr_encoded, vec![send_item])
+        .compat()
+        .await?;
 
     loop {
         let operation_statuses = coin.z_rpc().z_get_send_many_status(&[&op_id]).compat().await?;
@@ -139,21 +140,24 @@ pub async fn z_p2sh_spend(
     tx_builder
         .add_sapling_output(
             None,
-            coin.z_addr.clone(),
+            coin.z_fields.z_addr.clone(),
             Amount::from_u64(p2sh_tx.outputs[0].value - 1000).unwrap(),
             None,
         )
         .map_to_mm(ZP2SHSpendError::from)?;
-    let prover = LocalTxProver::bundled();
+
     let (zcash_tx, _) = tx_builder
-        .build(consensus::BranchId::Sapling, &prover)
+        .build(consensus::BranchId::Sapling, &coin.z_fields.z_tx_prover)
         .map_to_mm(ZP2SHSpendError::from)?;
+
     let mut tx_buffer = Vec::with_capacity(1024);
     zcash_tx.write(&mut tx_buffer).unwrap();
     let refund_tx: UtxoTx = deserialize(tx_buffer.as_slice()).expect("librustzcash should produce a valid tx");
+
     coin.rpc_client()
         .send_raw_transaction(tx_buffer.into())
         .compat()
         .await?;
+
     Ok(refund_tx)
 }
