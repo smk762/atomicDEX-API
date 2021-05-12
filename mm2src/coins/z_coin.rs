@@ -8,27 +8,18 @@ use chain::Transaction as UtxoTx;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::{BigDecimal, MmNumber};
-use futures::compat::Future01CompatExt;
 use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
 use keys::Public;
 use rpc::v1::types::Bytes;
 use script::{Builder as ScriptBuilder, Opcode};
-use secp256k1_bindings::SecretKey;
 use serde_json::Value as Json;
 use serialization::deserialize;
 use zcash_client_backend::encoding::encode_payment_address;
-use zcash_primitives::{consensus,
-                       constants::mainnet as z_mainnet_constants,
-                       legacy::Script as ZCashScript,
-                       sapling::PaymentAddress,
-                       transaction::builder::Builder as ZTxBuilder,
-                       transaction::components::{Amount, OutPoint as ZCashOutpoint, TxOut},
-                       zip32::ExtendedSpendingKey};
-use zcash_proofs::prover::LocalTxProver;
+use zcash_primitives::{constants::mainnet as z_mainnet_constants, sapling::PaymentAddress, zip32::ExtendedSpendingKey};
 
 mod z_htlc;
-use z_htlc::z_send_htlc;
+use z_htlc::{z_p2sh_spend, z_send_htlc};
 
 mod z_rpc;
 use z_rpc::ZRpcOps;
@@ -179,13 +170,30 @@ impl SwapOps for ZCoin {
 
     fn send_maker_spends_taker_payment(
         &self,
-        _taker_payment_tx: &[u8],
-        _time_lock: u32,
-        _taker_pub: &[u8],
-        _secret: &[u8],
+        taker_payment_tx: &[u8],
+        time_lock: u32,
+        taker_pub: &[u8],
+        secret: &[u8],
         _swap_contract_address: &Option<Bytes>,
     ) -> TransactionFut {
-        todo!()
+        let tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let redeem_script = payment_script(
+            time_lock,
+            &*dhash160(secret),
+            &Public::from_slice(taker_pub).unwrap(),
+            self.utxo_arc.key_pair.public(),
+        );
+        let script_data = ScriptBuilder::default()
+            .push_data(secret)
+            .push_opcode(Opcode::OP_0)
+            .into_script();
+        let selfi = self.clone();
+        let fut = async move {
+            let tx_fut = z_p2sh_spend(&selfi, tx, time_lock, SEQUENCE_FINAL, redeem_script, script_data);
+            let tx = try_s!(tx_fut.await);
+            Ok(tx.into())
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn send_taker_spends_maker_payment(
@@ -196,76 +204,49 @@ impl SwapOps for ZCoin {
         secret: &[u8],
         _swap_contract_address: &Option<Bytes>,
     ) -> TransactionFut {
-        let tx: UtxoTx = deserialize(maker_payment_tx).unwrap();
-        let secret_hash = dhash160(secret);
+        let tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let redeem_script = payment_script(
             time_lock,
-            &*secret_hash,
+            &*dhash160(secret),
             &Public::from_slice(maker_pub).unwrap(),
             self.utxo_arc.key_pair.public(),
-        )
-        .to_vec();
-
+        );
         let script_data = ScriptBuilder::default()
             .push_data(secret)
             .push_opcode(Opcode::OP_0)
-            .into_bytes();
+            .into_script();
         let selfi = self.clone();
         let fut = async move {
-            let current_block = try_s!(selfi.utxo_arc.rpc_client.get_block_count().compat().await) as u32;
-            let mut tx_builder = ZTxBuilder::new(consensus::MAIN_NETWORK, current_block.into());
-
-            let secp_secret = SecretKey::from_slice(&*selfi.utxo_arc.key_pair.private().secret).unwrap();
-
-            let outpoint = ZCashOutpoint::new(tx.hash().into(), 0);
-            let tx_out = TxOut {
-                value: Amount::from_u64(tx.outputs[0].value).unwrap(),
-                script_pubkey: ZCashScript(redeem_script.clone()),
-            };
-            tx_builder
-                .add_transparent_input(
-                    secp_secret,
-                    outpoint,
-                    SEQUENCE_FINAL,
-                    ZCashScript(script_data.take()),
-                    tx_out,
-                )
-                .unwrap();
-            tx_builder
-                .add_sapling_output(
-                    None,
-                    selfi.z_addr,
-                    Amount::from_u64(tx.outputs[0].value - 1000).unwrap(),
-                    None,
-                )
-                .unwrap();
-            let prover = LocalTxProver::bundled();
-            let (zcash_tx, _) = tx_builder.build(consensus::BranchId::Sapling, &prover).unwrap();
-            let mut tx_buffer = Vec::with_capacity(1024);
-            zcash_tx.write(&mut tx_buffer).unwrap();
-            let spend_tx: UtxoTx = deserialize(tx_buffer.as_slice()).expect("librustzcash should produce a valid tx");
-            try_s!(
-                selfi
-                    .utxo_arc
-                    .rpc_client
-                    .send_raw_transaction(tx_buffer.into())
-                    .compat()
-                    .await
-            );
-            Ok(spend_tx.into())
+            let tx_fut = z_p2sh_spend(&selfi, tx, time_lock, SEQUENCE_FINAL, redeem_script, script_data);
+            let tx = try_s!(tx_fut.await);
+            Ok(tx.into())
         };
         Box::new(fut.boxed().compat())
     }
 
     fn send_taker_refunds_payment(
         &self,
-        _taker_payment_tx: &[u8],
-        _time_lock: u32,
-        _maker_pub: &[u8],
-        _secret_hash: &[u8],
+        taker_payment_tx: &[u8],
+        time_lock: u32,
+        maker_pub: &[u8],
+        secret_hash: &[u8],
         _swap_contract_address: &Option<Bytes>,
     ) -> TransactionFut {
-        todo!()
+        let tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+        let redeem_script = payment_script(
+            time_lock,
+            secret_hash,
+            self.utxo_arc.key_pair.public(),
+            &Public::from_slice(maker_pub).unwrap(),
+        );
+        let script_data = ScriptBuilder::default().push_opcode(Opcode::OP_1).into_script();
+        let selfi = self.clone();
+        let fut = async move {
+            let tx_fut = z_p2sh_spend(&selfi, tx, time_lock, SEQUENCE_FINAL - 1, redeem_script, script_data);
+            let tx = try_s!(tx_fut.await);
+            Ok(tx.into())
+        };
+        Box::new(fut.boxed().compat())
     }
 
     fn send_maker_refunds_payment(
@@ -276,59 +257,19 @@ impl SwapOps for ZCoin {
         secret_hash: &[u8],
         _swap_contract_address: &Option<Bytes>,
     ) -> TransactionFut {
-        let tx: UtxoTx = deserialize(maker_payment_tx).unwrap();
+        let tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
         let redeem_script = payment_script(
             time_lock,
             secret_hash,
             self.utxo_arc.key_pair.public(),
             &Public::from_slice(taker_pub).unwrap(),
-        )
-        .to_vec();
+        );
+        let script_data = ScriptBuilder::default().push_opcode(Opcode::OP_1).into_script();
         let selfi = self.clone();
         let fut = async move {
-            let current_block = try_s!(selfi.utxo_arc.rpc_client.get_block_count().compat().await) as u32;
-            let mut tx_builder = ZTxBuilder::new(consensus::MAIN_NETWORK, current_block.into());
-            tx_builder.set_lock_time(time_lock);
-
-            let secp_secret = SecretKey::from_slice(&*selfi.utxo_arc.key_pair.private().secret).unwrap();
-
-            let outpoint = ZCashOutpoint::new(tx.hash().into(), 0);
-            let tx_out = TxOut {
-                value: Amount::from_u64(tx.outputs[0].value).unwrap(),
-                script_pubkey: ZCashScript(redeem_script.clone()),
-            };
-            let script_data = ScriptBuilder::default().push_opcode(Opcode::OP_1).into_bytes();
-            tx_builder
-                .add_transparent_input(
-                    secp_secret,
-                    outpoint,
-                    SEQUENCE_FINAL - 1,
-                    ZCashScript(script_data.take()),
-                    tx_out,
-                )
-                .unwrap();
-            tx_builder
-                .add_sapling_output(
-                    None,
-                    selfi.z_addr,
-                    Amount::from_u64(tx.outputs[0].value - 1000).unwrap(),
-                    None,
-                )
-                .unwrap();
-            let prover = LocalTxProver::bundled();
-            let (zcash_tx, _) = tx_builder.build(consensus::BranchId::Sapling, &prover).unwrap();
-            let mut tx_buffer = Vec::with_capacity(1024);
-            zcash_tx.write(&mut tx_buffer).unwrap();
-            let refund_tx: UtxoTx = deserialize(tx_buffer.as_slice()).expect("librustzcash should produce a valid tx");
-            try_s!(
-                selfi
-                    .utxo_arc
-                    .rpc_client
-                    .send_raw_transaction(tx_buffer.into())
-                    .compat()
-                    .await
-            );
-            Ok(refund_tx.into())
+            let tx_fut = z_p2sh_spend(&selfi, tx, time_lock, SEQUENCE_FINAL - 1, redeem_script, script_data);
+            let tx = try_s!(tx_fut.await);
+            Ok(tx.into())
         };
         Box::new(fut.boxed().compat())
     }

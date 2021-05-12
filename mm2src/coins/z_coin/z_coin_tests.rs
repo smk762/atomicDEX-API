@@ -5,7 +5,6 @@ use common::now_ms;
 use zcash_client_backend::encoding::decode_extended_spending_key;
 
 #[test]
-#[ignore]
 fn zombie_coin_send_and_refund_maker_payment() {
     let conf = json!({
         "coin": "ZOMBIE",
@@ -46,7 +45,6 @@ fn zombie_coin_send_and_refund_maker_payment() {
 }
 
 #[test]
-#[ignore]
 fn zombie_coin_send_and_spend_maker_payment() {
     let conf = json!({
         "coin": "ZOMBIE",
