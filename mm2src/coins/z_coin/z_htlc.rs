@@ -1,7 +1,7 @@
 use super::z_rpc::{ZOperationStatus, ZOperationTxid, ZSendManyItem};
 use super::ZCoin;
 use crate::utxo::rpc_clients::UtxoRpcError;
-use crate::utxo::utxo_common::payment_script;
+use crate::utxo::utxo_common::{dex_fee_script, payment_script};
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
 use chain::Transaction as UtxoTx;
@@ -86,6 +86,61 @@ pub async fn z_send_htlc(
                     .await?;
                 let tx: UtxoTx = deserialize(tx_bytes.0.as_slice()).expect("rpc returns valid tx bytes");
                 break Ok(tx);
+            },
+            None => break Err(MmError::new(ZSendHtlcError::ZOperationStatusesEmpty)),
+        }
+    }
+}
+
+/// Sends HTLC output from the coin's z_addr
+pub async fn z_send_dex_fee(
+    coin: &ZCoin,
+    time_lock: u32,
+    watcher_pub: &[u8],
+    amount: BigDecimal,
+) -> Result<(UtxoTx, Script), MmError<ZSendHtlcError>> {
+    let _lock = coin.z_fields.z_tx_mutex.lock().await;
+    let watcher_pub = Public::from_slice(watcher_pub).map_to_mm(ZSendHtlcError::from)?;
+    let payment_script = dex_fee_script([0; 16], time_lock, &watcher_pub, coin.utxo_arc.key_pair.public());
+    let hash = dhash160(&payment_script);
+    let htlc_address = Address {
+        prefix: coin.utxo_arc.conf.p2sh_addr_prefix,
+        t_addr_prefix: coin.utxo_arc.conf.p2sh_t_addr_prefix,
+        hash,
+        checksum_type: coin.utxo_arc.conf.checksum_type,
+    };
+
+    let send_item = ZSendManyItem {
+        amount,
+        op_return: Some(payment_script.to_vec().into()),
+        address: htlc_address.to_string(),
+    };
+
+    let op_id = coin
+        .z_rpc()
+        .z_send_many(&coin.z_fields.z_addr_encoded, vec![send_item])
+        .compat()
+        .await?;
+
+    loop {
+        let operation_statuses = coin.z_rpc().z_get_send_many_status(&[&op_id]).compat().await?;
+
+        match operation_statuses.first() {
+            Some(ZOperationStatus::Executing { .. }) | Some(ZOperationStatus::Queued { .. }) => {
+                Timer::sleep(1.).await;
+                continue;
+            },
+            Some(ZOperationStatus::Failed { .. }) => {
+                break Err(MmError::new(ZSendHtlcError::ZOperationFailed(operation_statuses)));
+            },
+            Some(ZOperationStatus::Success { result, .. }) => {
+                let tx_bytes = coin
+                    .rpc_client()
+                    .get_transaction_bytes(result.txid.clone())
+                    .compat()
+                    .await?;
+                let tx: UtxoTx = deserialize(tx_bytes.0.as_slice()).expect("rpc returns valid tx bytes");
+                break Ok((tx, payment_script));
             },
             None => break Err(MmError::new(ZSendHtlcError::ZOperationStatusesEmpty)),
         }
