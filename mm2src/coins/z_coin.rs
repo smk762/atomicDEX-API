@@ -1,26 +1,31 @@
-use crate::utxo::rpc_clients::UtxoRpcClientEnum;
+use crate::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcResult};
 use crate::utxo::utxo_common::{payment_script, UtxoArcBuilder};
-use crate::utxo::{utxo_common, UtxoArc, UtxoCoinBuilder};
+use crate::utxo::{utxo_common, ActualTxFee, AdditionalTxData, Address, FeePolicy, GenerateTxResult,
+                  RecentlySpentOutPoints, UtxoArc, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps,
+                  VerboseTransactionFrom};
 use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
-            SwapOps, TradeFee, TradePreimageFut, TradePreimageValue, TransactionEnum, TransactionFut,
-            ValidateAddressResult, WithdrawFut, WithdrawRequest};
+            SwapOps, TradeFee, TradePreimageFut, TradePreimageResult, TradePreimageValue, TransactionEnum,
+            TransactionFut, ValidateAddressResult, WithdrawFut, WithdrawRequest};
+use async_trait::async_trait;
 use bitcrypto::dhash160;
 use chain::constants::SEQUENCE_FINAL;
-use chain::Transaction as UtxoTx;
+use chain::{Transaction as UtxoTx, TransactionOutput};
+use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::{BigDecimal, MmNumber};
 use derive_more::Display;
-use futures::lock::Mutex as AsyncMutex;
+use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
 use keys::Public;
-use rpc::v1::types::Bytes as BytesJson;
-use script::{Builder as ScriptBuilder, Opcode};
+use primitives::bytes::Bytes;
+use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
+use script::{Builder as ScriptBuilder, Opcode, Script, TransactionInputSigner};
 use serde_json::Value as Json;
 use serialization::deserialize;
 use std::sync::Arc;
-use zcash_client_backend::encoding::encode_payment_address;
+use zcash_client_backend::encoding::{encode_extended_spending_key, encode_payment_address};
 use zcash_primitives::{constants::mainnet as z_mainnet_constants, sapling::PaymentAddress, zip32::ExtendedSpendingKey};
 use zcash_proofs::prover::LocalTxProver;
 
@@ -61,6 +66,10 @@ impl ZCoin {
     pub fn z_rpc(&self) -> &(dyn ZRpcOps + Send + Sync) { self.utxo_arc.rpc_client.as_ref() }
 
     pub fn rpc_client(&self) -> &UtxoRpcClientEnum { &self.utxo_arc.rpc_client }
+}
+
+impl AsRef<UtxoCoinFields> for ZCoin {
+    fn as_ref(&self) -> &UtxoCoinFields { &self.utxo_arc }
 }
 
 #[derive(Debug, Display)]
@@ -114,9 +123,9 @@ async fn z_coin_from_conf_and_request_with_z_key(
 }
 
 impl MarketCoinOps for ZCoin {
-    fn ticker(&self) -> &str { todo!() }
+    fn ticker(&self) -> &str { &self.utxo_arc.conf.ticker }
 
-    fn my_address(&self) -> Result<String, String> { todo!() }
+    fn my_address(&self) -> Result<String, String> { Ok(self.z_fields.z_addr_encoded.clone()) }
 
     fn my_balance(&self) -> BalanceFut<CoinBalance> {
         let min_conf = 0;
@@ -134,42 +143,53 @@ impl MarketCoinOps for ZCoin {
         Box::new(fut)
     }
 
-    fn base_coin_balance(&self) -> BalanceFut<BigDecimal> { todo!() }
+    fn base_coin_balance(&self) -> BalanceFut<BigDecimal> { utxo_common::base_coin_balance(self) }
 
-    fn send_raw_tx(&self, _tx: &str) -> Box<dyn Future<Item = String, Error = String> + Send> { todo!() }
+    fn send_raw_tx(&self, tx: &str) -> Box<dyn Future<Item = String, Error = String> + Send> {
+        utxo_common::send_raw_tx(self.as_ref(), tx)
+    }
 
     fn wait_for_confirmations(
         &self,
-        _tx: &[u8],
-        _confirmations: u64,
-        _requires_nota: bool,
-        _wait_until: u64,
-        _check_every: u64,
+        tx: &[u8],
+        confirmations: u64,
+        requires_nota: bool,
+        wait_until: u64,
+        check_every: u64,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        todo!()
+        utxo_common::wait_for_confirmations(self.as_ref(), tx, confirmations, requires_nota, wait_until, check_every)
     }
 
     fn wait_for_tx_spend(
         &self,
-        _transaction: &[u8],
-        _wait_until: u64,
-        _from_block: u64,
+        transaction: &[u8],
+        wait_until: u64,
+        from_block: u64,
         _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
-        todo!()
+        utxo_common::wait_for_tx_spend(self.as_ref(), transaction, wait_until, from_block)
     }
 
-    fn tx_enum_from_bytes(&self, _bytes: &[u8]) -> Result<TransactionEnum, String> { todo!() }
+    fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, String> {
+        utxo_common::tx_enum_from_bytes(self.as_ref(), bytes)
+    }
 
-    fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send> { todo!() }
+    fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send> {
+        utxo_common::current_block(&self.utxo_arc)
+    }
 
     fn address_from_pubkey_str(&self, _pubkey: &str) -> Result<String, String> { todo!() }
 
-    fn display_priv_key(&self) -> String { todo!() }
+    fn display_priv_key(&self) -> String {
+        encode_extended_spending_key(
+            z_mainnet_constants::HRP_SAPLING_EXTENDED_SPENDING_KEY,
+            &self.z_fields.z_spending_key,
+        )
+    }
 
-    fn min_tx_amount(&self) -> BigDecimal { todo!() }
+    fn min_tx_amount(&self) -> BigDecimal { utxo_common::min_tx_amount(self.as_ref()) }
 
-    fn min_trading_vol(&self) -> MmNumber { todo!() }
+    fn min_trading_vol(&self) -> MmNumber { utxo_common::min_trading_vol(self.as_ref()) }
 }
 
 impl SwapOps for ZCoin {
@@ -405,20 +425,24 @@ impl MmCoin for ZCoin {
 
     fn history_sync_status(&self) -> HistorySyncState { todo!() }
 
-    fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> { todo!() }
-
-    fn get_sender_trade_fee(&self, _value: TradePreimageValue, _stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
-        todo!()
+    fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
+        utxo_common::get_trade_fee(self.clone())
     }
 
-    fn get_receiver_trade_fee(&self, _stage: FeeApproxStage) -> TradePreimageFut<TradeFee> { todo!() }
+    fn get_sender_trade_fee(&self, value: TradePreimageValue, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
+        utxo_common::get_sender_trade_fee(self.clone(), value, stage)
+    }
+
+    fn get_receiver_trade_fee(&self, _stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
+        utxo_common::get_receiver_trade_fee(self.clone())
+    }
 
     fn get_fee_to_send_taker_fee(
         &self,
-        _dex_fee_amount: BigDecimal,
-        _stage: FeeApproxStage,
+        dex_fee_amount: BigDecimal,
+        stage: FeeApproxStage,
     ) -> TradePreimageFut<TradeFee> {
-        todo!()
+        utxo_common::get_fee_to_send_taker_fee(self.clone(), dex_fee_amount, stage)
     }
 
     fn required_confirmations(&self) -> u64 { utxo_common::required_confirmations(&self.utxo_arc) }
@@ -436,6 +460,120 @@ impl MmCoin for ZCoin {
     fn swap_contract_address(&self) -> Option<BytesJson> { utxo_common::swap_contract_address() }
 
     fn mature_confirmations(&self) -> Option<u32> { Some(self.utxo_arc.conf.mature_confirmations) }
+}
+
+#[async_trait]
+impl UtxoCommonOps for ZCoin {
+    async fn get_tx_fee(&self) -> Result<ActualTxFee, JsonRpcError> { utxo_common::get_tx_fee(&self.utxo_arc).await }
+
+    async fn get_htlc_spend_fee(&self) -> UtxoRpcResult<u64> { utxo_common::get_htlc_spend_fee(self).await }
+
+    fn addresses_from_script(&self, script: &Script) -> Result<Vec<Address>, String> {
+        utxo_common::addresses_from_script(&self.utxo_arc.conf, script)
+    }
+
+    fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo_arc, satoshi) }
+
+    fn my_public_key(&self) -> &Public { self.utxo_arc.key_pair.public() }
+
+    fn display_address(&self, address: &Address) -> Result<String, String> {
+        utxo_common::display_address(&self.utxo_arc.conf, address)
+    }
+
+    fn address_from_str(&self, address: &str) -> Result<Address, String> {
+        utxo_common::address_from_str(&self.utxo_arc.conf, address)
+    }
+
+    async fn get_current_mtp(&self) -> UtxoRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo_arc).await }
+
+    fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
+        utxo_common::is_unspent_mature(self.utxo_arc.conf.mature_confirmations, output)
+    }
+
+    async fn generate_transaction(
+        &self,
+        utxos: Vec<UnspentInfo>,
+        outputs: Vec<TransactionOutput>,
+        fee_policy: FeePolicy,
+        fee: Option<ActualTxFee>,
+        gas_fee: Option<u64>,
+    ) -> GenerateTxResult {
+        utxo_common::generate_transaction(self, utxos, outputs, fee_policy, fee, gas_fee).await
+    }
+
+    async fn calc_interest_if_required(
+        &self,
+        unsigned: TransactionInputSigner,
+        data: AdditionalTxData,
+        my_script_pub: Bytes,
+    ) -> UtxoRpcResult<(TransactionInputSigner, AdditionalTxData)> {
+        utxo_common::calc_interest_if_required(self, unsigned, data, my_script_pub).await
+    }
+
+    fn p2sh_spending_tx(
+        &self,
+        prev_transaction: UtxoTx,
+        redeem_script: Bytes,
+        outputs: Vec<TransactionOutput>,
+        script_data: Script,
+        sequence: u32,
+        lock_time: u32,
+    ) -> Result<UtxoTx, String> {
+        utxo_common::p2sh_spending_tx(
+            self,
+            prev_transaction,
+            redeem_script,
+            outputs,
+            script_data,
+            sequence,
+            lock_time,
+        )
+    }
+
+    async fn ordered_mature_unspents<'a>(
+        &'a self,
+        address: &Address,
+    ) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)> {
+        utxo_common::ordered_mature_unspents(self, address).await
+    }
+
+    fn get_verbose_transaction_from_cache_or_rpc(
+        &self,
+        txid: H256Json,
+    ) -> Box<dyn Future<Item = VerboseTransactionFrom, Error = String> + Send> {
+        let selfi = self.clone();
+        let fut = async move { utxo_common::get_verbose_transaction_from_cache_or_rpc(&selfi.utxo_arc, txid).await };
+        Box::new(fut.boxed().compat())
+    }
+
+    async fn cache_transaction_if_possible(&self, tx: &RpcTransaction) -> Result<(), String> {
+        utxo_common::cache_transaction_if_possible(&self.utxo_arc, tx).await
+    }
+
+    async fn list_unspent_ordered<'a>(
+        &'a self,
+        address: &Address,
+    ) -> UtxoRpcResult<(Vec<UnspentInfo>, AsyncMutexGuard<'a, RecentlySpentOutPoints>)> {
+        utxo_common::list_unspent_ordered(self, address).await
+    }
+
+    async fn preimage_trade_fee_required_to_send_outputs(
+        &self,
+        outputs: Vec<TransactionOutput>,
+        fee_policy: FeePolicy,
+        gas_fee: Option<u64>,
+        stage: &FeeApproxStage,
+    ) -> TradePreimageResult<BigDecimal> {
+        utxo_common::preimage_trade_fee_required_to_send_outputs(self, outputs, fee_policy, gas_fee, stage).await
+    }
+
+    fn increase_dynamic_fee_by_stage(&self, dynamic_fee: u64, stage: &FeeApproxStage) -> u64 {
+        utxo_common::increase_dynamic_fee_by_stage(self, dynamic_fee, stage)
+    }
+
+    fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> u32 {
+        utxo_common::p2sh_tx_locktime(&self.utxo_arc.conf.ticker, htlc_locktime)
+    }
 }
 
 #[test]

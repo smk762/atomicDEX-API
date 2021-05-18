@@ -70,6 +70,36 @@ async fn enable_coins_eth_electrum(
     replies
 }
 
+// temporary fn for ZOMBIE z swaps tests
+async fn enable_coins_eth_electrum_zombie(
+    mm: &MarketMakerIt,
+    eth_urls: &[&str],
+) -> HashMap<&'static str, EnableElectrumResponse> {
+    let mut replies = HashMap::new();
+    replies.insert(
+        "RICK",
+        enable_electrum(mm, "RICK", false, &[
+            "electrum1.cipig.net:10017",
+            "electrum2.cipig.net:10017",
+            "electrum3.cipig.net:10017",
+        ])
+        .await,
+    );
+    replies.insert(
+        "MORTY",
+        enable_electrum(mm, "MORTY", false, &[
+            "electrum1.cipig.net:10018",
+            "electrum2.cipig.net:10018",
+            "electrum3.cipig.net:10018",
+        ])
+        .await,
+    );
+    replies.insert("ETH", enable_native(mm, "ETH", eth_urls).await);
+    replies.insert("JST", enable_native(mm, "JST", eth_urls).await);
+    replies.insert("ZOMBIE", enable_native(mm, "ZOMBIE", eth_urls).await);
+    replies
+}
+
 fn addr_from_enable<'a>(enable_response: &'a HashMap<&str, EnableElectrumResponse>, coin: &str) -> &'a str {
     &enable_response.get(coin).unwrap().address
 }
@@ -981,6 +1011,7 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
         {"coin":"RICK","asset":"RICK","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
         {"coin":"MORTY","asset":"MORTY","required_confirmations":0,"txversion":4,"overwintered":1,"protocol":{"type":"UTXO"}},
         {"coin":"ETH","name":"ethereum","protocol":{"type":"ETH"}},
+        {"coin":"ZOMBIE","asset":"ZOMBIE","fname":"ZOMBIE (TESTCOIN)","txversion":4,"overwintered":1,"mm2":1,"protocol":{"type":"ZHTLC"}},
         {"coin":"JST","name":"jst","protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
     ]);
 
@@ -1049,10 +1080,10 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
     wait_log_re!(mm_alice, 22., ">>>>>>>>> DEX stats ");
 
     // Enable coins on Bob side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum(&mm_bob, &["http://195.201.0.6:8565"]).await;
+    let rc = enable_coins_eth_electrum_zombie(&mm_bob, &["http://195.201.0.6:8565"]).await;
     log! ({"enable_coins (bob): {:?}", rc});
     // Enable coins on Alice side. Print the replies in case we need the address.
-    let rc = enable_coins_eth_electrum(&mm_alice, &["http://195.201.0.6:8565"]).await;
+    let rc = enable_coins_eth_electrum_zombie(&mm_alice, &["http://195.201.0.6:8565"]).await;
     log! ({"enable_coins (alice): {:?}", rc});
 
     // unwrap! (mm_alice.wait_for_log (999., &|log| log.contains ("set pubkey for ")));
@@ -1217,7 +1248,7 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn trade_test_electrum_and_eth_coins() { block_on(trade_base_rel_electrum(vec![("ETH", "JST")])); }
+fn trade_test_electrum_and_eth_coins() { block_on(trade_base_rel_electrum(vec![("ETH", "JST"), ("RICK", "ZOMBIE")])); }
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
