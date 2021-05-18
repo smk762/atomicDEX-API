@@ -94,6 +94,7 @@ use qrc20::{qrc20_coin_from_conf_and_request, Qrc20Coin, Qrc20FeeDetails};
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
+use crate::z_coin::{z_coin_from_conf_and_request, ZCoin};
 pub use test_coin::TestCoin;
 
 #[cfg(not(target_arch = "wasm32"))] pub mod z_coin;
@@ -820,6 +821,7 @@ pub enum MmCoinEnum {
     QtumCoin(QtumCoin),
     Qrc20Coin(Qrc20Coin),
     EthCoin(EthCoin),
+    ZCoin(ZCoin),
     Test(TestCoin),
 }
 
@@ -843,6 +845,10 @@ impl From<Qrc20Coin> for MmCoinEnum {
     fn from(c: Qrc20Coin) -> MmCoinEnum { MmCoinEnum::Qrc20Coin(c) }
 }
 
+impl From<ZCoin> for MmCoinEnum {
+    fn from(c: ZCoin) -> MmCoinEnum { MmCoinEnum::ZCoin(c) }
+}
+
 // NB: When stable and groked by IDEs, `enum_dispatch` can be used instead of `Deref` to speed things up.
 impl Deref for MmCoinEnum {
     type Target = dyn MmCoin;
@@ -852,6 +858,7 @@ impl Deref for MmCoinEnum {
             MmCoinEnum::QtumCoin(ref c) => c,
             MmCoinEnum::Qrc20Coin(ref c) => c,
             MmCoinEnum::EthCoin(ref c) => c,
+            MmCoinEnum::ZCoin(ref c) => c,
             MmCoinEnum::Test(ref c) => c,
         }
     }
@@ -888,6 +895,7 @@ pub enum CoinProtocol {
     QRC20 { platform: String, contract_address: String },
     ETH,
     ERC20 { platform: String, contract_address: String },
+    ZHTLC,
 }
 
 pub type RpcTransportEventHandlerShared = Arc<dyn RpcTransportEventHandler + Send + Sync + 'static>;
@@ -1093,6 +1101,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             )
             .into()
         },
+        CoinProtocol::ZHTLC => try_s!(z_coin_from_conf_and_request(ctx, ticker, &coins_en, req, secret).await).into(),
     };
 
     let block_count = try_s!(coin.current_block().compat().await);
@@ -1552,7 +1561,7 @@ pub fn address_by_coin_conf_and_pubkey_str(coin: &str, conf: &Json, pubkey: &str
     let protocol: CoinProtocol = try_s!(json::from_value(conf["protocol"].clone()));
     match protocol {
         CoinProtocol::ERC20 { .. } | CoinProtocol::ETH => eth::addr_from_pubkey_str(pubkey),
-        CoinProtocol::UTXO | CoinProtocol::QTUM | CoinProtocol::QRC20 { .. } => {
+        CoinProtocol::UTXO | CoinProtocol::QTUM | CoinProtocol::QRC20 { .. } | CoinProtocol::ZHTLC => {
             utxo::address_by_conf_and_pubkey_str(coin, conf, pubkey)
         },
     }
