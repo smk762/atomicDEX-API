@@ -1,4 +1,4 @@
-use crate::utxo::rpc_clients::{NativeClient, UtxoRpcClientEnum, UtxoRpcError, UtxoRpcFut};
+use crate::utxo::rpc_clients::{NativeClient, ZliteClient, UtxoRpcClientEnum, UtxoRpcError, UtxoRpcFut};
 use bigdecimal::BigDecimal;
 use common::jsonrpc_client::{JsonRpcClient, JsonRpcRequest};
 use common::mm_error::prelude::*;
@@ -94,11 +94,26 @@ impl ZRpcOps for NativeClient {
     }
 }
 
+impl ZRpcOps for ZliteClient {
+    fn z_get_balance(&self, address: &str, min_conf: u32) -> UtxoRpcFut<MmNumber> {
+        unimplemented!()
+    }
+
+    fn z_get_send_many_status(&self, op_ids: &[&str]) -> UtxoRpcFut<Vec<ZOperationStatus<ZOperationTxid>>> {
+        unimplemented!()
+    }
+
+    fn z_send_many(&self, from_address: &str, send_to: Vec<ZSendManyItem>) -> UtxoRpcFut<String> {
+        unimplemented!()
+    }
+}
+
 impl AsRef<dyn ZRpcOps + Send + Sync> for UtxoRpcClientEnum {
     fn as_ref(&self) -> &(dyn ZRpcOps + Send + Sync + 'static) {
         match self {
             UtxoRpcClientEnum::Native(native) => native,
-            UtxoRpcClientEnum::Electrum(_) => panic!("Electrum client does not support ZRpcOps"),
+            UtxoRpcClientEnum::Electrum(electrum) => panic!("Electrum client does not support ZRpcOps"),
+            UtxoRpcClientEnum::Zlite(zlite) => zlite,
         }
     }
 }
