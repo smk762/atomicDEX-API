@@ -5,6 +5,129 @@ use common::mm_ctx::MmCtxBuilder;
 use common::now_ms;
 use zcash_client_backend::encoding::decode_extended_spending_key;
 
+use std::sync::Arc;
+use std::sync::mpsc::{channel, Sender, Receiver};
+use zecwalletlitelib::{commands,
+    lightclient::{LightClient, LightClientConfig, DEFAULT_SERVER},
+};
+
+pub fn command_loop(lightclient: Arc<LightClient>) -> (Sender<(String, Vec<String>)>, Receiver<String>) {
+    let (command_tx, command_rx) = channel::<(String, Vec<String>)>();
+    let (resp_tx, resp_rx) = channel::<String>();
+
+    let lc = lightclient.clone();
+    std::thread::spawn(move || {
+        loop {
+            match command_rx.recv_timeout(std::time::Duration::from_secs(5 * 60)) {
+                Ok((cmd, args)) => {
+                    let args = args.iter().map(|s| s.as_ref()).collect();
+
+                    let cmd_response = commands::do_user_command(&cmd, &args, lc.as_ref());
+                    resp_tx.send(cmd_response).unwrap();
+
+                    if cmd == "quit" {
+                        println!("Quit");
+                        break;
+                    }
+                },
+                Err(_) => {
+                    // Timeout. Do a sync to keep the wallet up-to-date. False to whether to print updates on the console
+                    println!("Timeout, doing a sync");
+                    match lc.do_sync(false) {
+                        Ok(_) => {},
+                        Err(e) => {println!("{}", e)}
+                    }
+                }
+            }
+        }
+    });
+
+    (command_tx, resp_rx)
+}
+
+#[test]
+pub fn zstartup() { //server: http::Uri, seed: Option<String>, birthday: u64, first_sync: bool, print_updates: bool)
+        //-> io::Result<(Sender<(String, Vec<String>)>, Receiver<String>)> {
+    
+    // Try to get the configuration
+
+    let seed = "pudding lock slam choose answer medal tank museum ride stadium collect strong occur capital tennis error jungle circle wheel learn cabin dog dirt age".to_string();
+
+    let birthday :u64 = 1254007;
+    let first_sync = true;
+    let print_updates = true;
+    // /let server = DEFAULT_SERVER;
+    let server = LightClientConfig::get_server_or_default(Some(DEFAULT_SERVER.to_string()));
+
+    let (config, latest_block_height) = LightClientConfig::create(server.clone()).unwrap();
+
+    let lightclient = Arc::new(LightClient::new_from_phrase(seed, &config, birthday, false).unwrap());
+
+
+    // Print startup Messages
+    println!(""); // Blank line
+    println!("Starting Zecwallet-CLI");
+    println!("Light Client config {:?}", config);
+
+    if print_updates {
+        println!("Lightclient connecting to {}", config.server);
+    }
+
+    // At startup, run a sync.
+    if first_sync {
+        let update = lightclient.do_sync(true);
+        if print_updates {
+            match update {
+                Ok(j) => {
+                    println!("{}", j.pretty(2));
+                },
+                Err(e) => println!("{}", e)
+            }
+        }
+    }
+
+    // Start the command loop
+    let (command_tx, resp_rx) = command_loop(lightclient.clone());
+
+    command_tx.send(("balance".to_string(), Vec::new() )).unwrap();
+
+    match resp_rx.recv() {
+        Ok(s) => println!("{}", s),
+        Err(e) => {
+            let e = format!("Error executing command {}: {}", "balances".to_string(), e);
+            eprintln!("{}", e);
+            println!("{}", e);
+        }
+    }
+
+    // Save before exit
+    command_tx.send(("save".to_string(), vec![])).unwrap();
+    resp_rx.recv().unwrap();
+
+    //Ok((command_tx, resp_rx))
+}
+/*
+fn test_init_lite() {
+
+
+    let (command_tx, resp_rx) = match startup(server, seed, birthday, !nosync, command.is_none()) {
+        Ok(c) => c,
+        Err(e) => {
+            let emsg = format!("Error during startup:{}\nIf you repeatedly run into this issue, you might have to restore your wallet from your seed phrase.", e);
+            eprintln!("{}", emsg);
+            error!("{}", emsg);
+            if cfg!(target_os = "unix" ) {
+                match e.raw_os_error() {
+                    Some(13) => report_permission_error(),
+                    _        => {},
+                }
+            };
+            return;
+        }
+    };
+}
+*/
+
 #[test]
 fn zombie_coin_send_and_refund_maker_payment() {
     let conf = json!({

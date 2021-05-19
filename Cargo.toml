@@ -20,10 +20,6 @@ test = false
 doctest = false
 bench = false
 
-[[bin]]
-name = "docker_tests"
-path = "mm2src/docker_tests.rs"
-
 [lib]
 name = "mm2"
 path = "mm2src/mm2_lib.rs"
@@ -158,3 +154,8 @@ members = [
 backtrace = { git = "https://github.com/artemii235/backtrace-rs.git" }
 backtrace-sys = { git = "https://github.com/artemii235/backtrace-rs.git" }
 num-rational = { git = "https://github.com/artemii235/num-rational.git" }
+secp256k1 = { git = "https://github.com/artemii235/rust-secp256k1.git", features = ["endomorphism", "rand"] }
+
+[patch."https://github.com/adityapk00/zecwallet-light-cli"]
+zecwalletlitelib = { path = "zecwallet-light-cli/lib" }
+

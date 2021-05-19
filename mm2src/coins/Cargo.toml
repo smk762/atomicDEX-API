@@ -80,3 +80,4 @@ zcash_client_backend = { git = "https://github.com/KomodoPlatform/librustzcash.g
 zcash_primitives = { features = ["transparent-inputs"], git = "https://github.com/KomodoPlatform/librustzcash.git" }
 zcash_proofs = { features = ["bundled-prover"], git = "https://github.com/KomodoPlatform/librustzcash.git" }
 
+zecwalletlitelib = { git = "https://github.com/adityapk00/zecwallet-light-cli.git"}
