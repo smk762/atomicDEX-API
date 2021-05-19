@@ -364,6 +364,30 @@ impl Qrc20ElectrumOps for ElectrumClient {
     }
 }
 
+impl Qrc20ElectrumOps for ZliteClient {
+    fn blockchain_token_get_info(&self, token_addr: &H160Json) -> RpcRes<TokenInfo> {
+        unimplemented!()
+    }
+
+    fn blockchain_contract_call(&self, contract_addr: &H160Json, data: BytesJson) -> RpcRes<ContractCallResult> {
+        unimplemented!()
+    }
+
+    fn blockchain_contract_event_get_history(
+        &self,
+        address: &H160Json,
+        contract_addr: &H160Json,
+        topic: &str,
+    ) -> RpcRes<Vec<TxHistoryItem>> {
+        unimplemented!()
+    }
+
+    fn blochchain_transaction_get_receipt(&self, hash: &H256Json) -> RpcRes<Vec<TxReceipt>> {
+        unimplemented!()
+    }
+}
+
+
 pub trait Qrc20RpcOps {
     fn get_transaction_receipts(&self, tx_hash: &H256Json) -> RpcRes<Vec<TxReceipt>>;
 
@@ -381,6 +405,7 @@ impl Qrc20RpcOps for UtxoRpcClientEnum {
     fn get_transaction_receipts(&self, tx_hash: &H256) -> RpcRes<Vec<TxReceipt>> {
         match self {
             UtxoRpcClientEnum::Electrum(electrum) => electrum.blochchain_transaction_get_receipt(tx_hash),
+            UtxoRpcClientEnum::Zlite(zlite) => zlite.blochchain_transaction_get_receipt(tx_hash),
             UtxoRpcClientEnum::Native(native) => native.get_transaction_receipt(tx_hash),
         }
     }
@@ -401,6 +426,9 @@ impl Qrc20RpcOps for UtxoRpcClientEnum {
                 UtxoRpcClientEnum::Native(native) => native.call_contract(&contract_addr, params.into()),
                 UtxoRpcClientEnum::Electrum(electrum) => {
                     electrum.blockchain_contract_call(&contract_addr, params.into())
+                },
+                UtxoRpcClientEnum::Zlite(zlite) => {
+                    zlite.blockchain_contract_call(&contract_addr, params.into())
                 },
             };
             let result = fut.compat().await?;

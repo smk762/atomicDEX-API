@@ -1116,6 +1116,7 @@ pub trait UtxoCoinBuilder {
             Some(0) => {
                 let fee_method = match &rpc_client {
                     UtxoRpcClientEnum::Electrum(_) => EstimateFeeMethod::Standard,
+                    UtxoRpcClientEnum::Zlite(_) => EstimateFeeMethod::Standard,
                     UtxoRpcClientEnum::Native(client) => try_s!(client.detect_fee_method().compat().await),
                 };
                 TxFee::Dynamic(fee_method)
