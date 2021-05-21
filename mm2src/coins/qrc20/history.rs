@@ -608,7 +608,6 @@ impl BuildTransferHistory for UtxoRpcClientEnum {
         match self {
             UtxoRpcClientEnum::Native(native) => native.build(params).await,
             UtxoRpcClientEnum::Electrum(electrum) => electrum.build(params).await,
-            UtxoRpcClientEnum::Zlite(zlite) => zlite.build(params).await,
         }
     }
 
@@ -619,22 +618,7 @@ impl BuildTransferHistory for UtxoRpcClientEnum {
         match self {
             UtxoRpcClientEnum::Native(native) => native.build_tx_idents(params).await,
             UtxoRpcClientEnum::Electrum(electrum) => electrum.build_tx_idents(params).await,
-            UtxoRpcClientEnum::Zlite(zlite) => zlite.build_tx_idents(params).await,
         }
-    }
-}
-
-#[async_trait]
-impl BuildTransferHistory for ZliteClient {
-    async fn build(&self, params: TransferHistoryParams) -> Result<Vec<TxReceipt>, MmError<UtxoRpcError>> {
-        unimplemented!()
-    }
-
-    async fn build_tx_idents(
-        &self,
-        params: TransferHistoryParams,
-    ) -> Result<Vec<(H256Json, u64)>, MmError<UtxoRpcError>> {
-        unimplemented!()
     }
 }
 

@@ -653,7 +653,6 @@ where
     ));
     let send_fut = match &coin.as_ref().rpc_client {
         UtxoRpcClientEnum::Electrum(_) => Either::A(send_outputs_from_my_address(coin, outputs)),
-        UtxoRpcClientEnum::Zlite(_) => Either::A(send_outputs_from_my_address(coin, outputs)),
         UtxoRpcClientEnum::Native(client) => {
             let addr_string = try_fus!(coin.display_address(&payment_address));
             Either::B(
@@ -689,7 +688,6 @@ where
     ));
     let send_fut = match &coin.as_ref().rpc_client {
         UtxoRpcClientEnum::Electrum(_) => Either::A(send_outputs_from_my_address(coin, outputs)),
-        UtxoRpcClientEnum::Zlite(_) => Either::A(send_outputs_from_my_address(coin, outputs)),
         UtxoRpcClientEnum::Native(client) => {
             let addr_string = try_fus!(coin.display_address(&payment_address));
             Either::B(
@@ -1077,18 +1075,6 @@ where
     let fut = async move {
         match &coin.as_ref().rpc_client {
             UtxoRpcClientEnum::Electrum(client) => {
-                let history = try_s!(client.scripthash_get_history(&hex::encode(script_hash)).compat().await);
-                match history.first() {
-                    Some(item) => {
-                        let tx_bytes = try_s!(client.get_transaction_bytes(item.tx_hash.clone()).compat().await);
-                        let mut tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
-                        tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
-                        Ok(Some(tx.into()))
-                    },
-                    None => Ok(None),
-                }
-            },
-            UtxoRpcClientEnum::Zlite(client) => {
                 let history = try_s!(client.scripthash_get_history(&hex::encode(script_hash)).compat().await);
                 match history.first() {
                     Some(item) => {
@@ -1751,9 +1737,6 @@ where
                     (item.tx_hash, height)
                 })
                 .collect()
-        },
-        UtxoRpcClientEnum::Zlite(client) => {
-            unimplemented!()
         },
     };
     RequestTxHistoryResult::Ok(tx_ids)

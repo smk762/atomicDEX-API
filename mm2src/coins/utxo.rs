@@ -71,7 +71,7 @@ pub use chain::Transaction as UtxoTx;
 
 #[cfg(not(target_arch = "wasm32"))]
 use self::rpc_clients::{ConcurrentRequestMap, NativeClient, NativeClientImpl};
-use self::rpc_clients::{ZliteClient, ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
+use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
                         UnspentInfo, UtxoRpcClientEnum, UtxoRpcError, UtxoRpcResult};
 use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, CoinsContext, FeeApproxStage,
             FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult,
@@ -1116,7 +1116,6 @@ pub trait UtxoCoinBuilder {
             Some(0) => {
                 let fee_method = match &rpc_client {
                     UtxoRpcClientEnum::Electrum(_) => EstimateFeeMethod::Standard,
-                    UtxoRpcClientEnum::Zlite(_) => EstimateFeeMethod::Standard,
                     UtxoRpcClientEnum::Native(client) => try_s!(client.detect_fee_method().compat().await),
                 };
                 TxFee::Dynamic(fee_method)
@@ -1151,18 +1150,8 @@ pub trait UtxoCoinBuilder {
                 let electrum = try_s!(self.electrum_client().await);
                 Ok(UtxoRpcClientEnum::Electrum(electrum))
             },
-            Some("zlite_enable") => {
-                let zlite = try_s!(self.zlite_client().await);
-                Ok(UtxoRpcClientEnum::Zlite(zlite))
-            },
-            _ => ERR!("Expected enable, zlite_enable or electrum request"),
+            _ => ERR!("Expected enable or electrum request"),
         }
-    }
-
-    async fn zlite_client(&self) -> Result<ZliteClient, String> {
-        unimplemented!();
-
-        //Ok(ZliteClient(client))
     }
 
     async fn electrum_client(&self) -> Result<ElectrumClient, String> {
