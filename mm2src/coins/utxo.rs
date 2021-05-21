@@ -71,7 +71,7 @@ pub use chain::Transaction as UtxoTx;
 
 #[cfg(not(target_arch = "wasm32"))]
 use self::rpc_clients::{ConcurrentRequestMap, NativeClient, NativeClientImpl};
-use self::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
+use self::rpc_clients::{ZliteClient, ZliteClientImpl, ElectrumClient, ElectrumClientImpl, ElectrumRpcRequest, EstimateFeeMethod, EstimateFeeMode,
                         UnspentInfo, UtxoRpcClientEnum, UtxoRpcError, UtxoRpcResult};
 use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, CoinsContext, FeeApproxStage,
             FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin, NumConversError, NumConversResult,
@@ -1151,8 +1151,20 @@ pub trait UtxoCoinBuilder {
                 let electrum = try_s!(self.electrum_client().await);
                 Ok(UtxoRpcClientEnum::Electrum(electrum))
             },
-            _ => ERR!("Expected enable or electrum request"),
+            Some("zlite_enable") => {
+                let zlite = try_s!(self.zlite_client().await);
+                Ok(UtxoRpcClientEnum::Zlite(zlite))
+            },
+            _ => ERR!("Expected enable, zlite_enable or electrum request"),
         }
+    }
+
+    async fn zlite_client(&self) -> Result<ZliteClient, String> {
+        let ticker = self.ticker().to_owned();
+        let server :String = try_s!(json::from_value(self.req()["server"].clone()));
+        let client = Arc::new(ZliteClientImpl::new(ticker, server));
+
+        Ok(ZliteClient(client))
     }
 
     async fn electrum_client(&self) -> Result<ElectrumClient, String> {

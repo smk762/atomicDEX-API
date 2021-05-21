@@ -62,6 +62,8 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 #[cfg(not(target_arch = "wasm32"))]
 use webpki_roots::TLS_SERVER_ROOTS;
 
+use zecwalletlitelib::lightclient::{LightClient, LightClientConfig};
+
 pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
 
 #[derive(Debug, Deserialize)]
@@ -450,30 +452,8 @@ pub struct ListUnspentArgs {
 
 #[derive(Debug)]
 pub struct ZliteClientImpl {
-    /// Name of coin the rpc client is intended to work with
-    pub coin_ticker: String,
-    /// The uri to send requests to
-    pub uri: String,
-    /// Value of Authorization header, e.g. "Basic base64(user:password)"
-    pub auth: String,
-    /// Transport event handlers
-    pub event_handlers: Vec<RpcTransportEventHandlerShared>,
-    pub request_id: AtomicU64,
-    pub list_unspent_concurrent_map: ConcurrentRequestMap<ListUnspentArgs, Vec<NativeUnspent>>,
-}
-
-#[cfg(test)]
-impl Default for ZliteClientImpl {
-    fn default() -> Self {
-        ZliteClientImpl {
-            coin_ticker: "TEST".to_string(),
-            uri: "".to_string(),
-            auth: "".to_string(),
-            event_handlers: vec![],
-            request_id: Default::default(),
-            list_unspent_concurrent_map: ConcurrentRequestMap::new(),
-        }
-    }
+    coin_ticker: String,
+    client: Arc<LightClient>
 }
 
 #[derive(Clone, Debug)]
@@ -481,6 +461,29 @@ pub struct ZliteClient(pub Arc<ZliteClientImpl>);
 impl Deref for ZliteClient {
     type Target = ZliteClientImpl;
     fn deref(&self) -> &ZliteClientImpl { &*self.0 }
+}
+
+#[cfg_attr(test, mockable)]
+impl ZliteClientImpl {
+    pub fn new(coin_ticker: String, server: String) -> ZliteClientImpl {
+
+        // FIXME the lite lib needs modification to allow initilaizing a wallet without a bip39 seed
+        let dummy_seed = "pudding lock slam choose answer medal tank museum ride stadium collect strong occur capital tennis error jungle circle wheel learn cabin dog dirt age".to_string();
+        let birthday :u64 = 1254007;
+        let first_sync = true;
+        let print_updates = true;
+
+        let server = LightClientConfig::get_server_or_default(Some(server));
+        let (config, latest_block_height) = LightClientConfig::create(server.clone()).unwrap();
+        let lightclient = Arc::new(LightClient::new_from_phrase(dummy_seed, &config, birthday, false).unwrap());
+
+        // FIXME need to add the mm2 seed's z address to the lite client "wallet" at this point
+
+        ZliteClientImpl {
+            coin_ticker,
+            client: lightclient
+        }
+    }
 }
 
 /// RPC client for UTXO based coins
