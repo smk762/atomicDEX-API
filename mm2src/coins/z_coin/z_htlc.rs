@@ -1,15 +1,24 @@
+// historical milestone, first performed RICK/ZOMBIE swap
+// dex fee - https://zombie.explorer.lordofthechains.com/tx/40bec29f268c349722a3228743e5c5b461cf16d124cddcfd2fc624fe895a0bdd
+// maker payment - https://rick.explorer.dexstats.info/tx/9d36e95e5147450399895f0f248ac2e2de13382401c2986e134cc3d62bda738e
+// taker payment - https://zombie.explorer.lordofthechains.com/tx/b248992e064fab579774c0479b04043091cf62f3975cb1664ea7d4f857ebe6f8
+// taker payment spend - https://zombie.explorer.lordofthechains.com/tx/af6bb0f99f9a5a070a0c1f53d69e4189b0e9b68f9d66e69f201a6b6d9f93897e
+// maker payment spend - https://rick.explorer.dexstats.info/tx/6a2dcc866ad75cebecb780a02320073a88bcf5e57ddccbe2657494e7747d591e
+
 use super::z_rpc::{ZOperationStatus, ZOperationTxid, ZSendManyItem};
 use super::ZCoin;
-use crate::utxo::rpc_clients::UtxoRpcError;
-use crate::utxo::utxo_common::{dex_fee_script, payment_script};
+use crate::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcError};
+use crate::utxo::sat_from_big_decimal;
+use crate::utxo::utxo_common::{big_decimal_from_sat_unsigned, dex_fee_script, payment_script};
 use bigdecimal::BigDecimal;
 use bitcrypto::dhash160;
 use chain::Transaction as UtxoTx;
 use common::executor::Timer;
 use common::mm_error::prelude::*;
+use common::now_ms;
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
-use keys::{Address, Error as KeysError, Public};
+use keys::{Address, Public};
 use script::Script;
 use secp256k1_bindings::SecretKey;
 use serialization::deserialize;
@@ -21,15 +30,10 @@ use zcash_primitives::transaction::components::{Amount, OutPoint as ZCashOutpoin
 #[derive(Debug, Display)]
 #[allow(clippy::large_enum_variant)]
 pub enum ZSendHtlcError {
-    ParseOtherPubFailed(KeysError),
     #[display(fmt = "z operation failed with statuses {:?}", _0)]
     ZOperationFailed(Vec<ZOperationStatus<ZOperationTxid>>),
     ZOperationStatusesEmpty,
     RpcError(UtxoRpcError),
-}
-
-impl From<KeysError> for ZSendHtlcError {
-    fn from(keys: KeysError) -> ZSendHtlcError { ZSendHtlcError::ParseOtherPubFailed(keys) }
 }
 
 impl From<UtxoRpcError> for ZSendHtlcError {
@@ -40,13 +44,12 @@ impl From<UtxoRpcError> for ZSendHtlcError {
 pub async fn z_send_htlc(
     coin: &ZCoin,
     time_lock: u32,
-    other_pub: &[u8],
+    other_pub: &Public,
     secret_hash: &[u8],
     amount: BigDecimal,
 ) -> Result<UtxoTx, MmError<ZSendHtlcError>> {
     let _lock = coin.z_fields.z_tx_mutex.lock().await;
-    let taker_pub = Public::from_slice(other_pub).map_to_mm(ZSendHtlcError::from)?;
-    let payment_script = payment_script(time_lock, secret_hash, coin.utxo_arc.key_pair.public(), &taker_pub);
+    let payment_script = payment_script(time_lock, secret_hash, coin.utxo_arc.key_pair.public(), &other_pub);
     let hash = dhash160(&payment_script);
     let htlc_address = Address {
         prefix: coin.utxo_arc.conf.p2sh_addr_prefix,
@@ -54,6 +57,13 @@ pub async fn z_send_htlc(
         hash,
         checksum_type: coin.utxo_arc.conf.checksum_type,
     };
+
+    let amount_sat = sat_from_big_decimal(&amount, coin.utxo_arc.decimals).expect("temporary code");
+    let amount = big_decimal_from_sat_unsigned(amount_sat, coin.utxo_arc.decimals);
+    let address = htlc_address.to_string();
+    if let UtxoRpcClientEnum::Native(native) = coin.rpc_client() {
+        native.import_address(&address, &address, false).compat().await.unwrap();
+    }
 
     let send_item = ZSendManyItem {
         amount,
@@ -96,12 +106,11 @@ pub async fn z_send_htlc(
 pub async fn z_send_dex_fee(
     coin: &ZCoin,
     time_lock: u32,
-    watcher_pub: &[u8],
+    watcher_pub: &Public,
     amount: BigDecimal,
 ) -> Result<(UtxoTx, Script), MmError<ZSendHtlcError>> {
     let _lock = coin.z_fields.z_tx_mutex.lock().await;
-    let watcher_pub = Public::from_slice(watcher_pub).map_to_mm(ZSendHtlcError::from)?;
-    let payment_script = dex_fee_script([0; 16], time_lock, &watcher_pub, coin.utxo_arc.key_pair.public());
+    let payment_script = dex_fee_script([0; 16], time_lock, watcher_pub, coin.utxo_arc.key_pair.public());
     let hash = dhash160(&payment_script);
     let htlc_address = Address {
         prefix: coin.utxo_arc.conf.p2sh_addr_prefix,
@@ -110,10 +119,18 @@ pub async fn z_send_dex_fee(
         checksum_type: coin.utxo_arc.conf.checksum_type,
     };
 
+    let amount_sat = sat_from_big_decimal(&amount, coin.utxo_arc.decimals).expect("temporary code");
+    let amount = big_decimal_from_sat_unsigned(amount_sat, coin.utxo_arc.decimals);
+
+    let address = htlc_address.to_string();
+    if let UtxoRpcClientEnum::Native(native) = coin.rpc_client() {
+        native.import_address(&address, &address, false).compat().await.unwrap();
+    }
+
     let send_item = ZSendManyItem {
         amount,
         op_return: Some(payment_script.to_vec().into()),
-        address: htlc_address.to_string(),
+        address,
     };
 
     let op_id = coin
@@ -140,6 +157,12 @@ pub async fn z_send_dex_fee(
                     .compat()
                     .await?;
                 let tx: UtxoTx = deserialize(tx_bytes.0.as_slice()).expect("rpc returns valid tx bytes");
+
+                coin.rpc_client()
+                    .wait_for_confirmations(&tx, 1, false, now_ms() / 1000 + 120, 1)
+                    .compat()
+                    .await
+                    .unwrap();
                 break Ok((tx, payment_script));
             },
             None => break Err(MmError::new(ZSendHtlcError::ZOperationStatusesEmpty)),
