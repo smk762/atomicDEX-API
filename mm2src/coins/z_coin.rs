@@ -375,22 +375,3 @@ impl SwapOps for ZCoin {
 
     fn extract_secret(&self, _secret_hash: &[u8], _spend_tx: &[u8]) -> Result<Vec<u8>, String> { todo!() }
 }
-
-#[test]
-fn derive_z_key_from_mm_seed() {
-    use common::privkey::key_pair_from_seed;
-    use zcash_client_backend::encoding::encode_extended_spending_key;
-
-    let seed = "spice describe gravity federal blast come thank unfair canal monkey style afraid";
-    let secp_keypair = key_pair_from_seed(seed).unwrap();
-    let z_spending_key = ExtendedSpendingKey::master(&*secp_keypair.private().secret);
-    let encoded = encode_extended_spending_key(z_mainnet_constants::HRP_SAPLING_EXTENDED_SPENDING_KEY, &z_spending_key);
-    assert_eq!(encoded, "secret-extended-key-main1qqqqqqqqqqqqqqytwz2zjt587n63kyz6jawmflttqu5rxavvqx3lzfs0tdr0w7g5tgntxzf5erd3jtvva5s52qx0ms598r89vrmv30r69zehxy2r3vesghtqd6dfwdtnauzuj8u8eeqfx7qpglzu6z54uzque6nzzgnejkgq569ax4lmk0v95rfhxzxlq3zrrj2z2kqylx2jp8g68lqu6alczdxd59lzp4hlfuj3jp54fp06xsaaay0uyass992g507tdd7psua5w6q76dyq3");
-
-    let (_, address) = z_spending_key.default_address().unwrap();
-    let encoded_addr = encode_payment_address(z_mainnet_constants::HRP_SAPLING_PAYMENT_ADDRESS, &address);
-    assert_eq!(
-        encoded_addr,
-        "zs182ht30wnnnr8jjhj2j9v5dkx3qsknnr5r00jfwk2nczdtqy7w0v836kyy840kv2r8xle5gcl549"
-    );
-}

@@ -62,6 +62,8 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 #[cfg(not(target_arch = "wasm32"))]
 use webpki_roots::TLS_SERVER_ROOTS;
 
+use zecwalletlitelib::lightclient::LightClient;
+
 pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
 
 #[derive(Debug, Deserialize)]
@@ -450,30 +452,8 @@ pub struct ListUnspentArgs {
 
 #[derive(Debug)]
 pub struct ZliteClientImpl {
-    /// Name of coin the rpc client is intended to work with
-    pub coin_ticker: String,
-    /// The uri to send requests to
-    pub uri: String,
-    /// Value of Authorization header, e.g. "Basic base64(user:password)"
-    pub auth: String,
-    /// Transport event handlers
-    pub event_handlers: Vec<RpcTransportEventHandlerShared>,
-    pub request_id: AtomicU64,
-    pub list_unspent_concurrent_map: ConcurrentRequestMap<ListUnspentArgs, Vec<NativeUnspent>>,
-}
-
-#[cfg(test)]
-impl Default for ZliteClientImpl {
-    fn default() -> Self {
-        ZliteClientImpl {
-            coin_ticker: "TEST".to_string(),
-            uri: "".to_string(),
-            auth: "".to_string(),
-            event_handlers: vec![],
-            request_id: Default::default(),
-            list_unspent_concurrent_map: ConcurrentRequestMap::new(),
-        }
-    }
+    coin_ticker: String,
+    clients: AsyncMutex<Vec<LightClient>>,
 }
 
 #[derive(Clone, Debug)]
