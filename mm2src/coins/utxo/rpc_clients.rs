@@ -62,6 +62,8 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 #[cfg(not(target_arch = "wasm32"))]
 use webpki_roots::TLS_SERVER_ROOTS;
 
+use zecwalletlitelib::lightclient::LightClient;
+
 pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +91,7 @@ impl rustls::ServerCertVerifier for NoCertificateVerification {
 pub enum UtxoRpcClientEnum {
     Native(NativeClient),
     Electrum(ElectrumClient),
+    Zlite(ZliteClient)
 }
 
 impl From<ElectrumClient> for UtxoRpcClientEnum {
@@ -99,12 +102,17 @@ impl From<NativeClient> for UtxoRpcClientEnum {
     fn from(client: NativeClient) -> UtxoRpcClientEnum { UtxoRpcClientEnum::Native(client) }
 }
 
+impl From<ZliteClient> for UtxoRpcClientEnum {
+    fn from(client: ZliteClient) -> UtxoRpcClientEnum { UtxoRpcClientEnum::Zlite(client) }
+}
+
 impl Deref for UtxoRpcClientEnum {
     type Target = dyn UtxoRpcClientOps;
     fn deref(&self) -> &dyn UtxoRpcClientOps {
         match self {
             UtxoRpcClientEnum::Native(ref c) => c,
             UtxoRpcClientEnum::Electrum(ref c) => c,
+            UtxoRpcClientEnum::Zlite(ref c) => c,
         }
     }
 }
@@ -114,6 +122,7 @@ impl Clone for UtxoRpcClientEnum {
         match self {
             UtxoRpcClientEnum::Native(c) => UtxoRpcClientEnum::Native(c.clone()),
             UtxoRpcClientEnum::Electrum(c) => UtxoRpcClientEnum::Electrum(c.clone()),
+            UtxoRpcClientEnum::Zlite(c) => UtxoRpcClientEnum::Zlite(c.clone()),
         }
     }
 }
@@ -438,6 +447,20 @@ pub struct ListUnspentArgs {
     min_conf: i32,
     max_conf: i32,
     addresses: Vec<String>,
+}
+
+
+#[derive(Debug)]
+pub struct ZliteClientImpl {
+    coin_ticker: String,
+    clients: AsyncMutex<Vec<LightClient>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ZliteClient(pub Arc<ZliteClientImpl>);
+impl Deref for ZliteClient {
+    type Target = ZliteClientImpl;
+    fn deref(&self) -> &ZliteClientImpl { &*self.0 }
 }
 
 /// RPC client for UTXO based coins
@@ -2062,4 +2085,102 @@ fn electrum_request(
         .timeout(Duration::from_secs(timeout));
 
     Box::new(send_fut.map_err(|e| ERRL!("{}", e.0)))
+}
+
+
+#[cfg_attr(test, mockable)]
+impl UtxoRpcClientOps for ZliteClient {
+    fn list_unspent(&self, address: &Address, _decimals: u8) -> UtxoRpcFut<Vec<UnspentInfo>> {
+        unimplemented!()
+    }
+
+    fn send_transaction(&self, tx: &UtxoTx) -> Box<dyn Future<Item = H256Json, Error = String> + Send + 'static> {
+        unimplemented!()
+    }
+
+    fn send_raw_transaction(&self, tx: BytesJson) -> UtxoRpcFut<H256Json> {
+        unimplemented!()
+    }
+
+    fn get_transaction_bytes(&self, txid: H256Json) -> UtxoRpcFut<BytesJson> {
+        unimplemented!()
+    }
+
+    fn get_verbose_transaction(&self, txid: H256Json) -> RpcRes<RpcTransaction> {
+        unimplemented!()
+    }
+
+    fn get_block_count(&self) -> UtxoRpcFut<u64> {
+        unimplemented!()
+    }
+
+    fn display_balance(&self, address: Address, decimals: u8) -> RpcRes<BigDecimal> {
+        unimplemented!()
+    }
+
+    fn estimate_fee_sat(
+        &self,
+        decimals: u8,
+        _fee_method: &EstimateFeeMethod,
+        mode: &Option<EstimateFeeMode>,
+        n_blocks: u32,
+    ) -> RpcRes<u64> {
+        unimplemented!()
+    }
+
+    fn get_relay_fee(&self) -> RpcRes<BigDecimal> { unimplemented!() }
+
+    fn find_output_spend(
+        &self,
+        tx: &UtxoTx,
+        vout: usize,
+        _from_block: u64,
+    ) -> Box<dyn Future<Item = Option<UtxoTx>, Error = String> + Send> {
+        unimplemented!()
+    }
+
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> UtxoRpcFut<u32> {
+        unimplemented!()
+    }
+}
+
+impl ZliteClient {
+    pub fn server_ping(&self) -> RpcRes<()> { unimplemented!() }
+
+    pub fn server_version(
+        &self,
+        server_address: &str,
+        client_name: &str,
+        version: &OrdRange<f32>,
+    ) -> RpcRes<ElectrumProtocolVersion> {
+        unimplemented!()
+    }
+
+    fn scripthash_list_unspent(&self, hash: &str) -> RpcRes<Vec<ElectrumUnspent>> {
+        unimplemented!()
+    }
+
+    pub fn scripthash_get_history(&self, hash: &str) -> RpcRes<Vec<ElectrumTxHistoryItem>> {
+        unimplemented!()
+    }
+
+    fn scripthash_get_balance(&self, hash: &str) -> RpcRes<ElectrumBalance> {
+        unimplemented!()
+    }
+
+    pub fn blockchain_headers_subscribe(&self) -> RpcRes<ElectrumBlockHeader> {
+        unimplemented!()
+    }
+
+    fn blockchain_transaction_broadcast(&self, tx: BytesJson) -> RpcRes<H256Json> {
+        unimplemented!()
+    }
+
+    fn estimate_fee(&self, mode: &Option<EstimateFeeMode>, n_blocks: u32) -> RpcRes<f64> {
+        unimplemented!()
+    }
+
+    pub fn blockchain_block_headers(&self, start_height: u64, count: NonZeroU64) -> RpcRes<ElectrumBlockHeadersRes> {
+        unimplemented!()
+    }
 }

@@ -71,6 +71,7 @@ pub fn dispatcher(req: Json, ctx: MmArc) -> DispatcherRes {
         "disable_coin" => hyres(disable_coin(ctx, req)),
         "electrum" => hyres(electrum(ctx, req)),
         "enable" => hyres(enable(ctx, req)),
+        "zlite_enable" => hyres(zlite_enable(ctx, req)),
         "get_enabled_coins" => hyres(get_enabled_coins(ctx)),
         "get_gossip_mesh" => hyres(get_gossip_mesh(ctx)),
         "get_gossip_peer_topics" => hyres(get_gossip_peer_topics(ctx)),
