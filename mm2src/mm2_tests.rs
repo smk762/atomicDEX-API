@@ -1170,12 +1170,12 @@ async fn trade_base_rel_electrum(pairs: Vec<(&'static str, &'static str)>) {
 
     for uuid in uuids.iter() {
         mm_bob
-            .wait_for_log(600., |log| log.contains(&format!("[swap uuid={}] Finished", uuid)))
+            .wait_for_log(300., |log| log.contains(&format!("[swap uuid={}] Finished", uuid)))
             .await
             .unwrap();
 
         mm_alice
-            .wait_for_log(600., |log| log.contains(&format!("[swap uuid={}] Finished", uuid)))
+            .wait_for_log(300., |log| log.contains(&format!("[swap uuid={}] Finished", uuid)))
             .await
             .unwrap();
 

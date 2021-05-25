@@ -14,6 +14,7 @@ use common::jsonrpc_client::JsonRpcError;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::{BigDecimal, MmNumber};
+use common::now_ms;
 use derive_more::Display;
 use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use futures::{FutureExt, TryFutureExt};
@@ -30,7 +31,7 @@ use zcash_primitives::{constants::mainnet as z_mainnet_constants, sapling::Payme
 use zcash_proofs::prover::LocalTxProver;
 
 mod z_htlc;
-use z_htlc::{z_p2sh_spend, z_send_htlc};
+use z_htlc::{z_p2sh_spend, z_send_dex_fee, z_send_htlc};
 
 mod z_rpc;
 use z_rpc::ZRpcOps;
@@ -193,7 +194,23 @@ impl MarketCoinOps for ZCoin {
 }
 
 impl SwapOps for ZCoin {
-    fn send_taker_fee(&self, _fee_addr: &[u8], _amount: BigDecimal) -> TransactionFut { todo!() }
+    fn send_taker_fee(&self, _fee_addr: &[u8], amount: BigDecimal) -> TransactionFut {
+        // TODO replace dummy locktime and watcher pub
+        let selfi = self.clone();
+        let fut = async move {
+            let (tx, _) = try_s!(
+                z_send_dex_fee(
+                    &selfi,
+                    (now_ms() / 1000) as u32,
+                    selfi.utxo_arc.key_pair.public(),
+                    amount
+                )
+                .await
+            );
+            Ok(tx.into())
+        };
+        Box::new(fut.boxed().compat())
+    }
 
     fn send_maker_payment(
         &self,
@@ -204,7 +221,7 @@ impl SwapOps for ZCoin {
         _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let selfi = self.clone();
-        let taker_pub = taker_pub.to_vec();
+        let taker_pub = try_fus!(Public::from_slice(taker_pub));
         let secret_hash = secret_hash.to_vec();
         let fut = async move {
             let utxo_tx = try_s!(z_send_htlc(&selfi, time_lock, &taker_pub, &secret_hash, amount).await);
@@ -222,7 +239,7 @@ impl SwapOps for ZCoin {
         _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let selfi = self.clone();
-        let maker_pub = maker_pub.to_vec();
+        let maker_pub = try_fus!(Public::from_slice(maker_pub));
         let secret_hash = secret_hash.to_vec();
         let fut = async move {
             let utxo_tx = try_s!(z_send_htlc(&selfi, time_lock, &maker_pub, &secret_hash, amount).await);
@@ -345,69 +362,86 @@ impl SwapOps for ZCoin {
         _amount: &BigDecimal,
         _min_block_number: u64,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        todo!()
+        // TODO avoid dummy implementation
+        Box::new(futures01::future::ok(()))
     }
 
     fn validate_maker_payment(
         &self,
-        _payment_tx: &[u8],
-        _time_lock: u32,
-        _maker_pub: &[u8],
-        _priv_bn_hash: &[u8],
-        _amount: BigDecimal,
+        payment_tx: &[u8],
+        time_lock: u32,
+        maker_pub: &[u8],
+        priv_bn_hash: &[u8],
+        amount: BigDecimal,
         _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        todo!()
+        utxo_common::validate_maker_payment(self, payment_tx, time_lock, maker_pub, priv_bn_hash, amount)
     }
 
     fn validate_taker_payment(
         &self,
-        _payment_tx: &[u8],
-        _time_lock: u32,
-        _taker_pub: &[u8],
-        _priv_bn_hash: &[u8],
-        _amount: BigDecimal,
+        payment_tx: &[u8],
+        time_lock: u32,
+        taker_pub: &[u8],
+        priv_bn_hash: &[u8],
+        amount: BigDecimal,
         _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        todo!()
+        utxo_common::validate_taker_payment(self, payment_tx, time_lock, taker_pub, priv_bn_hash, amount)
     }
 
     fn check_if_my_payment_sent(
         &self,
-        _time_lock: u32,
-        _other_pub: &[u8],
-        _secret_hash: &[u8],
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
         _search_from_block: u64,
         _swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send> {
-        todo!()
+        utxo_common::check_if_my_payment_sent(self.clone(), time_lock, other_pub, secret_hash)
     }
 
     fn search_for_swap_tx_spend_my(
         &self,
-        _time_lock: u32,
-        _other_pub: &[u8],
-        _secret_hash: &[u8],
-        _tx: &[u8],
-        _search_from_block: u64,
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
+        tx: &[u8],
+        search_from_block: u64,
         _swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
-        todo!()
+        utxo_common::search_for_swap_tx_spend_my(
+            self.as_ref(),
+            time_lock,
+            other_pub,
+            secret_hash,
+            tx,
+            search_from_block,
+        )
     }
 
     fn search_for_swap_tx_spend_other(
         &self,
-        _time_lock: u32,
-        _other_pub: &[u8],
-        _secret_hash: &[u8],
-        _tx: &[u8],
-        _search_from_block: u64,
+        time_lock: u32,
+        other_pub: &[u8],
+        secret_hash: &[u8],
+        tx: &[u8],
+        search_from_block: u64,
         _swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String> {
-        todo!()
+        utxo_common::search_for_swap_tx_spend_other(
+            self.as_ref(),
+            time_lock,
+            other_pub,
+            secret_hash,
+            tx,
+            search_from_block,
+        )
     }
 
-    fn extract_secret(&self, _secret_hash: &[u8], _spend_tx: &[u8]) -> Result<Vec<u8>, String> { todo!() }
+    fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
+        utxo_common::extract_secret(secret_hash, spend_tx)
+    }
 }
 
 impl MmCoin for ZCoin {
@@ -592,5 +626,18 @@ fn derive_z_key_from_mm_seed() {
     assert_eq!(
         encoded_addr,
         "zs182ht30wnnnr8jjhj2j9v5dkx3qsknnr5r00jfwk2nczdtqy7w0v836kyy840kv2r8xle5gcl549"
+    );
+
+    let seed = "also shoot benefit prefer juice shell elder veteran woman mimic image kidney";
+    let secp_keypair = key_pair_from_seed(seed).unwrap();
+    let z_spending_key = ExtendedSpendingKey::master(&*secp_keypair.private().secret);
+    let encoded = encode_extended_spending_key(z_mainnet_constants::HRP_SAPLING_EXTENDED_SPENDING_KEY, &z_spending_key);
+    assert_eq!(encoded, "secret-extended-key-main1qqqqqqqqqqqqqq8jnhc9stsqwts6pu5ayzgy4szplvy03u227e50n3u8e6dwn5l0q5s3s8xfc03r5wmyh5s5dq536ufwn2k89ngdhnxy64sd989elwas6kr7ygztsdkw6k6xqyvhtu6e0dhm4mav8rus0fy8g0hgy9vt97cfjmus0m2m87p4qz5a00um7gwjwk494gul0uvt3gqyjujcclsqry72z57kr265jsajactgfn9m3vclqvx8fsdnwp4jwj57ffw560vvwks9g9hpu");
+
+    let (_, address) = z_spending_key.default_address().unwrap();
+    let encoded_addr = encode_payment_address(z_mainnet_constants::HRP_SAPLING_PAYMENT_ADDRESS, &address);
+    assert_eq!(
+        encoded_addr,
+        "zs1funuwrjr2stlr6fnhkdh7fyz3p7n0p8rxase9jnezdhc286v5mhs6q3myw0phzvad5mvqgfxpam"
     );
 }
