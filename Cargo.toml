@@ -156,6 +156,6 @@ backtrace-sys = { git = "https://github.com/artemii235/backtrace-rs.git" }
 num-rational = { git = "https://github.com/artemii235/num-rational.git" }
 secp256k1 = { git = "https://github.com/artemii235/rust-secp256k1.git", features = ["endomorphism", "rand"] }
 
-[patch."https://github.com/adityapk00/zecwallet-light-cli"]
-zecwalletlitelib = { path = "zecwallet-light-cli/lib" }
+#[patch."https://github.com/adityapk00/zecwallet-light-cli"]
+#zecwalletlitelib = { path = "zecwallet-light-cli/lib" }
 
