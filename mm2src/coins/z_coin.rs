@@ -198,15 +198,8 @@ impl SwapOps for ZCoin {
         // TODO replace dummy locktime and watcher pub
         let selfi = self.clone();
         let fut = async move {
-            let (tx, _) = try_s!(
-                z_send_dex_fee(
-                    &selfi,
-                    now_ms() / 1000,
-                    selfi.utxo_arc.key_pair.public(),
-                    amount
-                )
-                .await
-            );
+            let (tx, _) =
+                try_s!(z_send_dex_fee(&selfi, now_ms() / 1000, selfi.utxo_arc.key_pair.public(), amount).await);
             Ok(tx.into())
         };
         Box::new(fut.boxed().compat())
