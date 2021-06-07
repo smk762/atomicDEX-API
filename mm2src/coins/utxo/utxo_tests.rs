@@ -1507,10 +1507,10 @@ fn test_qtum_my_balance() {
 fn test_ordered_mature_unspents_from_cache_impl(
     unspent_height: Option<u64>,
     cached_height: Option<u64>,
-    cached_confs: u32,
+    cached_confs: u64,
     block_count: u64,
     expected_height: Option<u64>,
-    expected_confs: u32,
+    expected_confs: u64,
 ) {
     const TX_HASH: &str = "0a0fda88364b960000f445351fe7678317a1e0c80584de0413377ede00ba696f";
     let tx_hash: H256Json = hex::decode(TX_HASH).unwrap().as_slice().into();

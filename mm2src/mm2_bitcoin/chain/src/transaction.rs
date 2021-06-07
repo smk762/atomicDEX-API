@@ -170,13 +170,13 @@ where
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct Transaction {
     pub version: i32,
-    pub n_time: Option<u32>,
+    pub n_time: Option<u64>,
     pub overwintered: bool,
     pub version_group_id: u32,
     pub inputs: Vec<TransactionInput>,
     pub outputs: Vec<TransactionOutput>,
-    pub lock_time: u32,
-    pub expiry_height: u32,
+    pub lock_time: u64,
+    pub expiry_height: u64,
     pub shielded_spends: Vec<ShieldedSpend>,
     pub shielded_outputs: Vec<ShieldedOutput>,
     pub join_splits: Vec<JoinSplit>,
@@ -235,7 +235,7 @@ impl Transaction {
         self.inputs.iter().all(TransactionInput::is_final)
     }
 
-    pub fn is_final_in_block(&self, block_height: u32, block_time: u32) -> bool {
+    pub fn is_final_in_block(&self, block_height: u64, block_time: u64) -> bool {
         if self.lock_time == 0 {
             return true;
         }

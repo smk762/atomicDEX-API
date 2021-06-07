@@ -386,10 +386,10 @@ mod docker_tests {
 
     #[test]
     fn test_search_for_swap_tx_spend_native_was_refunded_taker() {
-        let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
+        let timeout = now_ms() / 1000 + 120; // timeout if test takes more than 120 seconds to run
         let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
 
-        let time_lock = (now_ms() / 1000) as u32 - 3600;
+        let time_lock = now_ms() / 1000 - 3600;
         let tx = coin
             .send_taker_payment(time_lock, &*coin.my_public_key(), &[0; 20], 1.into(), &None)
             .wait()
@@ -420,7 +420,7 @@ mod docker_tests {
         let timeout = (now_ms() / 1000) + 120; // timeout if test takes more than 120 seconds to run
         let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
 
-        let time_lock = (now_ms() / 1000) as u32 - 3600;
+        let time_lock = now_ms() / 1000 - 3600;
         let tx = coin
             .send_maker_payment(time_lock, &*coin.my_public_key(), &[0; 20], 1.into(), &None)
             .wait()
@@ -452,7 +452,7 @@ mod docker_tests {
         let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         let secret = [0; 32];
 
-        let time_lock = (now_ms() / 1000) as u32 - 3600;
+        let time_lock = now_ms() / 1000 - 3600;
         let tx = coin
             .send_taker_payment(time_lock, &*coin.my_public_key(), &*dhash160(&secret), 1.into(), &None)
             .wait()
@@ -491,7 +491,7 @@ mod docker_tests {
         let (_ctx, coin, _) = generate_coin_with_random_privkey("MYCOIN", 1000.into());
         let secret = [0; 32];
 
-        let time_lock = (now_ms() / 1000) as u32 - 3600;
+        let time_lock = now_ms() / 1000 - 3600;
         let tx = coin
             .send_maker_payment(time_lock, &*coin.my_public_key(), &*dhash160(&secret), 1.into(), &None)
             .wait()
@@ -531,7 +531,7 @@ mod docker_tests {
         fill_address(&coin, &coin.my_address().unwrap(), 2.into(), timeout);
         let secret = [0; 32];
 
-        let time_lock = (now_ms() / 1000) as u32 - 3600;
+        let time_lock = now_ms() / 1000 - 3600;
         let mut unspents = vec![];
         let mut sent_tx = vec![];
         for i in 0..100 {

@@ -139,15 +139,15 @@ impl Into<TxHashAlgo> for SignerHashAlgo {
 #[derive(Clone, Debug)]
 pub struct TransactionInputSigner {
     pub version: i32,
-    pub n_time: Option<u32>,
+    pub n_time: Option<u64>,
     pub overwintered: bool,
     pub version_group_id: u32,
     pub consensus_branch_id: u32,
-    pub expiry_height: u32,
+    pub expiry_height: u64,
     pub value_balance: i64,
     pub inputs: Vec<UnsignedTransactionInput>,
     pub outputs: Vec<TransactionOutput>,
-    pub lock_time: u32,
+    pub lock_time: u64,
     pub join_splits: Vec<JoinSplit>,
     pub shielded_spends: Vec<ShieldedSpend>,
     pub shielded_outputs: Vec<ShieldedOutput>,

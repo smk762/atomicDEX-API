@@ -33,7 +33,7 @@ impl Qrc20Coin {
         &self,
         id: Vec<u8>,
         value: U256,
-        time_lock: u32,
+        time_lock: u64,
         secret_hash: Vec<u8>,
         receiver_addr: H160,
         swap_contract_address: H160,
@@ -107,7 +107,7 @@ impl Qrc20Coin {
     pub async fn validate_payment(
         &self,
         payment_tx: UtxoTx,
-        time_lock: u32,
+        time_lock: u64,
         sender: H160,
         secret_hash: Vec<u8>,
         amount: BigDecimal,
@@ -212,7 +212,7 @@ impl Qrc20Coin {
 
     pub async fn search_for_swap_tx_spend(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         secret_hash: Vec<u8>,
         tx: UtxoTx,
         search_from_block: u64,
@@ -344,7 +344,7 @@ impl Qrc20Coin {
         try_s!(
             self.utxo
                 .rpc_client
-                .wait_for_confirmations(&qtum_tx, confirmations as u32, requires_nota, wait_until, check_every)
+                .wait_for_confirmations(&qtum_tx, confirmations, requires_nota, wait_until, check_every)
                 .compat()
                 .await
         );
@@ -385,7 +385,7 @@ impl Qrc20Coin {
         my_balance: U256,
         id: Vec<u8>,
         value: U256,
-        time_lock: u32,
+        time_lock: u64,
         secret_hash: Vec<u8>,
         receiver_addr: H160,
         swap_contract_address: H160,
@@ -487,7 +487,7 @@ impl Qrc20Coin {
         &self,
         id: Vec<u8>,
         value: U256,
-        time_lock: u32,
+        time_lock: u64,
         secret_hash: &[u8],
         receiver_addr: H160,
         swap_contract_address: &H160,
@@ -516,7 +516,7 @@ impl Qrc20Coin {
         &self,
         id: Vec<u8>,
         value: U256,
-        time_lock: u32,
+        time_lock: u64,
         secret_hash: &[u8],
         receiver_addr: H160,
     ) -> Qrc20ABIResult<Vec<u8>> {

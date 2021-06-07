@@ -88,7 +88,7 @@ const KILO_BYTE: u64 = 1000;
 const MAX_DER_SIGNATURE_LEN: usize = 72;
 const COMPRESSED_PUBKEY_LEN: usize = 33;
 const P2PKH_OUTPUT_LEN: u64 = 34;
-const MATURE_CONFIRMATIONS_DEFAULT: u32 = 100;
+const MATURE_CONFIRMATIONS_DEFAULT: u64 = 100;
 const UTXO_DUST_AMOUNT: u64 = 1000;
 /// Block count for KMD median time past calculation
 ///
@@ -429,7 +429,7 @@ pub struct UtxoCoinConf {
     pub mtp_block_count: NonZeroU64,
     pub estimate_fee_mode: Option<EstimateFeeMode>,
     /// The minimum number of confirmations at which a transaction is considered mature
-    pub mature_confirmations: u32,
+    pub mature_confirmations: u64,
     /// The number of blocks used for estimate_fee/estimate_smart_fee RPC calls
     pub estimate_fee_blocks: u32,
 }
@@ -482,7 +482,7 @@ pub trait UtxoCommonOps {
     /// and if it failed inform user that he used a wrong format.
     fn address_from_str(&self, address: &str) -> Result<Address, String>;
 
-    async fn get_current_mtp(&self) -> UtxoRpcResult<u32>;
+    async fn get_current_mtp(&self) -> UtxoRpcResult<u64>;
 
     /// Check if the output is spendable (is not coinbase or it has enough confirmations).
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool;
@@ -518,7 +518,7 @@ pub trait UtxoCommonOps {
         outputs: Vec<TransactionOutput>,
         script_data: Script,
         sequence: u32,
-        lock_time: u32,
+        lock_time: u64,
     ) -> Result<UtxoTx, String>;
 
     /// Get transaction outputs available to spend.
@@ -555,7 +555,7 @@ pub trait UtxoCommonOps {
     /// The method is used to predict a possible increase in dynamic fee.
     fn increase_dynamic_fee_by_stage(&self, dynamic_fee: u64, stage: &FeeApproxStage) -> u64;
 
-    async fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> Result<u32, MmError<UtxoRpcError>>;
+    async fn p2sh_tx_locktime(&self, htlc_locktime: u64) -> Result<u64, MmError<UtxoRpcError>>;
 }
 
 #[async_trait]
@@ -1031,10 +1031,9 @@ impl<'a> UtxoConfBuilder<'a> {
             .into()
     }
 
-    fn mature_confirmations(&self) -> u32 {
+    fn mature_confirmations(&self) -> u64 {
         self.conf["mature_confirmations"]
             .as_u64()
-            .map(|x| x as u32)
             .unwrap_or(MATURE_CONFIRMATIONS_DEFAULT)
     }
 

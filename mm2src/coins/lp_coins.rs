@@ -169,7 +169,7 @@ pub trait SwapOps {
 
     fn send_maker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -178,7 +178,7 @@ pub trait SwapOps {
 
     fn send_taker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -188,7 +188,7 @@ pub trait SwapOps {
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -197,7 +197,7 @@ pub trait SwapOps {
     fn send_taker_spends_maker_payment(
         &self,
         maker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -206,7 +206,7 @@ pub trait SwapOps {
     fn send_taker_refunds_payment(
         &self,
         taker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -215,7 +215,7 @@ pub trait SwapOps {
     fn send_maker_refunds_payment(
         &self,
         maker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -233,7 +233,7 @@ pub trait SwapOps {
     fn validate_maker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
@@ -243,7 +243,7 @@ pub trait SwapOps {
     fn validate_taker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
@@ -252,7 +252,7 @@ pub trait SwapOps {
 
     fn check_if_my_payment_sent(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         search_from_block: u64,
@@ -261,7 +261,7 @@ pub trait SwapOps {
 
     fn search_for_swap_tx_spend_my(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         tx: &[u8],
@@ -271,7 +271,7 @@ pub trait SwapOps {
 
     fn search_for_swap_tx_spend_other(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         tx: &[u8],
@@ -835,7 +835,7 @@ pub trait MmCoin: SwapOps + MarketCoinOps + fmt::Debug + Send + Sync + 'static {
     fn swap_contract_address(&self) -> Option<BytesJson>;
 
     /// The minimum number of confirmations at which a transaction is considered mature.
-    fn mature_confirmations(&self) -> Option<u32>;
+    fn mature_confirmations(&self) -> Option<u64>;
 }
 
 #[derive(Clone, Debug)]

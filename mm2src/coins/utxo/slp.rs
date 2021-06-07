@@ -226,7 +226,7 @@ impl SwapOps for SlpToken {
 
     fn send_maker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -237,7 +237,7 @@ impl SwapOps for SlpToken {
 
     fn send_taker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -249,7 +249,7 @@ impl SwapOps for SlpToken {
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -260,7 +260,7 @@ impl SwapOps for SlpToken {
     fn send_taker_spends_maker_payment(
         &self,
         maker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -271,7 +271,7 @@ impl SwapOps for SlpToken {
     fn send_taker_refunds_payment(
         &self,
         taker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -282,7 +282,7 @@ impl SwapOps for SlpToken {
     fn send_maker_refunds_payment(
         &self,
         maker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -304,7 +304,7 @@ impl SwapOps for SlpToken {
     fn validate_maker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
@@ -316,7 +316,7 @@ impl SwapOps for SlpToken {
     fn validate_taker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
@@ -327,7 +327,7 @@ impl SwapOps for SlpToken {
 
     fn check_if_my_payment_sent(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         search_from_block: u64,
@@ -338,7 +338,7 @@ impl SwapOps for SlpToken {
 
     fn search_for_swap_tx_spend_my(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         tx: &[u8],
@@ -350,7 +350,7 @@ impl SwapOps for SlpToken {
 
     fn search_for_swap_tx_spend_other(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         tx: &[u8],
@@ -412,7 +412,7 @@ impl MmCoin for SlpToken {
 
     fn swap_contract_address(&self) -> Option<BytesJson> { unimplemented!() }
 
-    fn mature_confirmations(&self) -> Option<u32> { unimplemented!() }
+    fn mature_confirmations(&self) -> Option<u64> { unimplemented!() }
 }
 
 #[test]

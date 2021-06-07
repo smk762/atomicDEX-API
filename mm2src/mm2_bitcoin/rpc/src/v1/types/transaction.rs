@@ -167,7 +167,7 @@ pub struct Transaction {
     /// The version
     pub version: i32,
     /// The lock time
-    pub locktime: i32,
+    pub locktime: i64,
     /// Transaction inputs
     pub vin: Vec<TransactionInputEnum>,
     /// Transaction outputs
@@ -177,16 +177,16 @@ pub struct Transaction {
     pub blockhash: H256,
     /// Number of confirmations of this transaction
     #[serde(default)]
-    pub confirmations: u32,
+    pub confirmations: u64,
     /// Number of rawconfirmations of this transaction, KMD specific
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub rawconfirmations: Option<u32>,
+    pub rawconfirmations: Option<u64>,
     /// The transaction time in seconds since epoch (Jan 1 1970 GMT)
     #[serde(default)]
-    pub time: u32,
+    pub time: u64,
     /// The block time in seconds since epoch (Jan 1 1970 GMT)
     #[serde(default)]
-    pub blocktime: u32,
+    pub blocktime: u64,
     /// The block height transaction mined in
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]

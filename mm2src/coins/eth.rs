@@ -407,7 +407,7 @@ impl EthCoinImpl {
     }
 
     /// The id used to differentiate payments on Etomic swap smart contract
-    fn etomic_swap_id(&self, time_lock: u32, secret_hash: &[u8]) -> Vec<u8> {
+    fn etomic_swap_id(&self, time_lock: u64, secret_hash: &[u8]) -> Vec<u8> {
         let mut input = vec![];
         input.extend_from_slice(&time_lock.to_le_bytes());
         input.extend_from_slice(secret_hash);
@@ -622,7 +622,7 @@ impl SwapOps for EthCoin {
 
     fn send_maker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -646,7 +646,7 @@ impl SwapOps for EthCoin {
 
     fn send_taker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -671,7 +671,7 @@ impl SwapOps for EthCoin {
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
-        _time_lock: u32,
+        _time_lock: u64,
         _taker_pub: &[u8],
         secret: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -689,7 +689,7 @@ impl SwapOps for EthCoin {
     fn send_taker_spends_maker_payment(
         &self,
         maker_payment_tx: &[u8],
-        _time_lock: u32,
+        _time_lock: u64,
         _maker_pub: &[u8],
         secret: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -706,7 +706,7 @@ impl SwapOps for EthCoin {
     fn send_taker_refunds_payment(
         &self,
         taker_payment_tx: &[u8],
-        _time_lock: u32,
+        _time_lock: u64,
         _maker_pub: &[u8],
         _secret_hash: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -724,7 +724,7 @@ impl SwapOps for EthCoin {
     fn send_maker_refunds_payment(
         &self,
         maker_payment_tx: &[u8],
-        _time_lock: u32,
+        _time_lock: u64,
         _taker_pub: &[u8],
         _secret_hash: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -848,7 +848,7 @@ impl SwapOps for EthCoin {
     fn validate_maker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -868,7 +868,7 @@ impl SwapOps for EthCoin {
     fn validate_taker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -887,7 +887,7 @@ impl SwapOps for EthCoin {
 
     fn check_if_my_payment_sent(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         _other_pub: &[u8],
         secret_hash: &[u8],
         from_block: u64,
@@ -938,7 +938,7 @@ impl SwapOps for EthCoin {
 
     fn search_for_swap_tx_spend_my(
         &self,
-        _time_lock: u32,
+        _time_lock: u64,
         _other_pub: &[u8],
         _secret_hash: &[u8],
         tx: &[u8],
@@ -951,7 +951,7 @@ impl SwapOps for EthCoin {
 
     fn search_for_swap_tx_spend_other(
         &self,
-        _time_lock: u32,
+        _time_lock: u64,
         _other_pub: &[u8],
         _secret_hash: &[u8],
         tx: &[u8],
@@ -1356,7 +1356,7 @@ impl EthCoin {
         &self,
         id: Vec<u8>,
         value: U256,
-        time_lock: u32,
+        time_lock: u64,
         secret_hash: &[u8],
         receiver_addr: Address,
         swap_contract_address: Address,
@@ -1681,7 +1681,7 @@ impl EthCoin {
     fn validate_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         sender_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -2913,7 +2913,7 @@ impl MmCoin for EthCoin {
         Some(BytesJson::from(self.swap_contract_address.0.as_ref()))
     }
 
-    fn mature_confirmations(&self) -> Option<u32> { None }
+    fn mature_confirmations(&self) -> Option<u64> { None }
 }
 
 pub trait TryToAddress {

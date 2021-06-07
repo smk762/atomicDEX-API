@@ -166,7 +166,7 @@ impl UtxoCommonOps for QtumCoin {
         utxo_common::address_from_str(&self.utxo_arc.conf, address)
     }
 
-    async fn get_current_mtp(&self) -> UtxoRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo_arc).await }
+    async fn get_current_mtp(&self) -> UtxoRpcResult<u64> { utxo_common::get_current_mtp(&self.utxo_arc).await }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool { self.is_qtum_unspent_mature(output) }
 
@@ -197,7 +197,7 @@ impl UtxoCommonOps for QtumCoin {
         outputs: Vec<TransactionOutput>,
         script_data: Script,
         sequence: u32,
-        lock_time: u32,
+        lock_time: u64,
     ) -> Result<UtxoTx, String> {
         utxo_common::p2sh_spending_tx(
             self,
@@ -252,7 +252,7 @@ impl UtxoCommonOps for QtumCoin {
         utxo_common::increase_dynamic_fee_by_stage(self, dynamic_fee, stage)
     }
 
-    async fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> Result<u32, MmError<UtxoRpcError>> {
+    async fn p2sh_tx_locktime(&self, htlc_locktime: u64) -> Result<u64, MmError<UtxoRpcError>> {
         utxo_common::p2sh_tx_locktime(self, &self.utxo_arc.conf.ticker, htlc_locktime).await
     }
 }
@@ -275,7 +275,7 @@ impl SwapOps for QtumCoin {
 
     fn send_maker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -286,7 +286,7 @@ impl SwapOps for QtumCoin {
 
     fn send_taker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -298,7 +298,7 @@ impl SwapOps for QtumCoin {
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret: &[u8],
         _swap_contract_address: &Option<BytesJson>,
@@ -309,7 +309,7 @@ impl SwapOps for QtumCoin {
     fn send_taker_spends_maker_payment(
         &self,
         maker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret: &[u8],
         _swap_contract_address: &Option<BytesJson>,
@@ -320,7 +320,7 @@ impl SwapOps for QtumCoin {
     fn send_taker_refunds_payment(
         &self,
         taker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         _swap_contract_address: &Option<BytesJson>,
@@ -331,7 +331,7 @@ impl SwapOps for QtumCoin {
     fn send_maker_refunds_payment(
         &self,
         maker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         _swap_contract_address: &Option<BytesJson>,
@@ -360,7 +360,7 @@ impl SwapOps for QtumCoin {
     fn validate_maker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
@@ -372,7 +372,7 @@ impl SwapOps for QtumCoin {
     fn validate_taker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
@@ -383,7 +383,7 @@ impl SwapOps for QtumCoin {
 
     fn check_if_my_payment_sent(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         _search_from_block: u64,
@@ -394,7 +394,7 @@ impl SwapOps for QtumCoin {
 
     fn search_for_swap_tx_spend_my(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         tx: &[u8],
@@ -413,7 +413,7 @@ impl SwapOps for QtumCoin {
 
     fn search_for_swap_tx_spend_other(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         tx: &[u8],
@@ -576,7 +576,7 @@ impl MmCoin for QtumCoin {
 
     fn swap_contract_address(&self) -> Option<BytesJson> { utxo_common::swap_contract_address() }
 
-    fn mature_confirmations(&self) -> Option<u32> { Some(self.utxo_arc.conf.mature_confirmations) }
+    fn mature_confirmations(&self) -> Option<u64> { Some(self.utxo_arc.conf.mature_confirmations) }
 }
 
 /// Parse contract address (H160) from string.

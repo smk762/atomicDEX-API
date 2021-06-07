@@ -80,7 +80,7 @@ pub struct BlockHeader {
     pub previous_header_hash: H256,
     pub merkle_root_hash: H256,
     pub hash_final_sapling_root: Option<H256>,
-    pub time: u32,
+    pub time: u64,
     pub bits: BlockHeaderBits,
     pub nonce: BlockHeaderNonce,
     pub solution_size: Option<CompactInteger>,

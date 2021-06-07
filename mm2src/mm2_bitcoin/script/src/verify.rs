@@ -60,9 +60,10 @@ impl SignatureChecker for TransactionSignatureChecker {
         // We want to compare apples to apples, so fail the script
         // unless the type of nLockTime being tested is the same as
         // the nLockTime in the transaction.
-        let lock_time_u32: u32 = lock_time.into();
-        if self.signer.lock_time >= LOCKTIME_THRESHOLD && lock_time_u32 < LOCKTIME_THRESHOLD
-            || self.signer.lock_time < LOCKTIME_THRESHOLD && lock_time_u32 >= LOCKTIME_THRESHOLD
+        let lock_time_i64: i64 = lock_time.into();
+        let lock_time_u64 = lock_time_i64 as u64;
+        if self.signer.lock_time >= LOCKTIME_THRESHOLD && lock_time_u64 < LOCKTIME_THRESHOLD
+            || self.signer.lock_time < LOCKTIME_THRESHOLD && lock_time_u64 >= LOCKTIME_THRESHOLD
         {
             return false;
         }

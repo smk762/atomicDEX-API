@@ -548,7 +548,7 @@ fn test_taker_spends_maker_payment() {
     assert_eq!(maker_old_balance, BigDecimal::from(10));
     assert_eq!(taker_old_balance, BigDecimal::from(1));
 
-    let timelock = (now_ms() / 1000) as u32 - 200;
+    let timelock = now_ms() / 1000 - 200;
     let maker_pub = &*maker_coin.my_public_key();
     let taker_pub = &*taker_coin.my_public_key();
     let secret = &[1; 32];
@@ -637,7 +637,7 @@ fn test_maker_spends_taker_payment() {
     assert_eq!(maker_old_balance, BigDecimal::from(10));
     assert_eq!(taker_old_balance, BigDecimal::from(10));
 
-    let timelock = (now_ms() / 1000) as u32 - 200;
+    let timelock = now_ms() / 1000 - 200;
     let maker_pub = &*maker_coin.my_public_key();
     let taker_pub = &*taker_coin.my_public_key();
     let secret = &[1; 32];
@@ -717,7 +717,7 @@ fn test_maker_refunds_payment() {
     let expected_balance = coin.my_spendable_balance().wait().unwrap();
     assert_eq!(expected_balance, BigDecimal::from(10));
 
-    let timelock = (now_ms() / 1000) as u32 - 200;
+    let timelock = now_ms() / 1000 - 200;
     let taker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
     let secret_hash = &[1; 20];
     let amount = BigDecimal::from_str("0.2").unwrap();
@@ -776,7 +776,7 @@ fn test_taker_refunds_payment() {
     let expected_balance = coin.my_spendable_balance().wait().unwrap();
     assert_eq!(expected_balance, BigDecimal::from(10));
 
-    let timelock = (now_ms() / 1000) as u32 - 200;
+    let timelock = now_ms() / 1000 - 200;
     let maker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
     let secret_hash = &[1; 20];
     let amount = BigDecimal::from_str("0.2").unwrap();
@@ -832,7 +832,7 @@ fn test_taker_refunds_payment() {
 #[test]
 fn test_check_if_my_payment_sent() {
     let (_ctx, coin, _priv_key) = generate_qrc20_coin_with_random_privkey("QICK", 20.into(), 10.into());
-    let timelock = (now_ms() / 1000) as u32 - 200;
+    let timelock = now_ms() / 1000 - 200;
     let taker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
     let secret_hash = &[1; 20];
     let amount = BigDecimal::from_str("0.2").unwrap();
@@ -879,7 +879,7 @@ fn test_search_for_swap_tx_spend_taker_spent() {
     let (_ctx, taker_coin, _priv_key) = generate_qrc20_coin_with_random_privkey("QICK", 20.into(), 1.into());
     let search_from_block = maker_coin.current_block().wait().expect("!current_block");
 
-    let timelock = (now_ms() / 1000) as u32 - 200;
+    let timelock = now_ms() / 1000 - 200;
     let maker_pub = &*maker_coin.my_public_key();
     let taker_pub = &*taker_coin.my_public_key();
     let secret = &[1; 32];
@@ -946,7 +946,7 @@ fn test_search_for_swap_tx_spend_maker_refunded() {
     let (_ctx, maker_coin, _priv_key) = generate_qrc20_coin_with_random_privkey("QICK", 20.into(), 10.into());
     let search_from_block = maker_coin.current_block().wait().expect("!current_block");
 
-    let timelock = (now_ms() / 1000) as u32 - 200;
+    let timelock = now_ms() / 1000 - 200;
     let taker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
     let secret = &[1; 32];
     let secret_hash = &*dhash160(secret);
@@ -1012,7 +1012,7 @@ fn test_search_for_swap_tx_spend_not_spent() {
     let (_ctx, maker_coin, _priv_key) = generate_qrc20_coin_with_random_privkey("QICK", 20.into(), 10.into());
     let search_from_block = maker_coin.current_block().wait().expect("!current_block");
 
-    let timelock = (now_ms() / 1000) as u32 - 200;
+    let timelock = now_ms() / 1000 - 200;
     let taker_pub = hex::decode("022b00078841f37b5d30a6a1defb82b3af4d4e2d24dd4204d41f0c9ce1e875de1a").unwrap();
     let secret = &[1; 32];
     let secret_hash = &*dhash160(secret);
@@ -1059,7 +1059,7 @@ fn test_wait_for_tx_spend() {
     let (_ctx, taker_coin, _priv_key) = generate_qrc20_coin_with_random_privkey("QICK", 20.into(), 1.into());
     let from_block = maker_coin.current_block().wait().expect("!current_block");
 
-    let timelock = (now_ms() / 1000) as u32 - 200;
+    let timelock = now_ms() / 1000 - 200;
     let maker_pub = &*maker_coin.my_public_key();
     let taker_pub = &*taker_coin.my_public_key();
     let secret = &[1; 32];
@@ -1367,7 +1367,7 @@ fn test_get_max_taker_vol_and_trade_with_dynamic_trade_fee(coin: QtumCoin, priv_
 
     block_on(mm.stop()).unwrap();
 
-    let timelock = (now_ms() / 1000) as u32 - 200;
+    let timelock = now_ms() / 1000 - 200;
     let secret_hash = &[0; 20];
 
     let dex_fee_amount = dex_fee_amount("QTUM", "MYCOIN", &expected_max_taker_vol, &qtum_dex_fee_threshold);

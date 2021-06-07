@@ -201,7 +201,7 @@ impl SwapOps for ZCoin {
             let (tx, _) = try_s!(
                 z_send_dex_fee(
                     &selfi,
-                    (now_ms() / 1000) as u32,
+                    now_ms() / 1000,
                     selfi.utxo_arc.key_pair.public(),
                     amount
                 )
@@ -214,7 +214,7 @@ impl SwapOps for ZCoin {
 
     fn send_maker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -232,7 +232,7 @@ impl SwapOps for ZCoin {
 
     fn send_taker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -251,7 +251,7 @@ impl SwapOps for ZCoin {
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret: &[u8],
         _swap_contract_address: &Option<BytesJson>,
@@ -279,7 +279,7 @@ impl SwapOps for ZCoin {
     fn send_taker_spends_maker_payment(
         &self,
         maker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret: &[u8],
         _swap_contract_address: &Option<BytesJson>,
@@ -307,7 +307,7 @@ impl SwapOps for ZCoin {
     fn send_taker_refunds_payment(
         &self,
         taker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         _swap_contract_address: &Option<BytesJson>,
@@ -332,7 +332,7 @@ impl SwapOps for ZCoin {
     fn send_maker_refunds_payment(
         &self,
         maker_payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         _swap_contract_address: &Option<BytesJson>,
@@ -369,7 +369,7 @@ impl SwapOps for ZCoin {
     fn validate_maker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
@@ -381,7 +381,7 @@ impl SwapOps for ZCoin {
     fn validate_taker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         priv_bn_hash: &[u8],
         amount: BigDecimal,
@@ -392,7 +392,7 @@ impl SwapOps for ZCoin {
 
     fn check_if_my_payment_sent(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         _search_from_block: u64,
@@ -403,7 +403,7 @@ impl SwapOps for ZCoin {
 
     fn search_for_swap_tx_spend_my(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         tx: &[u8],
@@ -422,7 +422,7 @@ impl SwapOps for ZCoin {
 
     fn search_for_swap_tx_spend_other(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         other_pub: &[u8],
         secret_hash: &[u8],
         tx: &[u8],
@@ -500,7 +500,7 @@ impl MmCoin for ZCoin {
 
     fn swap_contract_address(&self) -> Option<BytesJson> { utxo_common::swap_contract_address() }
 
-    fn mature_confirmations(&self) -> Option<u32> { Some(self.utxo_arc.conf.mature_confirmations) }
+    fn mature_confirmations(&self) -> Option<u64> { Some(self.utxo_arc.conf.mature_confirmations) }
 }
 
 #[async_trait]
@@ -525,7 +525,7 @@ impl UtxoCommonOps for ZCoin {
         utxo_common::address_from_str(&self.utxo_arc.conf, address)
     }
 
-    async fn get_current_mtp(&self) -> UtxoRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo_arc).await }
+    async fn get_current_mtp(&self) -> UtxoRpcResult<u64> { utxo_common::get_current_mtp(&self.utxo_arc).await }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool {
         utxo_common::is_unspent_mature(self.utxo_arc.conf.mature_confirmations, output)
@@ -558,7 +558,7 @@ impl UtxoCommonOps for ZCoin {
         outputs: Vec<TransactionOutput>,
         script_data: Script,
         sequence: u32,
-        lock_time: u32,
+        lock_time: u64,
     ) -> Result<UtxoTx, String> {
         utxo_common::p2sh_spending_tx(
             self,
@@ -612,7 +612,7 @@ impl UtxoCommonOps for ZCoin {
         utxo_common::increase_dynamic_fee_by_stage(self, dynamic_fee, stage)
     }
 
-    fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> u32 {
+    fn p2sh_tx_locktime(&self, htlc_locktime: u64) -> u64 {
         utxo_common::p2sh_tx_locktime(&self.utxo_arc.conf.ticker, htlc_locktime)
     }
 }

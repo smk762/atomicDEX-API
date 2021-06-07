@@ -253,7 +253,7 @@ pub fn address_from_str(conf: &UtxoCoinConf, address: &str) -> Result<Address, S
     }
 }
 
-pub async fn get_current_mtp(coin: &UtxoCoinFields) -> UtxoRpcResult<u32> {
+pub async fn get_current_mtp(coin: &UtxoCoinFields) -> UtxoRpcResult<u64> {
     let current_block = coin.rpc_client.get_block_count().compat().await?;
     coin.rpc_client
         .get_median_time_past(current_block, coin.conf.mtp_block_count)
@@ -290,7 +290,7 @@ where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     let dust: u64 = coin.as_ref().dust_amount;
-    let lock_time = (now_ms() / 1000) as u32;
+    let lock_time = now_ms() / 1000;
     let change_script_pubkey = Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes();
     let coin_tx_fee = match fee {
         Some(f) => f,
@@ -335,7 +335,7 @@ where
         lock_time,
         version: coin.as_ref().conf.tx_version,
         n_time: if coin.as_ref().conf.is_pos {
-            Some((now_ms() / 1000) as u32)
+            Some(now_ms() / 1000)
         } else {
             None
         },
@@ -534,7 +534,7 @@ where
         };
     } else {
         // if interest is zero attempt to set the lowest possible lock_time to claim it later
-        unsigned.lock_time = (now_ms() / 1000) as u32 - 3600 + 777 * 2;
+        unsigned.lock_time = now_ms() / 1000 - 3600 + 777 * 2;
     }
     Ok((unsigned, data))
 }
@@ -546,14 +546,14 @@ pub async fn p2sh_spending_tx<T>(
     outputs: Vec<TransactionOutput>,
     script_data: Script,
     sequence: u32,
-    lock_time: u32,
+    lock_time: u64,
 ) -> Result<UtxoTx, String>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
     let lock_time = try_s!(coin.p2sh_tx_locktime(lock_time).await);
     let n_time = if coin.as_ref().conf.is_pos {
-        Some((now_ms() / 1000) as u32)
+        Some(now_ms() / 1000)
     } else {
         None
     };
@@ -639,7 +639,7 @@ where
 
 pub fn send_maker_payment<T>(
     coin: T,
-    time_lock: u32,
+    time_lock: u64,
     taker_pub: &[u8],
     secret_hash: &[u8],
     amount: BigDecimal,
@@ -674,7 +674,7 @@ where
 
 pub fn send_taker_payment<T>(
     coin: T,
-    time_lock: u32,
+    time_lock: u64,
     maker_pub: &[u8],
     secret_hash: &[u8],
     amount: BigDecimal,
@@ -710,7 +710,7 @@ where
 pub fn send_maker_spends_taker_payment<T>(
     coin: T,
     taker_payment_tx: &[u8],
-    time_lock: u32,
+    time_lock: u64,
     taker_pub: &[u8],
     secret: &[u8],
 ) -> TransactionFut
@@ -756,7 +756,7 @@ where
 pub fn send_taker_spends_maker_payment<T>(
     coin: T,
     maker_payment_tx: &[u8],
-    time_lock: u32,
+    time_lock: u64,
     maker_pub: &[u8],
     secret: &[u8],
 ) -> TransactionFut
@@ -802,7 +802,7 @@ where
 pub fn send_taker_refunds_payment<T>(
     coin: T,
     taker_payment_tx: &[u8],
-    time_lock: u32,
+    time_lock: u64,
     maker_pub: &[u8],
     secret_hash: &[u8],
 ) -> TransactionFut
@@ -845,7 +845,7 @@ where
 pub fn send_maker_refunds_payment<T>(
     coin: T,
     maker_payment_tx: &[u8],
-    time_lock: u32,
+    time_lock: u64,
     taker_pub: &[u8],
     secret_hash: &[u8],
 ) -> TransactionFut
@@ -1029,7 +1029,7 @@ where
 pub fn validate_maker_payment<T>(
     coin: &T,
     payment_tx: &[u8],
-    time_lock: u32,
+    time_lock: u64,
     maker_pub: &[u8],
     priv_bn_hash: &[u8],
     amount: BigDecimal,
@@ -1052,7 +1052,7 @@ where
 pub fn validate_taker_payment<T>(
     coin: &T,
     payment_tx: &[u8],
-    time_lock: u32,
+    time_lock: u64,
     taker_pub: &[u8],
     priv_bn_hash: &[u8],
     amount: BigDecimal,
@@ -1074,7 +1074,7 @@ where
 
 pub fn check_if_my_payment_sent<T>(
     coin: T,
-    time_lock: u32,
+    time_lock: u64,
     other_pub: &[u8],
     secret_hash: &[u8],
 ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send>
@@ -1134,7 +1134,7 @@ where
 
 pub fn search_for_swap_tx_spend_my(
     coin: &UtxoCoinFields,
-    time_lock: u32,
+    time_lock: u64,
     other_pub: &[u8],
     secret_hash: &[u8],
     tx: &[u8],
@@ -1153,7 +1153,7 @@ pub fn search_for_swap_tx_spend_my(
 
 pub fn search_for_swap_tx_spend_other(
     coin: &UtxoCoinFields,
-    time_lock: u32,
+    time_lock: u64,
     other_pub: &[u8],
     secret_hash: &[u8],
     tx: &[u8],
@@ -1252,7 +1252,7 @@ pub fn wait_for_confirmations(
     let mut tx: UtxoTx = try_fus!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.tx_hash_algo;
     coin.rpc_client
-        .wait_for_confirmations(&tx, confirmations as u32, requires_nota, wait_until, check_every)
+        .wait_for_confirmations(&tx, confirmations, requires_nota, wait_until, check_every)
 }
 
 pub fn wait_for_tx_spend(coin: &UtxoCoinFields, tx_bytes: &[u8], wait_until: u64, from_block: u64) -> TransactionFut {
@@ -1876,7 +1876,7 @@ where
         block_height: verbose_tx.height.unwrap_or(0),
         coin: coin.as_ref().conf.ticker.clone(),
         internal_id: tx.hash().reversed().to_vec().into(),
-        timestamp: verbose_tx.time.into(),
+        timestamp: verbose_tx.time,
     })
 }
 
@@ -2004,7 +2004,7 @@ where
         };
 
         // pass the dummy params
-        let time_lock = (now_ms() / 1000) as u32;
+        let time_lock = now_ms() / 1000;
         let other_pub = &[0; 33]; // H264 is 33 bytes
         let secret_hash = &[0; 20]; // H160 is 20 bytes
 
@@ -2098,7 +2098,7 @@ pub async fn ordered_mature_unspents<'a, T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    fn calc_actual_cached_tx_confirmations(tx: &RpcTransaction, block_count: u64) -> UtxoRpcResult<u32> {
+    fn calc_actual_cached_tx_confirmations(tx: &RpcTransaction, block_count: u64) -> UtxoRpcResult<u64> {
         let tx_height = tx.height.or_mm_err(|| {
             UtxoRpcError::Internal(format!(r#"Warning, height of cached "{:?}" tx is unknown"#, tx.txid))
         })?;
@@ -2119,7 +2119,7 @@ where
         }
 
         let confirmations = block_count - tx_height + 1;
-        Ok(confirmations as u32)
+        Ok(confirmations)
     }
 
     let (unspents, recently_spent) = list_unspent_ordered(coin, address).await?;
@@ -2172,7 +2172,7 @@ where
     Ok((result, recently_spent))
 }
 
-pub fn is_unspent_mature(mature_confirmations: u32, output: &RpcTransaction) -> bool {
+pub fn is_unspent_mature(mature_confirmations: u64, output: &RpcTransaction) -> bool {
     // don't skip outputs with confirmations == 0, because we can spend them
     !output.is_coinbase() || output.confirmations >= mature_confirmations
 }
@@ -2319,7 +2319,7 @@ fn address_from_any_format(conf: &UtxoCoinConf, from: &str) -> Result<Address, S
 fn validate_payment<T>(
     coin: T,
     payment_tx: &[u8],
-    time_lock: u32,
+    time_lock: u64,
     first_pub0: &Public,
     second_pub0: &Public,
     priv_bn_hash: &[u8],
@@ -2391,7 +2391,7 @@ where
 
 async fn search_for_swap_tx_spend(
     coin: &UtxoCoinFields,
-    time_lock: u32,
+    time_lock: u64,
     first_pub: &Public,
     second_pub: &Public,
     secret_hash: &[u8],
@@ -2448,7 +2448,7 @@ struct SwapPaymentOutputsResult {
 
 fn generate_swap_payment_outputs<T>(
     coin: T,
-    time_lock: u32,
+    time_lock: u64,
     other_pub: &[u8],
     secret_hash: &[u8],
     amount: BigDecimal,
@@ -2499,7 +2499,7 @@ where
     Ok(result)
 }
 
-pub fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {
+pub fn payment_script(time_lock: u64, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {
     let builder = Builder::default();
     builder
         .push_opcode(Opcode::OP_IF)
@@ -2521,7 +2521,7 @@ pub fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1:
         .into_script()
 }
 
-pub fn dex_fee_script(uuid: [u8; 16], time_lock: u32, watcher_pub: &Public, sender_pub: &Public) -> Script {
+pub fn dex_fee_script(uuid: [u8; 16], time_lock: u64, watcher_pub: &Public, sender_pub: &Public) -> Script {
     let builder = Builder::default();
     builder
         .push_bytes(&uuid)
@@ -2692,7 +2692,7 @@ where
     }
 
     let mtp = coin.get_current_mtp().await?;
-    let locktime = coin.p2sh_tx_locktime(locktime as u32).await?;
+    let locktime = coin.p2sh_tx_locktime(locktime).await?;
 
     if locktime < mtp {
         Ok(CanRefundHtlc::CanRefundNow)
@@ -2702,12 +2702,12 @@ where
     }
 }
 
-pub async fn p2sh_tx_locktime<T>(coin: &T, ticker: &str, htlc_locktime: u32) -> Result<u32, MmError<UtxoRpcError>>
+pub async fn p2sh_tx_locktime<T>(coin: &T, ticker: &str, htlc_locktime: u64) -> Result<u64, MmError<UtxoRpcError>>
 where
     T: UtxoCommonOps,
 {
     let lock_time = if ticker == "KMD" {
-        (now_ms() / 1000) as u32 - 3600 + 2 * 777
+        now_ms() / 1000 - 3600 + 2 * 777
     } else {
         coin.get_current_mtp().await? - 1
     };

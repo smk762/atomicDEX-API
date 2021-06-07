@@ -480,7 +480,7 @@ impl UtxoCommonOps for Qrc20Coin {
         utxo_common::address_from_str(&self.utxo.conf, address)
     }
 
-    async fn get_current_mtp(&self) -> UtxoRpcResult<u32> { utxo_common::get_current_mtp(&self.utxo).await }
+    async fn get_current_mtp(&self) -> UtxoRpcResult<u64> { utxo_common::get_current_mtp(&self.utxo).await }
 
     fn is_unspent_mature(&self, output: &RpcTransaction) -> bool { self.is_qtum_unspent_mature(output) }
 
@@ -512,7 +512,7 @@ impl UtxoCommonOps for Qrc20Coin {
         outputs: Vec<TransactionOutput>,
         script_data: Script,
         sequence: u32,
-        lock_time: u32,
+        lock_time: u64,
     ) -> Result<UtxoTx, String> {
         utxo_common::p2sh_spending_tx(
             self,
@@ -567,7 +567,7 @@ impl UtxoCommonOps for Qrc20Coin {
         utxo_common::increase_dynamic_fee_by_stage(self, dynamic_fee, stage)
     }
 
-    async fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> Result<u32, MmError<UtxoRpcError>> {
+    async fn p2sh_tx_locktime(&self, htlc_locktime: u64) -> Result<u64, MmError<UtxoRpcError>> {
         utxo_common::p2sh_tx_locktime(self, &self.utxo.conf.ticker, htlc_locktime).await
     }
 }
@@ -588,7 +588,7 @@ impl SwapOps for Qrc20Coin {
 
     fn send_maker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -611,7 +611,7 @@ impl SwapOps for Qrc20Coin {
 
     fn send_taker_payment(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -635,7 +635,7 @@ impl SwapOps for Qrc20Coin {
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
-        _time_lock: u32,
+        _time_lock: u64,
         _taker_pub: &[u8],
         secret: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -656,7 +656,7 @@ impl SwapOps for Qrc20Coin {
     fn send_taker_spends_maker_payment(
         &self,
         maker_payment_tx: &[u8],
-        _time_lock: u32,
+        _time_lock: u64,
         _maker_pub: &[u8],
         secret: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -677,7 +677,7 @@ impl SwapOps for Qrc20Coin {
     fn send_taker_refunds_payment(
         &self,
         taker_payment_tx: &[u8],
-        _time_lock: u32,
+        _time_lock: u64,
         _maker_pub: &[u8],
         _secret_hash: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -697,7 +697,7 @@ impl SwapOps for Qrc20Coin {
     fn send_maker_refunds_payment(
         &self,
         maker_payment_tx: &[u8],
-        _time_lock: u32,
+        _time_lock: u64,
         _taker_pub: &[u8],
         _secret_hash: &[u8],
         swap_contract_address: &Option<BytesJson>,
@@ -745,7 +745,7 @@ impl SwapOps for Qrc20Coin {
     fn validate_maker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         maker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -775,7 +775,7 @@ impl SwapOps for Qrc20Coin {
     fn validate_taker_payment(
         &self,
         payment_tx: &[u8],
-        time_lock: u32,
+        time_lock: u64,
         taker_pub: &[u8],
         secret_hash: &[u8],
         amount: BigDecimal,
@@ -804,7 +804,7 @@ impl SwapOps for Qrc20Coin {
 
     fn check_if_my_payment_sent(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         _other_pub: &[u8],
         secret_hash: &[u8],
         search_from_block: u64,
@@ -824,7 +824,7 @@ impl SwapOps for Qrc20Coin {
 
     fn search_for_swap_tx_spend_my(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         _other_pub: &[u8],
         secret_hash: &[u8],
         tx: &[u8],
@@ -840,7 +840,7 @@ impl SwapOps for Qrc20Coin {
 
     fn search_for_swap_tx_spend_other(
         &self,
-        time_lock: u32,
+        time_lock: u64,
         _other_pub: &[u8],
         secret_hash: &[u8],
         tx: &[u8],
@@ -1029,7 +1029,7 @@ impl MmCoin for Qrc20Coin {
         let decimals = self.utxo.decimals;
         let fut = async move {
             // pass the dummy params
-            let timelock = (now_ms() / 1000) as u32;
+            let timelock = now_ms() / 1000;
             let secret_hash = vec![0; 20];
             let swap_id = qrc20_swap_id(timelock, &secret_hash);
             let receiver_addr = H160::default();
@@ -1085,7 +1085,7 @@ impl MmCoin for Qrc20Coin {
         let selfi = self.clone();
         let fut = async move {
             // pass the dummy params
-            let timelock = (now_ms() / 1000) as u32;
+            let timelock = now_ms() / 1000;
             let secret = vec![0; 32];
             let swap_id = qrc20_swap_id(timelock, &secret[0..20]);
             let sender_addr = H160::default();
@@ -1149,10 +1149,10 @@ impl MmCoin for Qrc20Coin {
         Some(BytesJson::from(self.swap_contract_address.0.as_ref()))
     }
 
-    fn mature_confirmations(&self) -> Option<u32> { Some(self.utxo.conf.mature_confirmations) }
+    fn mature_confirmations(&self) -> Option<u64> { Some(self.utxo.conf.mature_confirmations) }
 }
 
-pub fn qrc20_swap_id(time_lock: u32, secret_hash: &[u8]) -> Vec<u8> {
+pub fn qrc20_swap_id(time_lock: u64, secret_hash: &[u8]) -> Vec<u8> {
     let mut input = vec![];
     input.extend_from_slice(&time_lock.to_le_bytes());
     input.extend_from_slice(secret_hash);

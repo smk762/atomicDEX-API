@@ -115,7 +115,7 @@ impl UtxoRpcClientEnum {
     pub fn wait_for_confirmations(
         &self,
         tx: &UtxoTx,
-        confirmations: u32,
+        confirmations: u64,
         requires_notarization: bool,
         wait_until: u64,
         check_every: u64,
@@ -245,7 +245,7 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
     ) -> Box<dyn Future<Item = Option<UtxoTx>, Error = String> + Send>;
 
     /// Get median time past for `count` blocks in the past including `starting_block`
-    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> UtxoRpcFut<u32>;
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> UtxoRpcFut<u64>;
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -416,9 +416,9 @@ pub struct VerboseBlock {
     /// Transactions ids
     pub tx: Vec<H256Json>,
     /// Block time in seconds since epoch (Jan 1 1970 GMT)
-    pub time: u32,
+    pub time: u64,
     /// Median block time in seconds since epoch (Jan 1 1970 GMT)
-    pub mediantime: Option<u32>,
+    pub mediantime: Option<u64>,
     /// Block nonce
     pub nonce: BlockNonce,
     /// Block nbits
@@ -660,7 +660,7 @@ impl UtxoRpcClientOps for NativeClient {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> UtxoRpcFut<u32> {
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> UtxoRpcFut<u64> {
         let selfi = self.clone();
         let fut = async move {
             let starting_block_hash = selfi.get_block_hash(starting_block).compat().await?;
@@ -1575,7 +1575,7 @@ impl UtxoRpcClientOps for ElectrumClient {
         Box::new(fut.boxed().compat())
     }
 
-    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> UtxoRpcFut<u32> {
+    fn get_median_time_past(&self, starting_block: u64, count: NonZeroU64) -> UtxoRpcFut<u64> {
         let from = if starting_block <= count.get() {
             0
         } else {

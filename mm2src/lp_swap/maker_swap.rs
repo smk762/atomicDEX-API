@@ -561,7 +561,7 @@ impl MakerSwap {
         let transaction_f = self
             .maker_coin
             .check_if_my_payment_sent(
-                self.r().data.maker_payment_lock as u32,
+                self.r().data.maker_payment_lock,
                 &*self.r().other_persistent_pub,
                 &*dhash160(&self.r().data.secret.0),
                 self.r().data.maker_coin_start_block,
@@ -579,7 +579,7 @@ impl MakerSwap {
 
                     let before_send_maker_payment = now_ms();
                     let payment_fut = self.maker_coin.send_maker_payment(
-                        self.r().data.maker_payment_lock as u32,
+                        self.r().data.maker_payment_lock,
                         &*self.r().other_persistent_pub,
                         &*dhash160(&self.r().data.secret.0),
                         self.maker_amount.clone(),
@@ -721,7 +721,7 @@ impl MakerSwap {
             .taker_coin
             .validate_taker_payment(
                 &self.r().taker_payment.clone().unwrap().tx_hex,
-                self.taker_payment_lock.load(Ordering::Relaxed) as u32,
+                self.taker_payment_lock.load(Ordering::Relaxed),
                 &*self.r().other_persistent_pub,
                 &*dhash160(&self.r().data.secret.0),
                 self.taker_amount.clone(),
@@ -759,7 +759,7 @@ impl MakerSwap {
 
         let spend_fut = self.taker_coin.send_maker_spends_taker_payment(
             &self.r().taker_payment.clone().unwrap().tx_hex,
-            self.taker_payment_lock.load(Ordering::Relaxed) as u32,
+            self.taker_payment_lock.load(Ordering::Relaxed),
             &*self.r().other_persistent_pub,
             &self.r().data.secret.0,
             &self.r().data.taker_coin_swap_contract_address,
@@ -834,7 +834,7 @@ impl MakerSwap {
 
         let spend_fut = self.maker_coin.send_maker_refunds_payment(
             &self.r().maker_payment.clone().unwrap().tx_hex,
-            self.r().data.maker_payment_lock as u32,
+            self.r().data.maker_payment_lock,
             &*self.r().other_persistent_pub,
             &*dhash160(&self.r().data.secret.0),
             &self.r().data.maker_coin_swap_contract_address,
@@ -942,7 +942,7 @@ impl MakerSwap {
                 .ok_or(ERRL!("No info about taker payment, swap is not recoverable"))?
                 .tx_hex;
 
-            let timelock = selfi.taker_payment_lock.load(Ordering::Relaxed) as u32;
+            let timelock = selfi.taker_payment_lock.load(Ordering::Relaxed);
             let other_pub = &*selfi.r().other_persistent_pub;
             // check if the taker payment is not spent yet
             match selfi.taker_coin.search_for_swap_tx_spend_other(
@@ -1005,7 +1005,7 @@ impl MakerSwap {
                 let maybe_maker_payment = try_s!(self
                     .maker_coin
                     .check_if_my_payment_sent(
-                        self.r().data.maker_payment_lock as u32,
+                        self.r().data.maker_payment_lock,
                         &*self.r().other_persistent_pub,
                         &secret_hash.0,
                         self.r().data.maker_coin_start_block,
@@ -1020,7 +1020,7 @@ impl MakerSwap {
         };
         // validate that maker payment is not spent
         match self.maker_coin.search_for_swap_tx_spend_my(
-            self.r().data.maker_payment_lock as u32,
+            self.r().data.maker_payment_lock,
             &*self.r().other_persistent_pub,
             &secret_hash.0,
             &maker_payment,
@@ -1055,7 +1055,7 @@ impl MakerSwap {
                     .maker_coin
                     .send_maker_refunds_payment(
                         &maker_payment,
-                        self.r().data.maker_payment_lock as u32,
+                        self.r().data.maker_payment_lock,
                         &*self.r().other_persistent_pub,
                         &secret_hash.0,
                         &self.r().data.maker_coin_swap_contract_address,

@@ -89,7 +89,7 @@ struct CoinInitResponse<'a> {
     required_confirmations: u64,
     requires_notarization: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    mature_confirmations: Option<u32>,
+    mature_confirmations: Option<u64>,
 }
 
 /// Enable a coin in the Electrum mode.
