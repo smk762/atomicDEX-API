@@ -544,6 +544,7 @@ where
     Ok((unsigned, data))
 }
 
+/// Please modify `calc_interest_of_tx` if this function claims KMD rewards.
 pub async fn p2sh_spending_tx<T>(
     coin: &T,
     prev_transaction: UtxoTx,
@@ -1688,22 +1689,21 @@ where
                             updated = true;
                         }
                     }
-                    // TODO uncomment this when `update_kmd_rewards` works correctly
-                    // if e.get().should_update_kmd_rewards() && e.get().block_height > 0 {
-                    //     mm_counter!(ctx.metrics, "tx.history.update.kmd_rewards", 1);
-                    //     match coin.update_kmd_rewards(e.get_mut(), &mut input_transactions).await {
-                    //         Ok(()) => updated = true,
-                    //         Err(e) => ctx.log.log(
-                    //             "😟",
-                    //             &[&"tx_history", &coin.as_ref().conf.ticker],
-                    //             &ERRL!(
-                    //                 "Error {:?} on updating the KMD rewards of {:?}, skipping the tx",
-                    //                 e,
-                    //                 txid
-                    //             ),
-                    //         ),
-                    //     }
-                    // }
+                    if e.get().should_update_kmd_rewards() && e.get().block_height > 0 {
+                        mm_counter!(ctx.metrics, "tx.history.update.kmd_rewards", 1);
+                        match coin.update_kmd_rewards(e.get_mut(), &mut input_transactions).await {
+                            Ok(()) => updated = true,
+                            Err(e) => ctx.log.log(
+                                "😟",
+                                &[&"tx_history", &coin.as_ref().conf.ticker],
+                                &ERRL!(
+                                    "Error {:?} on updating the KMD rewards of {:?}, skipping the tx",
+                                    e,
+                                    txid
+                                ),
+                            ),
+                        }
+                    }
                 },
             }
             if updated {
@@ -1913,39 +1913,24 @@ where
         to_addresses.extend(to.into_iter());
     }
 
-    // TODO uncomment this when `calc_interest_of_tx` works fine
-    // let (fee, kmd_rewards) = if ticker == "KMD" {
-    //     let kmd_rewards = try_s!(coin.calc_interest_of_tx(&tx, input_transactions).await);
-    //     // `input_amount = output_amount + fee`, where `output_amount = actual_output_amount + kmd_rewards`,
-    //     // so to calculate an actual transaction fee, we have to subtract the `kmd_rewards` from the total `output_amount`:
-    //     // `fee = input_amount - actual_output_amount` or simplified `fee = input_amount - output_amount + kmd_rewards`
-    //     let fee = input_amount as i64 - output_amount as i64 + kmd_rewards as i64;
-    //
-    //     let my_address = &coin.as_ref().my_address;
-    //     let claimed_by_me = from_addresses.iter().all(|from| from == my_address) && to_addresses.contains(my_address);
-    //     let kmd_rewards_details = KmdRewardsDetails {
-    //         amount: big_decimal_from_sat_unsigned(kmd_rewards, coin.as_ref().decimals),
-    //         claimed_by_me,
-    //     };
-    //     (
-    //         big_decimal_from_sat(fee, coin.as_ref().decimals),
-    //         Some(kmd_rewards_details),
-    //     )
-    // } else if input_amount == 0 {
-    //     let fee = verbose_tx.vin.iter().fold(0., |cur, input| {
-    //         let fee = match input {
-    //             TransactionInputEnum::Lelantus(lelantus) => lelantus.n_fees,
-    //             _ => 0.,
-    //         };
-    //         cur + fee
-    //     });
-    //     (fee.into(), None)
-    // } else {
-    //     let fee = input_amount as i64 - output_amount as i64;
-    //     (big_decimal_from_sat(fee, coin.as_ref().decimals), None)
-    // };
+    let (fee, kmd_rewards) = if ticker == "KMD" {
+        let kmd_rewards = try_s!(coin.calc_interest_of_tx(&tx, input_transactions).await);
+        // `input_amount = output_amount + fee`, where `output_amount = actual_output_amount + kmd_rewards`,
+        // so to calculate an actual transaction fee, we have to subtract the `kmd_rewards` from the total `output_amount`:
+        // `fee = input_amount - actual_output_amount` or simplified `fee = input_amount - output_amount + kmd_rewards`
+        let fee = input_amount as i64 - output_amount as i64 + kmd_rewards as i64;
 
-    let (fee, kmd_rewards) = if input_amount == 0 {
+        let my_address = &coin.as_ref().my_address;
+        let claimed_by_me = from_addresses.iter().all(|from| from == my_address) && to_addresses.contains(my_address);
+        let kmd_rewards_details = KmdRewardsDetails {
+            amount: big_decimal_from_sat_unsigned(kmd_rewards, coin.as_ref().decimals),
+            claimed_by_me,
+        };
+        (
+            big_decimal_from_sat(fee, coin.as_ref().decimals),
+            Some(kmd_rewards_details),
+        )
+    } else if input_amount == 0 {
         let fee = verbose_tx.vin.iter().fold(0., |cur, input| {
             let fee = match input {
                 TransactionInputEnum::Lelantus(lelantus) => lelantus.n_fees,
@@ -2073,6 +2058,8 @@ where
         return MmError::err(UtxoRpcError::Internal(error));
     }
 
+    let mut input_amount = 0;
+    let mut from_addresses = Vec::new();
     let mut kmd_rewards = 0;
     for input in tx.inputs.iter() {
         // input transaction is zero if the tx is the coinbase transaction
@@ -2091,7 +2078,40 @@ where
         if let Ok(interest) = kmd_interest(prev_tx.height, prev_tx_value, prev_tx_locktime, this_tx_locktime) {
             kmd_rewards += interest;
         }
+
+        input_amount += prev_tx_value;
+
+        let from = coin
+            .addresses_from_script(
+                &prev_tx.tx.outputs[input.previous_output.index as usize]
+                    .script_pubkey
+                    .clone()
+                    .into(),
+            )
+            .map_to_mm(UtxoRpcError::InvalidResponse)?;
+        from_addresses.extend(from.into_iter());
     }
+
+    let conf = &coin.as_ref().conf;
+    let from_p2sh = from_addresses
+        .iter()
+        .any(|addr| addr.prefix == conf.p2sh_addr_prefix && addr.t_addr_prefix == conf.p2sh_t_addr_prefix);
+
+    let output_amount = tx.outputs.iter().fold(0, |sum, output| sum + output.value);
+    let fee = input_amount as i64 - output_amount as i64;
+
+    // Currently, mm2 doesn't try to claim KMD rewards when a receiver spends an HTLC payment.
+    // For more information, see `p2sh_spending_tx`.
+    //
+    // Usually, if a transaction claims rewards, the fee is negative (if KMD rewards amount greater than an actual fee).
+    // So if the difference between inputs and outputs is positive, and at least one transaction input is P2SH,
+    // we consider that the transaction didn't claim rewards.
+    //
+    // Please note if `p2sh_spending_tx` claims KMD rewards, don't return 0.
+    if fee >= 0 && from_p2sh {
+        return Ok(0);
+    }
+
     Ok(kmd_rewards)
 }
 

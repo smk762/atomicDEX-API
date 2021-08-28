@@ -2820,7 +2820,6 @@ fn zer_mtp() {
 }
 
 #[test]
-#[ignore]
 fn test_tx_details_kmd_rewards() {
     let electrum = electrum_client_for_test(&[
         "electrum1.cipig.net:10001",
@@ -2852,7 +2851,6 @@ fn test_tx_details_kmd_rewards() {
 /// then `TransactionDetails::kmd_rewards` has to be `Some(0)`, not `None`.
 /// https://kmdexplorer.io/tx/f09e8894959e74c1e727ffa5a753a30bf2dc6d5d677cc1f24b7ee5bb64e32c7d
 #[test]
-#[ignore]
 #[cfg(not(target_arch = "wasm32"))]
 fn test_tx_details_kmd_rewards_claimed_by_other() {
     let electrum = electrum_client_for_test(&[
@@ -2963,6 +2961,48 @@ fn test_update_kmd_rewards_claimed_not_by_me() {
         amount: BigDecimal::from_str("0.00001").unwrap(),
     });
     assert_eq!(tx_details.fee_details, Some(expected_fee_details));
+}
+
+#[test]
+fn test_calc_interest_of_tx_from_p2sh_positive_fee() {
+    // de07256581b44e075256146016d6d1143aa4adfb4a27f1e37b20650d5a0a6d90
+    const TX_HEX: &str = "0400008085202f89016fd3e01d04e8c9f39b35495eccf7135dbaeb9e06d63dfaa9fbfa56db4a4b3fc100000000d84830450221009c2b6b7766a3f8441354b8579e631e9a1cf0fefa659e60970eb009e443f33e3902202882db1edd3c8a0e3622c25d415bf150f7d2f45d41233f53816eec0742879b070120a406bb6b0470d04e2a58c7962baac88ab3237d6c777995d651698beffff62a6b004c6b63044bb02461b17521031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8ac6782012088a9143d4776f4fd927a8ea3b3d4c131403c8975f2fb4e882103aa464529c190398d44017c3d7a71a854ad195a9d396bf84182679c242bb60085ac68ffffffff0118ee052a010000001976a914a19f7aa254dced0a17920ab1c2acf698841f67f688ac4bb02461000000000000000000000000000000";
+
+    let utxo_tx: UtxoTx = TX_HEX.into();
+
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10001",
+        "electrum2.cipig.net:10001",
+        "electrum3.cipig.net:10001",
+    ]);
+    let mut fields = utxo_coin_fields_for_test(electrum.into(), None, false);
+    fields.conf.ticker = "KMD".to_owned();
+    let coin = utxo_coin_from_fields(fields);
+
+    let mut input_transactions = HistoryUtxoTxMap::new();
+    let actual_rewards = block_on(coin.calc_interest_of_tx(&utxo_tx, &mut input_transactions)).unwrap();
+    assert_eq!(actual_rewards, 0);
+}
+
+#[test]
+fn test_calc_interest_of_tx_from_p2sh_negative_fee() {
+    // de07256581b44e075256146016d6d1143aa4adfb4a27f1e37b20650d5a0a6d90 with the different output 51 KMD instead of 49.99999
+    const TX_HEX: &str = "0400008085202f89016fd3e01d04e8c9f39b35495eccf7135dbaeb9e06d63dfaa9fbfa56db4a4b3fc100000000d84830450221009c2b6b7766a3f8441354b8579e631e9a1cf0fefa659e60970eb009e443f33e3902202882db1edd3c8a0e3622c25d415bf150f7d2f45d41233f53816eec0742879b070120a406bb6b0470d04e2a58c7962baac88ab3237d6c777995d651698beffff62a6b004c6b63044bb02461b17521031bb83b58ec130e28e0a6d5d2acf2eb01b0d3f1670e021d47d31db8a858219da8ac6782012088a9143d4776f4fd927a8ea3b3d4c131403c8975f2fb4e882103aa464529c190398d44017c3d7a71a854ad195a9d396bf84182679c242bb60085ac68ffffffff0100d3fb2f010000001976a914a19f7aa254dced0a17920ab1c2acf698841f67f688ac4bb02461000000000000000000000000000000";
+
+    let utxo_tx: UtxoTx = TX_HEX.into();
+
+    let electrum = electrum_client_for_test(&[
+        "electrum1.cipig.net:10001",
+        "electrum2.cipig.net:10001",
+        "electrum3.cipig.net:10001",
+    ]);
+    let mut fields = utxo_coin_fields_for_test(electrum.into(), None, false);
+    fields.conf.ticker = "KMD".to_owned();
+    let coin = utxo_coin_from_fields(fields);
+
+    let mut input_transactions = HistoryUtxoTxMap::new();
+    let actual_rewards = block_on(coin.calc_interest_of_tx(&utxo_tx, &mut input_transactions)).unwrap();
+    assert_eq!(actual_rewards, 467875);
 }
 
 /// https://github.com/KomodoPlatform/atomicDEX-API/issues/966
