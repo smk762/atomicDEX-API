@@ -823,11 +823,15 @@ impl MakerSwap {
             }
         }
 
+        let secret_hash = match self.r().data.secret_hash {
+            Some(ref hash) => hash.clone().into(),
+            None => dhash160(&self.r().data.secret.0).as_slice().to_vec(),
+        };
         let spend_fut = self.maker_coin.send_maker_refunds_payment(
             &self.r().maker_payment.clone().unwrap().tx_hex,
             self.r().data.maker_payment_lock as u32,
             &*self.r().other_persistent_pub,
-            &*dhash160(&self.r().data.secret.0),
+            &*secret_hash,
             &self.r().data.maker_coin_swap_contract_address,
         );
 
