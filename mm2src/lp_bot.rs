@@ -3,22 +3,16 @@
 //  marketmaker
 //
 
-use std::{
-    sync::Arc,
-    sync::atomic::AtomicBool,
-    collections::HashMap
-};
-use derive_more::Display;
-use futures::{lock::Mutex as AsyncMutex};
 use common::mm_ctx::{from_ctx, MmArc};
+use derive_more::Display;
+use futures::lock::Mutex as AsyncMutex;
+use std::{collections::HashMap, sync::atomic::AtomicBool, sync::Arc};
 
 #[cfg(test)] use mocktopus::macros::*;
 
-#[path = "lp_bot/simple_market_maker.rs"] mod simple_market_maker_bot;
-pub use simple_market_maker_bot::{
-    start_simple_market_maker_bot,
-    stop_simple_market_maker_bot
-};
+#[path = "lp_bot/simple_market_maker.rs"]
+mod simple_market_maker_bot;
+pub use simple_market_maker_bot::{start_simple_market_maker_bot, stop_simple_market_maker_bot};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "lp_bot_tests.rs"]
@@ -30,7 +24,7 @@ struct TradingBotStates {
     pub is_running: AtomicBool,
 
     /// Used to determine if the bot is shutting down
-    pub is_stopping: AtomicBool
+    pub is_stopping: AtomicBool,
 }
 
 pub type SimpleMakerBotRegistry = HashMap<String, SimpleCoinMarketMakerCfg>;
@@ -90,7 +84,7 @@ pub enum Provider {
 struct TradingBotContext {
     pub trading_bot_states: AsyncMutex<TradingBotStates>,
     pub trading_bot_cfg: AsyncMutex<SimpleMakerBotRegistry>,
-    pub price_tickers_registry: AsyncMutex<TickerInfosRegistry>
+    pub price_tickers_registry: AsyncMutex<TickerInfosRegistry>,
 }
 
 #[cfg_attr(test, mockable)]
