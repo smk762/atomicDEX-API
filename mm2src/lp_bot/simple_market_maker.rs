@@ -84,11 +84,11 @@ pub enum PriceServiceRequestError {
 }
 
 impl From<std::string::String> for PriceServiceRequestError {
-    fn from(error: String) -> Self { return PriceServiceRequestError::HttpProcessError(error); }
+    fn from(error: String) -> Self { PriceServiceRequestError::HttpProcessError(error) }
 }
 
 impl From<std::str::Utf8Error> for PriceServiceRequestError {
-    fn from(error: Utf8Error) -> Self { return PriceServiceRequestError::HttpProcessError(error.to_string()); }
+    fn from(error: Utf8Error) -> Self { PriceServiceRequestError::HttpProcessError(error.to_string()) }
 }
 
 impl HttpStatusCode for StartSimpleMakerBotError {
@@ -222,9 +222,9 @@ pub async fn start_simple_market_maker_bot(ctx: MmArc, req: StartSimpleMakerBotR
     info!("simple_market_maker_bot successfully started");
     spawn(lp_price_service_loop(ctx.clone()));
     spawn(lp_bot_loop(ctx.clone()));
-    return Ok(StartSimpleMakerBotAnswer {
+    Ok(StartSimpleMakerBotAnswer {
         result: "Success".to_string(),
-    });
+    })
 }
 
 pub async fn stop_simple_market_maker_bot(ctx: MmArc, _req: Json) -> StopSimpleMakerBotResult {
@@ -240,7 +240,7 @@ pub async fn stop_simple_market_maker_bot(ctx: MmArc, _req: Json) -> StopSimpleM
         states.is_stopping = AtomicBool::new(true);
     }
     info!("simple_market_maker_bot will stop within 30 seconds");
-    return Ok(StopSimpleMakerBotAnswer {
+    Ok(StopSimpleMakerBotAnswer {
         result: "Success".to_string(),
-    });
+    })
 }
