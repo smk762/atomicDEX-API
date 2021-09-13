@@ -7,7 +7,6 @@ use common::{executor::{spawn, Timer},
 use derive_more::Display;
 use http::{HeaderMap, StatusCode};
 use serde_json::Value as Json;
-use std::collections::HashSet;
 use std::{str::Utf8Error,
           sync::atomic::{AtomicBool, Ordering}};
 
@@ -132,7 +131,7 @@ pub async fn tear_down_bot(ctx: MmArc) {
 async fn process_bot_logic(ctx: &MmArc) {
     let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
     // note: Copy the cfg here will not be expensive, and this will be thread safe.
-    let cfg = simple_market_maker_bot_ctx.trading_bot_cfg.lock().await.clone();
+    let _cfg = simple_market_maker_bot_ctx.trading_bot_cfg.lock().await.clone();
     //let coins_ctx = OrderMatchContext
     //let memoization_pair_registry: HashSet<String>;
     //let to_skip_pairs_registry: HashSet<String>;
