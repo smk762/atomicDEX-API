@@ -1,21 +1,15 @@
-use crate::mm2::lp_bot::{TradingBotContext, SimpleMakerBotRegistry, TickerInfosRegistry};
-use crate::mm2::lp_ordermatch::{OrderMatchContext};
-use http::{StatusCode, HeaderMap};
+use crate::mm2::lp_bot::{SimpleMakerBotRegistry, TickerInfosRegistry, TradingBotContext};
+use common::{executor::{spawn, Timer},
+             log::{error, info},
+             mm_ctx::MmArc,
+             mm_error::MmError,
+             slurp_url, HttpStatusCode};
 use derive_more::Display;
-use serde_json::{Value as Json};
-use common::{
-    executor::{spawn, Timer},
-    slurp_url,
-    HttpStatusCode,
-    mm_error::MmError,
-    mm_ctx::MmArc,
-    log::{info, error}
-};
-use std::{
-    sync::atomic::{AtomicBool, Ordering},
-    str::Utf8Error
-};
+use http::{HeaderMap, StatusCode};
+use serde_json::Value as Json;
 use std::collections::HashSet;
+use std::{str::Utf8Error,
+          sync::atomic::{AtomicBool, Ordering}};
 
 // !< constants
 const KMD_PRICE_ENDPOINT: &str = "http://95.217.208.239:1313/api/v1/tickers";
@@ -23,7 +17,6 @@ const KMD_PRICE_ENDPOINT: &str = "http://95.217.208.239:1313/api/v1/tickers";
 // !< Type definitions
 pub type StartSimpleMakerBotResult = Result<StartSimpleMakerBotAnswer, MmError<StartSimpleMakerBotError>>;
 pub type StopSimpleMakerBotResult = Result<StopSimpleMakerBotAnswer, MmError<StopSimpleMakerBotError>>;
-
 
 #[allow(dead_code)]
 #[derive(Deserialize)]
@@ -34,10 +27,11 @@ pub struct StartSimpleMakerBotRequest {
 #[cfg(test)]
 impl StartSimpleMakerBotRequest {
     pub fn new() -> StartSimpleMakerBotRequest {
-        return StartSimpleMakerBotRequest { cfg: Default::default() };
+        return StartSimpleMakerBotRequest {
+            cfg: Default::default(),
+        };
     }
 }
-
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct StopSimpleMakerBotAnswer {
@@ -46,9 +40,7 @@ pub struct StopSimpleMakerBotAnswer {
 
 #[cfg(test)]
 impl StopSimpleMakerBotAnswer {
-    pub fn get_result(&self) -> String {
-        return self.result.clone();
-    }
+    pub fn get_result(&self) -> String { return self.result.clone(); }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -58,9 +50,7 @@ pub struct StartSimpleMakerBotAnswer {
 
 #[cfg(test)]
 impl StartSimpleMakerBotAnswer {
-    pub fn get_result(&self) -> String {
-        return self.result.clone();
-    }
+    pub fn get_result(&self) -> String { return self.result.clone(); }
 }
 
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
@@ -91,26 +81,26 @@ pub enum StartSimpleMakerBotError {
 
 #[derive(Debug)]
 pub enum PriceServiceRequestError {
-    HttpProcessError(String)
+    HttpProcessError(String),
 }
 
 impl From<std::string::String> for PriceServiceRequestError {
-    fn from(error: String) -> Self {
-        return PriceServiceRequestError::HttpProcessError(error);
-    }
+    fn from(error: String) -> Self { return PriceServiceRequestError::HttpProcessError(error); }
 }
 
 impl From<std::str::Utf8Error> for PriceServiceRequestError {
-    fn from(error: Utf8Error) -> Self {
-        return PriceServiceRequestError::HttpProcessError(error.to_string());
-    }
+    fn from(error: Utf8Error) -> Self { return PriceServiceRequestError::HttpProcessError(error.to_string()); }
 }
 
 impl HttpStatusCode for StartSimpleMakerBotError {
     fn status_code(&self) -> StatusCode {
         match self {
-            StartSimpleMakerBotError::AlreadyStarted | StartSimpleMakerBotError::InvalidBotConfiguration => StatusCode::BAD_REQUEST,
-            StartSimpleMakerBotError::Transport(_) | StartSimpleMakerBotError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            StartSimpleMakerBotError::AlreadyStarted | StartSimpleMakerBotError::InvalidBotConfiguration => {
+                StatusCode::BAD_REQUEST
+            },
+            StartSimpleMakerBotError::Transport(_) | StartSimpleMakerBotError::InternalError(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
         }
     }
 }
@@ -119,14 +109,17 @@ impl HttpStatusCode for StopSimpleMakerBotError {
     fn status_code(&self) -> StatusCode {
         match self {
             // maybe bad request is not adapted for the first errors.
-            StopSimpleMakerBotError::AlreadyStopped | StopSimpleMakerBotError::AlreadyStopping => StatusCode::BAD_REQUEST,
-            StopSimpleMakerBotError::Transport(_) | StopSimpleMakerBotError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            StopSimpleMakerBotError::AlreadyStopped | StopSimpleMakerBotError::AlreadyStopping => {
+                StatusCode::BAD_REQUEST
+            },
+            StopSimpleMakerBotError::Transport(_) | StopSimpleMakerBotError::InternalError(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
         }
     }
 }
 
 pub async fn tear_down_bot(ctx: MmArc) {
-
     let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(&ctx).unwrap();
     {
         let mut trading_bot_cfg = simple_market_maker_bot_ctx.trading_bot_cfg.lock().await;
@@ -143,7 +136,6 @@ async fn process_bot_logic(ctx: &MmArc) {
     //let coins_ctx = OrderMatchContext
     //let memoization_pair_registry: HashSet<String>;
     //let to_skip_pairs_registry: HashSet<String>;
-
 }
 
 pub async fn lp_bot_loop(ctx: MmArc) {
@@ -231,7 +223,9 @@ pub async fn start_simple_market_maker_bot(ctx: MmArc, req: StartSimpleMakerBotR
     info!("simple_market_maker_bot successfully started");
     spawn(lp_price_service_loop(ctx.clone()));
     spawn(lp_bot_loop(ctx.clone()));
-    return Ok(StartSimpleMakerBotAnswer { result: "Success".to_string() });
+    return Ok(StartSimpleMakerBotAnswer {
+        result: "Success".to_string(),
+    });
 }
 
 pub async fn stop_simple_market_maker_bot(ctx: MmArc, _req: Json) -> StopSimpleMakerBotResult {
@@ -247,5 +241,7 @@ pub async fn stop_simple_market_maker_bot(ctx: MmArc, _req: Json) -> StopSimpleM
         states.is_stopping = AtomicBool::new(true);
     }
     info!("simple_market_maker_bot will stop within 30 seconds");
-    return Ok(StopSimpleMakerBotAnswer { result: "Success".to_string() });
+    return Ok(StopSimpleMakerBotAnswer {
+        result: "Success".to_string(),
+    });
 }
