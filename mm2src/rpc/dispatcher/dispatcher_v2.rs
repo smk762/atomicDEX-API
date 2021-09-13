@@ -2,6 +2,7 @@ use super::lp_protocol::{MmRpcBuilder, MmRpcRequest};
 use super::{DispatcherError, DispatcherResult, PUBLIC_METHODS};
 use crate::mm2::lp_stats::{add_node_to_version_stat, remove_node_from_version_stat, start_version_stat_collection};
 use crate::mm2::lp_swap::trade_preimage_rpc;
+use crate::mm2::lp_bot::{start_simple_market_maker_bot, stop_simple_market_maker_bot};
 use coins::withdraw;
 use common::log::{error, warn};
 use common::mm_ctx::MmArc;
@@ -89,6 +90,8 @@ async fn dispatcher(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Respo
         "start_version_stat_collection" => handle_mmrpc(ctx, request, start_version_stat_collection).await,
         "trade_preimage" => handle_mmrpc(ctx, request, trade_preimage_rpc).await,
         "withdraw" => handle_mmrpc(ctx, request, withdraw).await,
+        "start_simple_market_maker_bot" => handle_mmrpc(ctx, request, start_simple_market_maker_bot).await,
+        "stop_simple_market_maker_bot" => handle_mmrpc(ctx, request, stop_simple_market_maker_bot).await,
         _ => MmError::err(DispatcherError::NoSuchMethod { method: request.method }),
     }
 }
