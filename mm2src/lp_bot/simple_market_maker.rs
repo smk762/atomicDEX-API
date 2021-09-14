@@ -14,7 +14,7 @@ use std::{str::Utf8Error,
 use uuid::Uuid;
 
 // !< constants
-const KMD_PRICE_ENDPOINT: &str = "http://95.217.208.239:1313/api/v1/tickers";
+const KMD_PRICE_ENDPOINT: &str = "https://prices.komodo.live:1313/api/v1/tickers";
 
 // !< Type definitions
 pub type StartSimpleMakerBotResult = Result<StartSimpleMakerBotAnswer, MmError<StartSimpleMakerBotError>>;
