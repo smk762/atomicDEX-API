@@ -194,8 +194,13 @@ async fn fetch_price_tickers(ctx: &MmArc) {
         Err(_) => return,
     };
     if status_code == StatusCode::OK {
-        // todo: here there is not any chance that the unwrap fail i guess because the status code is OK
-        let model: TickerInfosRegistry = serde_json::from_str(&body).unwrap();
+        let model: TickerInfosRegistry = match serde_json::from_str(&body) {
+            Ok(model) => model,
+            Err(_) => {
+                error!("error when unparsing the price fetching answer");
+                return;
+            },
+        };
         let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
         let mut price_registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
         *price_registry = model;
