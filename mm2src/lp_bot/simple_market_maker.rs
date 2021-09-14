@@ -17,8 +17,8 @@ use uuid::Uuid;
 const KMD_PRICE_ENDPOINT: &str = "https://prices.komodo.live:1313/api/v1/tickers";
 
 // !< Type definitions
-pub type StartSimpleMakerBotResult = Result<StartSimpleMakerBotAnswer, MmError<StartSimpleMakerBotError>>;
-pub type StopSimpleMakerBotResult = Result<StopSimpleMakerBotAnswer, MmError<StopSimpleMakerBotError>>;
+pub type StartSimpleMakerBotResult = Result<StartSimpleMakerBotRes, MmError<StartSimpleMakerBotError>>;
+pub type StopSimpleMakerBotResult = Result<StopSimpleMakerBotRes, MmError<StopSimpleMakerBotError>>;
 
 #[allow(dead_code)]
 #[derive(Deserialize)]
@@ -36,23 +36,23 @@ impl StartSimpleMakerBotRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct StopSimpleMakerBotAnswer {
+pub struct StopSimpleMakerBotRes {
     result: String,
 }
 
 #[cfg(test)]
-impl StopSimpleMakerBotAnswer {
-    pub fn get_result(&self) -> String { return self.result.clone(); }
+impl StopSimpleMakerBotRes {
+    pub fn get_result(&self) -> String { self.result.clone() }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct StartSimpleMakerBotAnswer {
+pub struct StartSimpleMakerBotRes {
     result: String,
 }
 
 #[cfg(test)]
-impl StartSimpleMakerBotAnswer {
-    pub fn get_result(&self) -> String { return self.result.clone(); }
+impl StartSimpleMakerBotRes {
+    pub fn get_result(&self) -> String { self.result.clone() }
 }
 
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
@@ -242,7 +242,7 @@ pub async fn start_simple_market_maker_bot(ctx: MmArc, req: StartSimpleMakerBotR
     info!("simple_market_maker_bot successfully started");
     spawn(lp_price_service_loop(ctx.clone()));
     spawn(lp_bot_loop(ctx.clone()));
-    Ok(StartSimpleMakerBotAnswer {
+    Ok(StartSimpleMakerBotRes {
         result: "Success".to_string(),
     })
 }
@@ -260,7 +260,7 @@ pub async fn stop_simple_market_maker_bot(ctx: MmArc, _req: Json) -> StopSimpleM
         states.is_stopping = AtomicBool::new(true);
     }
     info!("simple_market_maker_bot will stop within 30 seconds");
-    Ok(StopSimpleMakerBotAnswer {
+    Ok(StopSimpleMakerBotRes {
         result: "Success".to_string(),
     })
 }
