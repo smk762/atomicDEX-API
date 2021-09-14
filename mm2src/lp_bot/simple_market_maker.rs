@@ -1,4 +1,5 @@
-use crate::mm2::lp_bot::{SimpleMakerBotRegistry, TickerInfosRegistry, TradingBotContext};
+use crate::mm2::lp_bot::{SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry, TickerInfosRegistry, TradingBotContext};
+use crate::mm2::lp_ordermatch::{retrieve_my_maker_orders, MakerOrder};
 use common::{executor::{spawn, Timer},
              log::{error, info},
              mm_ctx::MmArc,
@@ -7,8 +8,10 @@ use common::{executor::{spawn, Timer},
 use derive_more::Display;
 use http::{HeaderMap, StatusCode};
 use serde_json::Value as Json;
+use std::collections::HashSet;
 use std::{str::Utf8Error,
           sync::atomic::{AtomicBool, Ordering}};
+use uuid::Uuid;
 
 // !< constants
 const KMD_PRICE_ENDPOINT: &str = "http://95.217.208.239:1313/api/v1/tickers";
@@ -128,13 +131,30 @@ pub async fn tear_down_bot(ctx: MmArc) {
     // todo: cancel all pending orders
 }
 
+async fn update_single_order(_cfg: SimpleCoinMarketMakerCfg, uuid: Uuid, _order: MakerOrder, key_trade_pair: String) {
+    info!("need to update order: {} of {}", uuid, key_trade_pair)
+}
+
 async fn process_bot_logic(ctx: &MmArc) {
     let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
     // note: Copy the cfg here will not be expensive, and this will be thread safe.
-    let _cfg = simple_market_maker_bot_ctx.trading_bot_cfg.lock().await.clone();
-    //let coins_ctx = OrderMatchContext
-    //let memoization_pair_registry: HashSet<String>;
-    //let to_skip_pairs_registry: HashSet<String>;
+    let cfg = simple_market_maker_bot_ctx.trading_bot_cfg.lock().await.clone();
+
+    let mut memoization_pair_registry: HashSet<String> = HashSet::new();
+    let maker_orders = retrieve_my_maker_orders(ctx).await;
+
+    info!("np_orders: {}", maker_orders.len());
+    for (key, value) in maker_orders.into_iter() {
+        let key_trade_pair = value.base.clone() + "/" + value.rel.clone().as_str();
+        match cfg.get(&key_trade_pair) {
+            Some(coin_cfg) => {
+                update_single_order(coin_cfg.clone(), key, value.clone(), key_trade_pair.clone()).await;
+                memoization_pair_registry.insert(key_trade_pair.clone());
+            },
+            _ => continue,
+        }
+        println!("{}", key);
+    }
 }
 
 pub async fn lp_bot_loop(ctx: MmArc) {

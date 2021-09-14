@@ -2492,6 +2492,12 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
     });
 }
 
+pub async fn retrieve_my_maker_orders(ctx: &MmArc) -> HashMap<Uuid, MakerOrder> {
+    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
+    let res = ordermatch_ctx.my_maker_orders.lock().await;
+    res.clone()
+}
+
 pub async fn lp_ordermatch_loop(ctx: MmArc) {
     let my_pubsecp = hex::encode(&**ctx.secp256k1_key_pair().public());
     let maker_order_timeout = ctx.conf["maker_order_timeout"].as_u64().unwrap_or(MAKER_ORDER_TIMEOUT);
