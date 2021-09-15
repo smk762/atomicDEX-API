@@ -142,8 +142,18 @@ pub async fn tear_down_bot(ctx: MmArc) {
     // todo: cancel all pending orders
 }
 
-async fn update_single_order(cfg: SimpleCoinMarketMakerCfg, uuid: Uuid, _order: MakerOrder, key_trade_pair: String) {
+async fn update_single_order(
+    cfg: SimpleCoinMarketMakerCfg,
+    uuid: Uuid,
+    _order: MakerOrder,
+    key_trade_pair: String,
+    _ctx: &MmArc,
+) {
     info!("need to update order: {} of {} - cfg: {}", uuid, key_trade_pair, cfg)
+}
+
+async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: String, _ctx: &MmArc) {
+    info!("need to create order for: {} - cfg: {}", key_trade_pair, cfg)
 }
 
 async fn process_bot_logic(ctx: &MmArc) {
@@ -152,15 +162,24 @@ async fn process_bot_logic(ctx: &MmArc) {
     let cfg = simple_market_maker_bot_ctx.trading_bot_cfg.lock().await.clone();
 
     let mut memoization_pair_registry: HashSet<String> = HashSet::new();
-    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
     let maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
 
     info!("nb_orders: {}", maker_orders.len());
+
+    // Iterating over maker orders and update order that are present in cfg as the key_trade_pair e.g KMD/LTC
     for (key, value) in maker_orders.iter() {
         let key_trade_pair = TradingPair::new(value.base.clone(), value.rel.clone());
         match cfg.get(&key_trade_pair.as_combination()) {
             Some(coin_cfg) => {
-                update_single_order(coin_cfg.clone(), *key, value.clone(), key_trade_pair.as_combination()).await;
+                update_single_order(
+                    coin_cfg.clone(),
+                    *key,
+                    value.clone(),
+                    key_trade_pair.as_combination(),
+                    ctx,
+                )
+                .await;
                 memoization_pair_registry.insert(key_trade_pair.as_combination());
             },
             _ => continue,
@@ -168,6 +187,14 @@ async fn process_bot_logic(ctx: &MmArc) {
         println!("{}", key);
     }
     drop(maker_orders);
+
+    // Now iterate over the registry and for every pairs that are not hit let's create an order
+    for (trading_pair, cur_cfg) in cfg.iter() {
+        match memoization_pair_registry.get(trading_pair) {
+            Some(_) => continue,
+            None => create_single_order(cur_cfg.clone(), trading_pair.clone(), ctx).await,
+        };
+    }
 }
 
 pub async fn lp_bot_loop(ctx: MmArc) {
