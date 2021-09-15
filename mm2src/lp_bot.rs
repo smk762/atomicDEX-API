@@ -13,11 +13,8 @@ use std::{collections::HashMap, sync::Arc};
 
 #[path = "lp_bot/simple_market_maker.rs"]
 mod simple_market_maker_bot;
-pub use simple_market_maker_bot::{start_simple_market_maker_bot, stop_simple_market_maker_bot};
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "lp_bot_tests.rs"]
-mod lp_bot_tests;
+pub use simple_market_maker_bot::{process_price_request, start_simple_market_maker_bot, stop_simple_market_maker_bot,
+                                  StartSimpleMakerBotRequest};
 
 #[derive(PartialEq)]
 enum TradingBotState {
