@@ -1,6 +1,6 @@
-use crate::mm2::lp_bot::{SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry, TickerInfosRegistry, TradingBotContext,
-                         TradingBotState};
-use crate::mm2::lp_ordermatch::{retrieve_my_maker_orders, MakerOrder};
+use crate::{mm2::lp_ordermatch::lp_bot::{SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry, TickerInfosRegistry,
+                                         TradingBotContext, TradingBotState},
+            mm2::lp_ordermatch::{MakerOrder, OrdermatchContext}};
 use common::{executor::{spawn, Timer},
              log::{error, info},
              mm_ctx::MmArc,
@@ -152,20 +152,28 @@ async fn process_bot_logic(ctx: &MmArc) {
     let cfg = simple_market_maker_bot_ctx.trading_bot_cfg.lock().await.clone();
 
     let mut memoization_pair_registry: HashSet<String> = HashSet::new();
-    let maker_orders = retrieve_my_maker_orders(ctx).await;
+    let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+    let maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
 
     info!("nb_orders: {}", maker_orders.len());
-    for (key, value) in maker_orders.into_iter() {
+    for (key, value) in maker_orders.iter() {
         let key_trade_pair = TradingPair::new(value.base.clone(), value.rel.clone());
         match cfg.get(&key_trade_pair.as_combination()) {
             Some(coin_cfg) => {
-                update_single_order(coin_cfg.clone(), key, value.clone(), key_trade_pair.as_combination()).await;
+                update_single_order(
+                    coin_cfg.clone(),
+                    key.clone(),
+                    value.clone(),
+                    key_trade_pair.as_combination(),
+                )
+                .await;
                 memoization_pair_registry.insert(key_trade_pair.as_combination());
             },
             _ => continue,
         }
         println!("{}", key);
     }
+    drop(maker_orders);
 }
 
 pub async fn lp_bot_loop(ctx: MmArc) {

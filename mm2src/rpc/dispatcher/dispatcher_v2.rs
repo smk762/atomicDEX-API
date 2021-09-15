@@ -1,6 +1,6 @@
 use super::lp_protocol::{MmRpcBuilder, MmRpcRequest};
 use super::{DispatcherError, DispatcherResult, PUBLIC_METHODS};
-use crate::mm2::lp_bot::{start_simple_market_maker_bot, stop_simple_market_maker_bot};
+use crate::mm2::lp_ordermatch::{start_simple_market_maker_bot, stop_simple_market_maker_bot};
 use crate::mm2::lp_stats::{add_node_to_version_stat, remove_node_from_version_stat, start_version_stat_collection};
 use crate::mm2::lp_swap::trade_preimage_rpc;
 use coins::withdraw;

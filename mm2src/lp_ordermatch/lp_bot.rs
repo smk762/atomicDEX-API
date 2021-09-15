@@ -11,8 +11,7 @@ use std::{collections::HashMap, sync::Arc};
 
 #[cfg(test)] use mocktopus::macros::*;
 
-#[path = "lp_bot/simple_market_maker.rs"]
-mod simple_market_maker_bot;
+#[path = "simple_market_maker.rs"] mod simple_market_maker_bot;
 pub use simple_market_maker_bot::{process_price_request, start_simple_market_maker_bot, stop_simple_market_maker_bot,
                                   StartSimpleMakerBotRequest};
 

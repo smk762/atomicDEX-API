@@ -77,6 +77,9 @@ cfg_wasm32! {
 }
 
 #[path = "lp_ordermatch/best_orders.rs"] mod best_orders;
+#[path = "lp_ordermatch/lp_bot.rs"] mod lp_bot;
+pub use lp_bot::{process_price_request, start_simple_market_maker_bot, stop_simple_market_maker_bot,
+                 StartSimpleMakerBotRequest};
 #[path = "lp_ordermatch/my_orders_storage.rs"]
 mod my_orders_storage;
 #[path = "lp_ordermatch/new_protocol.rs"] mod new_protocol;
@@ -2581,12 +2584,6 @@ fn lp_connected_alice(ctx: MmArc, taker_request: TakerRequest, taker_match: Take
         );
         run_taker_swap(RunTakerSwapInput::StartNew(taker_swap), ctx).await
     });
-}
-
-pub async fn retrieve_my_maker_orders(ctx: &MmArc) -> HashMap<Uuid, MakerOrder> {
-    let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
-    let res = ordermatch_ctx.my_maker_orders.lock().await;
-    res.clone()
 }
 
 pub async fn lp_ordermatch_loop(ctx: MmArc) {

@@ -1,5 +1,5 @@
-use crate::{mm2::lp_bot::process_price_request, mm2::lp_bot::start_simple_market_maker_bot,
-            mm2::lp_bot::stop_simple_market_maker_bot, mm2::lp_bot::StartSimpleMakerBotRequest};
+use crate::{mm2::lp_ordermatch::process_price_request, mm2::lp_ordermatch::start_simple_market_maker_bot,
+            mm2::lp_ordermatch::stop_simple_market_maker_bot, mm2::lp_ordermatch::StartSimpleMakerBotRequest};
 use common::{block_on, for_tests::MarketMakerIt, mm_ctx::MmCtxBuilder, privkey::key_pair_from_seed};
 use http::StatusCode;
 use serde_json::Value as Json;
