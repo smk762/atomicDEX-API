@@ -117,16 +117,24 @@ impl RateInfos {
         let time_diff: SystemTime = SystemTime::now() - last_updated_time.elapsed().unwrap();
         time_diff
     }
+
+    pub fn new(base: String, rel: String) -> RateInfos {
+        RateInfos {
+            base,
+            rel,
+            ..Default::default()
+        }
+    }
 }
 
 impl TickerInfosRegistry {
     pub fn get_cex_rates(&self, base: String, rel: String) -> RateInfos {
-        let mut rate_infos = RateInfos::default();
-        rate_infos.base = base;
-        rate_infos.rel = rel;
-        if self.0.contains_key(&*base) && self.0.contains_key(&*rel) {
-            let base_price_infos = self.0.get(&*base).unwrap();
-            let rel_price_infos = self.0.get(&*rel).unwrap();
+        let mut rate_infos = RateInfos::new(base, rel);
+
+        // todo: check if it's possible here to use a `get` on multiple key and match on them instead of using contains + get / unwrap
+        if self.0.contains_key(&*rate_infos.base) && self.0.contains_key(&*rate_infos.rel) {
+            let base_price_infos = self.0.get(&*rate_infos.base).unwrap();
+            let rel_price_infos = self.0.get(&*rate_infos.rel).unwrap();
             if base_price_infos.price_provider == Provider::Unknown
                 || rel_price_infos.price_provider == Provider::Unknown
             {
