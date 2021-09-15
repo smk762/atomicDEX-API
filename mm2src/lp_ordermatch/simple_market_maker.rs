@@ -1,15 +1,16 @@
-use crate::{mm2::lp_ordermatch::lp_bot::{SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry, TickerInfosRegistry,
+use crate::{mm2::lp_ordermatch::lp_bot::TickerInfos,
+            mm2::lp_ordermatch::lp_bot::{Provider, SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry,
                                          TradingBotContext, TradingBotState},
             mm2::lp_ordermatch::{MakerOrder, OrdermatchContext}};
 use common::{executor::{spawn, Timer},
-             log::{error, info},
+             log::{error, info, warn},
              mm_ctx::MmArc,
              mm_error::MmError,
              slurp_url, HttpStatusCode};
 use derive_more::Display;
 use http::{HeaderMap, StatusCode};
 use serde_json::Value as Json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::str::Utf8Error;
 use uuid::Uuid;
 
@@ -152,8 +153,48 @@ async fn update_single_order(
     info!("need to update order: {} of {} - cfg: {}", uuid, key_trade_pair, cfg)
 }
 
-async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: String, _ctx: &MmArc) {
-    info!("need to create order for: {} - cfg: {}", key_trade_pair, cfg)
+async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: String, ctx: &MmArc) {
+    info!("need to create order for: {} - cfg: {}", key_trade_pair, cfg);
+    let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
+    let registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
+    let rates = registry.get_cex_rates(cfg.base, cfg.rel);
+    drop(registry);
+
+    if rates.base_provider == Provider::Unknown || rates.rel_provider == Provider::Unknown {
+        warn!("rates from provider are Unknown - skipping for {}", key_trade_pair);
+        return;
+    }
+
+    if rates.price.is_zero() {
+        warn!("price from provider is zero - skipping for {}", key_trade_pair);
+        return;
+    }
+
+    if rates.last_updated_timestamp == 0 {
+        warn!(
+            "last updated price timestamp is invalid - skipping for {}",
+            key_trade_pair
+        );
+        return;
+    }
+
+    // Elapsed validity is the field defined in the cfg or 5 min by default (300 sec)
+    let time_diff = rates.retrieve_elapsed_times();
+    let elapsed = match time_diff.elapsed() {
+        Ok(elapsed) => elapsed.as_secs_f64(),
+        Err(_) => return,
+    };
+    let elapsed_validity = cfg.price_elapsed_validity.unwrap_or(300.0);
+
+    if elapsed > elapsed_validity {
+        warn!(
+            "last updated price timestamp elapsed {} is more than the elapsed validity {} - skipping for {}",
+            elapsed, elapsed_validity, key_trade_pair,
+        );
+        return;
+    }
+
+    info!("elapsed since last price update: {} secs", elapsed)
 }
 
 async fn process_bot_logic(ctx: &MmArc) {
@@ -233,7 +274,7 @@ async fn fetch_price_tickers(ctx: &MmArc) {
         Err(_) => return,
     };
     if status_code == StatusCode::OK {
-        let model: TickerInfosRegistry = match serde_json::from_str(&body) {
+        let model: HashMap<String, TickerInfos> = match serde_json::from_str(&body) {
             Ok(model) => model,
             Err(_) => {
                 error!("error when unparsing the price fetching answer");
@@ -242,8 +283,8 @@ async fn fetch_price_tickers(ctx: &MmArc) {
         };
         let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
         let mut price_registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
-        *price_registry = model;
-        info!("registry size: {}", price_registry.len());
+        price_registry.0 = model;
+        info!("registry size: {}", price_registry.0.len());
     } else {
         error!("error from price request: {} - {}", status_code, body);
     }

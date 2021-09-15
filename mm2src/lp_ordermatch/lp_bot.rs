@@ -7,6 +7,7 @@ use common::{mm_ctx::{from_ctx, MmArc},
              mm_number::MmNumber};
 use derive_more::Display;
 use futures::lock::Mutex as AsyncMutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, sync::Arc};
 
 #[cfg(test)] use mocktopus::macros::*;
@@ -31,29 +32,30 @@ pub type SimpleMakerBotRegistry = HashMap<String, SimpleCoinMarketMakerCfg>;
 #[derive(Debug, Serialize, Deserialize, Display, Clone)]
 #[display(fmt = "{} {} {} {}", base, rel, min_volume, spread)]
 pub struct SimpleCoinMarketMakerCfg {
-    base: String,
-    rel: String,
-    min_volume: MmNumber,
-    spread: MmNumber,
-    base_confs: u64,
-    base_nota: bool,
-    rel_confs: u64,
-    rel_nota: bool,
-    enable: bool,
-    price_elapsed_validity: Option<f64>,
-    check_last_bidirectional_trade_thresh_hold: Option<bool>,
-    max: Option<bool>,
-    balance_percent: Option<common::mm_number::MmNumber>,
+    pub base: String,
+    pub rel: String,
+    pub min_volume: MmNumber,
+    pub spread: MmNumber,
+    pub base_confs: u64,
+    pub base_nota: bool,
+    pub rel_confs: u64,
+    pub rel_nota: bool,
+    pub enable: bool,
+    pub price_elapsed_validity: Option<f64>,
+    pub check_last_bidirectional_trade_thresh_hold: Option<bool>,
+    pub max: Option<bool>,
+    pub balance_percent: Option<common::mm_number::MmNumber>,
 }
 
-pub type TickerInfosRegistry = HashMap<String, TickerInfos>;
+#[derive(Default)]
+pub struct TickerInfosRegistry(HashMap<String, TickerInfos>);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TickerInfos {
     ticker: String,
-    last_price: String,
+    last_price: MmNumber,
     last_updated: String,
-    last_updated_timestamp: i64,
+    last_updated_timestamp: u64,
     #[serde(rename = "volume24h")]
     volume24_h: String,
     price_provider: Provider,
@@ -67,7 +69,7 @@ pub struct TickerInfos {
     change_24_h_provider: Provider,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum Provider {
     #[serde(rename = "binance")]
     Binance,
@@ -79,11 +81,72 @@ pub enum Provider {
     Unknown,
 }
 
+impl Default for Provider {
+    fn default() -> Self { Provider::Unknown }
+}
+
 #[derive(Default)]
 struct TradingBotContext {
     pub trading_bot_states: AsyncMutex<TradingBotState>,
     pub trading_bot_cfg: AsyncMutex<SimpleMakerBotRegistry>,
     pub price_tickers_registry: AsyncMutex<TickerInfosRegistry>,
+}
+
+#[derive(Default, Clone, Display)]
+#[display(
+    fmt = "{} {} {} {} {:?} {:?}",
+    base,
+    rel,
+    price,
+    last_updated_timestamp,
+    base_provider,
+    rel_provider
+)]
+pub struct RateInfos {
+    base: String,
+    rel: String,
+    price: MmNumber,
+    last_updated_timestamp: u64,
+    base_provider: Provider,
+    rel_provider: Provider,
+}
+
+impl RateInfos {
+    pub fn retrieve_elapsed_times(&self) -> SystemTime {
+        let last_updated_time = UNIX_EPOCH + Duration::from_secs(self.last_updated_timestamp);
+        let time_diff: SystemTime = SystemTime::now() - last_updated_time.elapsed().unwrap();
+        time_diff
+    }
+}
+
+impl TickerInfosRegistry {
+    pub fn get_cex_rates(&self, base: String, rel: String) -> RateInfos {
+        let mut rate_infos = RateInfos::default();
+        rate_infos.base = base.clone();
+        rate_infos.rel = rel.clone();
+        if self.0.contains_key(&*base) && self.0.contains_key(&*rel) {
+            let base_price_infos = self.0.get(&*base).unwrap();
+            let rel_price_infos = self.0.get(&*rel).unwrap();
+            if base_price_infos.price_provider == Provider::Unknown
+                || rel_price_infos.price_provider == Provider::Unknown
+            {
+                return rate_infos;
+            }
+
+            rate_infos.base_provider = base_price_infos.price_provider.clone();
+            rate_infos.rel_provider = rel_price_infos.price_provider.clone();
+            rate_infos.last_updated_timestamp =
+                if base_price_infos.last_updated_timestamp <= rel_price_infos.last_updated_timestamp {
+                    base_price_infos.last_updated_timestamp
+                } else {
+                    rel_price_infos.last_updated_timestamp
+                };
+            rate_infos.price = base_price_infos.last_price.clone() / rel_price_infos.last_price.clone();
+            rate_infos.clone()
+        } else {
+            rate_infos
+        }
+    }
 }
 
 #[cfg_attr(test, mockable)]
