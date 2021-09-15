@@ -121,6 +121,17 @@ impl HttpStatusCode for StopSimpleMakerBotError {
     }
 }
 
+struct TradingPair {
+    base: String,
+    rel: String,
+}
+
+impl TradingPair {
+    pub fn new(base: String, rel: String) -> TradingPair { TradingPair { base, rel } }
+
+    pub fn as_combination(&self) -> String { self.base.clone() + "/" + self.rel.clone().as_str() }
+}
+
 pub async fn tear_down_bot(ctx: MmArc) {
     let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(&ctx).unwrap();
     {
@@ -145,11 +156,11 @@ async fn process_bot_logic(ctx: &MmArc) {
 
     info!("nb_orders: {}", maker_orders.len());
     for (key, value) in maker_orders.into_iter() {
-        let key_trade_pair = value.base.clone() + "/" + value.rel.clone().as_str();
-        match cfg.get(&key_trade_pair) {
+        let key_trade_pair = TradingPair::new(value.base.clone(), value.rel.clone());
+        match cfg.get(&key_trade_pair.as_combination()) {
             Some(coin_cfg) => {
-                update_single_order(coin_cfg.clone(), key, value.clone(), key_trade_pair.clone()).await;
-                memoization_pair_registry.insert(key_trade_pair.clone());
+                update_single_order(coin_cfg.clone(), key, value.clone(), key_trade_pair.as_combination()).await;
+                memoization_pair_registry.insert(key_trade_pair.as_combination());
             },
             _ => continue,
         }
