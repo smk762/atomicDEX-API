@@ -160,13 +160,7 @@ async fn process_bot_logic(ctx: &MmArc) {
         let key_trade_pair = TradingPair::new(value.base.clone(), value.rel.clone());
         match cfg.get(&key_trade_pair.as_combination()) {
             Some(coin_cfg) => {
-                update_single_order(
-                    coin_cfg.clone(),
-                    key.clone(),
-                    value.clone(),
-                    key_trade_pair.as_combination(),
-                )
-                .await;
+                update_single_order(coin_cfg.clone(), *key, value.clone(), key_trade_pair.as_combination()).await;
                 memoization_pair_registry.insert(key_trade_pair.as_combination());
             },
             _ => continue,
