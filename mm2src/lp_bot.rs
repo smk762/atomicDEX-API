@@ -3,7 +3,8 @@
 //  marketmaker
 //
 
-use common::mm_ctx::{from_ctx, MmArc};
+use common::{mm_ctx::{from_ctx, MmArc},
+             mm_number::MmNumber};
 use derive_more::Display;
 use futures::lock::Mutex as AsyncMutex;
 use std::{collections::HashMap, sync::Arc};
@@ -36,8 +37,8 @@ pub type SimpleMakerBotRegistry = HashMap<String, SimpleCoinMarketMakerCfg>;
 pub struct SimpleCoinMarketMakerCfg {
     base: String,
     rel: String,
-    min_volume: String,
-    spread: String,
+    min_volume: MmNumber,
+    spread: MmNumber,
     base_confs: u64,
     base_nota: bool,
     rel_confs: u64,
@@ -46,7 +47,7 @@ pub struct SimpleCoinMarketMakerCfg {
     price_elapsed_validity: Option<f64>,
     check_last_bidirectional_trade_thresh_hold: Option<bool>,
     max: Option<bool>,
-    balance_percent: Option<String>,
+    balance_percent: Option<common::mm_number::MmNumber>,
 }
 
 pub type TickerInfosRegistry = HashMap<String, TickerInfos>;

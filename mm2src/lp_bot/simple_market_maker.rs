@@ -131,8 +131,8 @@ pub async fn tear_down_bot(ctx: MmArc) {
     // todo: cancel all pending orders
 }
 
-async fn update_single_order(_cfg: SimpleCoinMarketMakerCfg, uuid: Uuid, _order: MakerOrder, key_trade_pair: String) {
-    info!("need to update order: {} of {}", uuid, key_trade_pair)
+async fn update_single_order(cfg: SimpleCoinMarketMakerCfg, uuid: Uuid, _order: MakerOrder, key_trade_pair: String) {
+    info!("need to update order: {} of {} - cfg: {}", uuid, key_trade_pair, cfg)
 }
 
 async fn process_bot_logic(ctx: &MmArc) {
@@ -143,7 +143,7 @@ async fn process_bot_logic(ctx: &MmArc) {
     let mut memoization_pair_registry: HashSet<String> = HashSet::new();
     let maker_orders = retrieve_my_maker_orders(ctx).await;
 
-    info!("np_orders: {}", maker_orders.len());
+    info!("nb_orders: {}", maker_orders.len());
     for (key, value) in maker_orders.into_iter() {
         let key_trade_pair = value.base.clone() + "/" + value.rel.clone().as_str();
         match cfg.get(&key_trade_pair) {
