@@ -6,7 +6,7 @@
 use common::mm_ctx::{from_ctx, MmArc};
 use derive_more::Display;
 use futures::lock::Mutex as AsyncMutex;
-use std::{collections::HashMap, sync::atomic::AtomicBool, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 #[cfg(test)] use mocktopus::macros::*;
 
@@ -18,13 +18,15 @@ pub use simple_market_maker_bot::{start_simple_market_maker_bot, stop_simple_mar
 #[path = "lp_bot_tests.rs"]
 mod lp_bot_tests;
 
-#[derive(Default)]
-struct TradingBotStates {
-    /// Used to determine if the bot is running
-    pub is_running: AtomicBool,
+#[derive(PartialEq)]
+enum TradingBotState {
+    Running,
+    Stopping,
+    Stopped,
+}
 
-    /// Used to determine if the bot is shutting down
-    pub is_stopping: AtomicBool,
+impl Default for TradingBotState {
+    fn default() -> Self { TradingBotState::Stopped }
 }
 
 pub type SimpleMakerBotRegistry = HashMap<String, SimpleCoinMarketMakerCfg>;
@@ -82,7 +84,7 @@ pub enum Provider {
 
 #[derive(Default)]
 struct TradingBotContext {
-    pub trading_bot_states: AsyncMutex<TradingBotStates>,
+    pub trading_bot_states: AsyncMutex<TradingBotState>,
     pub trading_bot_cfg: AsyncMutex<SimpleMakerBotRegistry>,
     pub price_tickers_registry: AsyncMutex<TickerInfosRegistry>,
 }

@@ -1,4 +1,5 @@
-use crate::mm2::lp_bot::{SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry, TickerInfosRegistry, TradingBotContext};
+use crate::mm2::lp_bot::{SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry, TickerInfosRegistry, TradingBotContext,
+                         TradingBotState};
 use crate::mm2::lp_ordermatch::{retrieve_my_maker_orders, MakerOrder};
 use common::{executor::{spawn, Timer},
              log::{error, info},
@@ -9,8 +10,7 @@ use derive_more::Display;
 use http::{HeaderMap, StatusCode};
 use serde_json::Value as Json;
 use std::collections::HashSet;
-use std::{str::Utf8Error,
-          sync::atomic::{AtomicBool, Ordering}};
+use std::str::Utf8Error;
 use uuid::Uuid;
 
 // !< constants
@@ -168,9 +168,8 @@ pub async fn lp_bot_loop(ctx: MmArc) {
         }
         let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(&ctx).unwrap();
         let mut states = simple_market_maker_bot_ctx.trading_bot_states.lock().await;
-        if states.is_stopping.load(Ordering::Relaxed) {
-            states.is_running = AtomicBool::new(false);
-            states.is_stopping = AtomicBool::new(false);
+        if *states == TradingBotState::Stopping {
+            *states = TradingBotState::Stopped;
             // todo: verify if there is a possible deadlock here if i use states inside tear_down_bot
             tear_down_bot(ctx).await;
             break;
@@ -221,7 +220,7 @@ pub async fn lp_price_service_loop(ctx: MmArc) {
 
         let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(&ctx).unwrap();
         let states = simple_market_maker_bot_ctx.trading_bot_states.lock().await;
-        if states.is_stopping.load(Ordering::Relaxed) {
+        if *states == TradingBotState::Stopping {
             info!("stop price service loop");
             break;
         }
@@ -236,12 +235,12 @@ pub async fn start_simple_market_maker_bot(ctx: MmArc, req: StartSimpleMakerBotR
     let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(&ctx).unwrap();
     {
         let mut states = simple_market_maker_bot_ctx.trading_bot_states.lock().await;
-        if states.is_running.load(Ordering::Relaxed) {
+        if *states == TradingBotState::Running {
             return MmError::err(StartSimpleMakerBotError::AlreadyStarted);
         }
         let mut trading_bot_cfg = simple_market_maker_bot_ctx.trading_bot_cfg.lock().await;
         *trading_bot_cfg = req.cfg;
-        states.is_running = AtomicBool::new(true);
+        *states = TradingBotState::Running;
     }
 
     info!("simple_market_maker_bot successfully started");
@@ -256,13 +255,13 @@ pub async fn stop_simple_market_maker_bot(ctx: MmArc, _req: Json) -> StopSimpleM
     let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(&ctx).unwrap();
     {
         let mut states = simple_market_maker_bot_ctx.trading_bot_states.lock().await;
-        if !states.is_running.load(Ordering::Relaxed) {
+        if *states == TradingBotState::Stopped {
             return MmError::err(StopSimpleMakerBotError::AlreadyStopped);
-        } else if states.is_stopping.load(Ordering::Relaxed) {
+        } else if *states == TradingBotState::Stopping {
             return MmError::err(StopSimpleMakerBotError::AlreadyStopping);
         }
 
-        states.is_stopping = AtomicBool::new(true);
+        *states = TradingBotState::Stopping;
     }
     info!("simple_market_maker_bot will stop within 30 seconds");
     Ok(StopSimpleMakerBotRes {
