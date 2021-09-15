@@ -194,7 +194,10 @@ async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: Stri
         return;
     }
 
-    info!("elapsed since last price update: {} secs", elapsed)
+    info!("elapsed since last price update: {} secs", elapsed);
+
+    let calculated_price = rates.price * cfg.spread;
+    info!("calculated price is: {}", calculated_price);
 }
 
 async fn process_bot_logic(ctx: &MmArc) {
