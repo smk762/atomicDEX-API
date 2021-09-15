@@ -122,8 +122,8 @@ impl RateInfos {
 impl TickerInfosRegistry {
     pub fn get_cex_rates(&self, base: String, rel: String) -> RateInfos {
         let mut rate_infos = RateInfos::default();
-        rate_infos.base = base.clone();
-        rate_infos.rel = rel.clone();
+        rate_infos.base = base;
+        rate_infos.rel = rel;
         if self.0.contains_key(&*base) && self.0.contains_key(&*rel) {
             let base_price_infos = self.0.get(&*base).unwrap();
             let rel_price_infos = self.0.get(&*rel).unwrap();
@@ -142,7 +142,7 @@ impl TickerInfosRegistry {
                     rel_price_infos.last_updated_timestamp
                 };
             rate_infos.price = base_price_infos.last_price.clone() / rel_price_infos.last_price.clone();
-            rate_infos.clone()
+            rate_infos
         } else {
             rate_infos
         }
