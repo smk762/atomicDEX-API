@@ -7,6 +7,7 @@ use serde_json::Value as Json;
 
 mod tests {
     use super::*;
+    use http::HeaderMap;
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
@@ -59,7 +60,7 @@ mod tests {
         .unwrap();
         let (_dump_log, _dump_dashboard) = mm.mm_dump();
         log!({"Log path: {}", mm.log_path.display()});
-        let functor = || {
+        fn start_simple_market_maker_bot_rpc(mm: &MarketMakerIt) -> (StatusCode, String, HeaderMap) {
             block_on(mm.rpc(json!({
                  "userpass": "password",
                  "mmrpc": "2.0",
@@ -83,19 +84,19 @@ mod tests {
             "id": 0
             })))
             .unwrap()
-        };
-        let mut start_simple_market_maker_bot = functor();
+        }
+        let mut start_simple_market_maker_bot = start_simple_market_maker_bot_rpc(&mm);
 
         // Must be 200
         assert_eq!(start_simple_market_maker_bot.0, 200);
 
         // Let's repeat - should get an already started
-        start_simple_market_maker_bot = functor();
+        start_simple_market_maker_bot = start_simple_market_maker_bot_rpc(&mm);
 
         // Must be 400
         assert_eq!(start_simple_market_maker_bot.0, 400);
 
-        let functor = || {
+        fn stop_simple_market_maker_bot_rpc(mm: &MarketMakerIt) -> (StatusCode, String, HeaderMap) {
             block_on(mm.rpc(json!({
                 "userpass": "password",
                 "mmrpc": "2.0",
@@ -104,13 +105,13 @@ mod tests {
                 "id": 0
             })))
             .unwrap()
-        };
+        }
 
-        let mut stop_simple_market_maker_bot = functor();
+        let mut stop_simple_market_maker_bot = stop_simple_market_maker_bot_rpc(&mm);
         // Must be 200
         assert_eq!(stop_simple_market_maker_bot.0, 200);
 
-        stop_simple_market_maker_bot = functor();
+        stop_simple_market_maker_bot = stop_simple_market_maker_bot_rpc(&mm);
 
         assert_eq!(stop_simple_market_maker_bot.0, 400);
     }
