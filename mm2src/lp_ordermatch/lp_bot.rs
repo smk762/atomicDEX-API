@@ -16,6 +16,10 @@ use std::{collections::HashMap, sync::Arc};
 pub use simple_market_maker_bot::{process_price_request, start_simple_market_maker_bot, stop_simple_market_maker_bot,
                                   StartSimpleMakerBotRequest};
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "simple_market_maker_tests.rs"]
+pub mod simple_market_maker_tests;
+
 #[derive(PartialEq)]
 enum TradingBotState {
     Running,
@@ -86,10 +90,10 @@ impl Default for Provider {
 }
 
 #[derive(Default)]
-struct TradingBotContext {
-    pub trading_bot_states: AsyncMutex<TradingBotState>,
-    pub trading_bot_cfg: AsyncMutex<SimpleMakerBotRegistry>,
-    pub price_tickers_registry: AsyncMutex<TickerInfosRegistry>,
+pub struct TradingBotContext {
+    trading_bot_states: AsyncMutex<TradingBotState>,
+    trading_bot_cfg: AsyncMutex<SimpleMakerBotRegistry>,
+    price_tickers_registry: AsyncMutex<TickerInfosRegistry>,
 }
 
 #[derive(Default, Clone, Display)]
