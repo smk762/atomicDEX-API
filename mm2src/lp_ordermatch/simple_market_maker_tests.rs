@@ -1,5 +1,5 @@
 use crate::mm2::lp_ordermatch::lp_bot::Provider;
-use crate::mm2::lp_ordermatch::TradingBotContext;
+use crate::mm2::lp_ordermatch::lp_bot::TradingBotContext;
 use common::block_on;
 use common::mm_ctx::MmCtxBuilder;
 use common::privkey::key_pair_from_seed;
