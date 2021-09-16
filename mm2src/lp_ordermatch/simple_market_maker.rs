@@ -2,12 +2,16 @@ use crate::{mm2::lp_ordermatch::lp_bot::TickerInfos,
             mm2::lp_ordermatch::lp_bot::{Provider, SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry,
                                          TradingBotContext, TradingBotState},
             mm2::lp_ordermatch::{MakerOrder, OrdermatchContext}};
+use bigdecimal::Zero;
+use coins::lp_coinfind;
+use common::mm_number::MmNumber;
 use common::{executor::{spawn, Timer},
              log::{error, info, warn},
              mm_ctx::MmArc,
              mm_error::MmError,
              slurp_url, HttpStatusCode};
 use derive_more::Display;
+use futures::compat::Future01CompatExt;
 use http::{HeaderMap, StatusCode};
 use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
@@ -153,11 +157,59 @@ async fn update_single_order(
     info!("need to update order: {} of {} - cfg: {}", uuid, key_trade_pair, cfg)
 }
 
+// This function check if coin is enabled and if check_balance is set to true and the balance is non-zero it's returned for later usage
+// e.g i want to use 50% of my KMD balance instead of max, will be used later.
+async fn coin_find_and_checks(
+    ticker: String,
+    key_trade_pair: String,
+    check_balance: bool,
+    ctx: &MmArc,
+) -> (bool, MmNumber) {
+    return match lp_coinfind(ctx, ticker.as_str()).await {
+        Ok(None) => {
+            warn!("{} not enabled - skipping for {}", ticker, key_trade_pair);
+            (false, MmNumber::default())
+        },
+        Err(err) => {
+            warn!(
+                "err with {} - reason: {} - skipping for {}",
+                ticker, err, key_trade_pair
+            );
+            (false, MmNumber::default())
+        },
+        Ok(Some(t)) => {
+            if check_balance {
+                let coin_balance = match t.my_balance().compat().await {
+                    Ok(coin_balance) => coin_balance,
+                    Err(err) => {
+                        warn!(
+                            "err with balance: {} - reason: {} - skipping for {}",
+                            ticker,
+                            err.to_string(),
+                            key_trade_pair
+                        );
+                        return (false, MmNumber::default());
+                    },
+                };
+                if coin_balance.spendable.is_zero() {
+                    warn!("balance for: {} is zero - skipping for {}", ticker, key_trade_pair);
+                    return (false, MmNumber::default());
+                }
+                (true, MmNumber::from(coin_balance.spendable))
+            } else {
+                (true, MmNumber::default())
+            }
+        },
+    };
+}
+
+async fn vwap_apply(_calculated_price: &mut MmNumber) {}
+
 async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: String, ctx: &MmArc) {
     info!("need to create order for: {} - cfg: {}", key_trade_pair, cfg);
     let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
     let registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
-    let rates = registry.get_cex_rates(cfg.base, cfg.rel);
+    let rates = registry.get_cex_rates(cfg.base.clone(), cfg.rel.clone());
     drop(registry);
 
     if rates.base_provider == Provider::Unknown || rates.rel_provider == Provider::Unknown {
@@ -194,10 +246,20 @@ async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: Stri
         return;
     }
 
+    let (base_checks, base_balance) = coin_find_and_checks(cfg.base.clone(), key_trade_pair.clone(), true, ctx).await;
+    let (rel_checks, _) = coin_find_and_checks(cfg.rel.clone(), key_trade_pair.clone(), false, ctx).await;
+    if !base_checks || !rel_checks {
+        return;
+    }
+
+    info!("balance for {} is {}", cfg.base, base_balance);
     info!("elapsed since last price update: {} secs", elapsed);
 
-    let calculated_price = rates.price * cfg.spread;
+    let mut calculated_price = rates.price * cfg.spread;
     info!("calculated price is: {}", calculated_price);
+    if cfg.check_last_bidirectional_trade_thresh_hold.unwrap_or(false) {
+        vwap_apply(&mut calculated_price).await;
+    }
 }
 
 async fn process_bot_logic(ctx: &MmArc) {

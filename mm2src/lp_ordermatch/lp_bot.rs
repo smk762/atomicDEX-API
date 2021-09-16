@@ -150,10 +150,8 @@ impl TickerInfosRegistry {
                     rel_price_infos.last_updated_timestamp
                 };
             rate_infos.price = base_price_infos.last_price.clone() / rel_price_infos.last_price.clone();
-            rate_infos
-        } else {
-            rate_infos
         }
+        rate_infos
     }
 }
 
