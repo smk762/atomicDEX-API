@@ -180,7 +180,7 @@ async fn coin_find_and_checks(
         Ok(Some(t)) => t,
     };
 
-    if !check_balance {
+    if check_balance {
         let coin_balance = match coin.my_balance().compat().await {
             Ok(coin_balance) => coin_balance,
             Err(err) => {
