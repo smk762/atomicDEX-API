@@ -165,42 +165,41 @@ async fn coin_find_and_checks(
     check_balance: bool,
     ctx: &MmArc,
 ) -> (bool, MmNumber) {
-    return match lp_coinfind(ctx, ticker.as_str()).await {
+    let coin = match lp_coinfind(ctx, ticker.as_str()).await {
         Ok(None) => {
             warn!("{} not enabled - skipping for {}", ticker, key_trade_pair);
-            (false, MmNumber::default())
+            return (false, MmNumber::default());
         },
         Err(err) => {
             warn!(
                 "err with {} - reason: {} - skipping for {}",
                 ticker, err, key_trade_pair
             );
-            (false, MmNumber::default())
+            return (false, MmNumber::default());
         },
-        Ok(Some(t)) => {
-            if check_balance {
-                let coin_balance = match t.my_balance().compat().await {
-                    Ok(coin_balance) => coin_balance,
-                    Err(err) => {
-                        warn!(
-                            "err with balance: {} - reason: {} - skipping for {}",
-                            ticker,
-                            err.to_string(),
-                            key_trade_pair
-                        );
-                        return (false, MmNumber::default());
-                    },
-                };
-                if coin_balance.spendable.is_zero() {
-                    warn!("balance for: {} is zero - skipping for {}", ticker, key_trade_pair);
-                    return (false, MmNumber::default());
-                }
-                (true, MmNumber::from(coin_balance.spendable))
-            } else {
-                (true, MmNumber::default())
-            }
-        },
+        Ok(Some(t)) => t,
     };
+
+    if !check_balance {
+        let coin_balance = match coin.my_balance().compat().await {
+            Ok(coin_balance) => coin_balance,
+            Err(err) => {
+                warn!(
+                    "err with balance: {} - reason: {} - skipping for {}",
+                    ticker,
+                    err.to_string(),
+                    key_trade_pair
+                );
+                return (false, MmNumber::default());
+            },
+        };
+        if coin_balance.spendable.is_zero() {
+            warn!("balance for: {} is zero - skipping for {}", ticker, key_trade_pair);
+            return (false, MmNumber::default());
+        }
+        return (true, MmNumber::from(coin_balance.spendable));
+    }
+    (true, MmNumber::default())
 }
 
 async fn vwap_apply(_calculated_price: &mut MmNumber) {}
