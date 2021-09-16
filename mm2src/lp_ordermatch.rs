@@ -3529,7 +3529,7 @@ impl OrderbookItem {
 fn get_true() -> bool { true }
 
 #[derive(Deserialize)]
-struct SetPriceReq {
+pub struct SetPriceReq {
     base: String,
     rel: String,
     price: MmNumber,
@@ -3709,7 +3709,7 @@ impl<'a> From<&'a MakerOrder> for MakerOrderForRpc<'a> {
 /// https://github.com/KomodoPlatform/atomicDEX-API/issues/794
 async fn cancel_orders_on_error<T, E>(ctx: &MmArc, req: &SetPriceReq, error: E) -> Result<T, E> {
     if req.cancel_previous {
-        let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
+        let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
         cancel_previous_maker_orders(ctx, &ordermatch_ctx, &req.base, &req.rel).await;
     }
     Err(error)
@@ -3732,36 +3732,34 @@ async fn get_max_volume(ctx: &MmArc, my_coin: &MmCoinEnum, other_coin: &MmCoinEn
     ))
 }
 
-pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
-    let req: SetPriceReq = try_s!(json::from_value(req));
-
-    let base_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, &req.base).await) {
+pub async fn set_price_strong_type(ctx: &MmArc, req: SetPriceReq) -> Result<MakerOrder, String> {
+    let base_coin: MmCoinEnum = match try_s!(lp_coinfind(ctx, &req.base).await) {
         Some(coin) => coin,
         None => return ERR!("Base coin {} is not found", req.base),
     };
 
-    let rel_coin: MmCoinEnum = match try_s!(lp_coinfind(&ctx, &req.rel).await) {
+    let rel_coin: MmCoinEnum = match try_s!(lp_coinfind(ctx, &req.rel).await) {
         Some(coin) => coin,
         None => return ERR!("Rel coin {} is not found", req.rel),
     };
 
-    if base_coin.wallet_only(&ctx) {
+    if base_coin.wallet_only(ctx) {
         return ERR!("Base coin {} is wallet only", req.base);
     }
-    if rel_coin.wallet_only(&ctx) {
+    if rel_coin.wallet_only(ctx) {
         return ERR!("Rel coin {} is wallet only", req.rel);
     }
 
     let volume = if req.max {
         try_s!(
-            get_max_volume(&ctx, &base_coin, &rel_coin)
-                .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
+            get_max_volume(ctx, &base_coin, &rel_coin)
+                .or_else(|e| cancel_orders_on_error(ctx, &req, e))
                 .await
         )
     } else {
         try_s!(
             check_balance_for_maker_swap(
-                &ctx,
+                ctx,
                 &base_coin,
                 &rel_coin,
                 req.volume.clone(),
@@ -3769,16 +3767,16 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
                 None,
                 FeeApproxStage::OrderIssue
             )
-            .or_else(|e| cancel_orders_on_error(&ctx, &req, e))
+            .or_else(|e| cancel_orders_on_error(ctx, &req, e))
             .await
         );
         req.volume.clone()
     };
 
-    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(&ctx));
+    let ordermatch_ctx = try_s!(OrdermatchContext::from_ctx(ctx));
 
     if req.cancel_previous {
-        cancel_previous_maker_orders(&ctx, &ordermatch_ctx, &req.base, &req.rel).await;
+        cancel_previous_maker_orders(ctx, &ordermatch_ctx, &req.base, &req.rel).await;
     }
 
     let conf_settings = OrderConfirmationsSettings {
@@ -3797,7 +3795,7 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
     let new_order = try_s!(builder.build());
 
     let request_orderbook = false;
-    try_s!(subscribe_to_orderbook_topic(&ctx, &new_order.base, &new_order.rel, request_orderbook).await);
+    try_s!(subscribe_to_orderbook_topic(ctx, &new_order.base, &new_order.rel, request_orderbook).await);
     save_my_new_maker_order(ctx.clone(), &new_order).await;
     maker_order_created_p2p_notify(
         ctx.clone(),
@@ -3806,12 +3804,17 @@ pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, Strin
         rel_coin.coin_protocol_info(),
     )
     .await;
-    let rpc_result = MakerOrderForRpc::from(&new_order);
-    let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
 
     let mut my_orders = ordermatch_ctx.my_maker_orders.lock().await;
-    my_orders.insert(new_order.uuid, new_order);
+    my_orders.insert(new_order.uuid, new_order.clone());
+    Ok(new_order)
+}
 
+pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
+    let req: SetPriceReq = try_s!(json::from_value(req));
+    let maker_order = set_price_strong_type(&ctx, req).await?;
+    let rpc_result = MakerOrderForRpc::from(&maker_order);
+    let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
     Ok(try_s!(Response::builder().body(res)))
 }
 

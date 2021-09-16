@@ -1,7 +1,7 @@
 use crate::{mm2::lp_ordermatch::lp_bot::TickerInfos,
             mm2::lp_ordermatch::lp_bot::{Provider, SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry,
                                          TradingBotContext, TradingBotState},
-            mm2::lp_ordermatch::{MakerOrder, OrdermatchContext}};
+            mm2::lp_ordermatch::{set_price_strong_type, MakerOrder, OrdermatchContext, SetPriceReq}};
 use bigdecimal::Zero;
 use coins::lp_coinfind;
 use common::mm_number::MmNumber;
@@ -259,6 +259,28 @@ async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: Stri
     if cfg.check_last_bidirectional_trade_thresh_hold.unwrap_or(false) {
         vwap_apply(&mut calculated_price).await;
     }
+    let req = SetPriceReq {
+        base: cfg.base.clone(),
+        rel: cfg.rel.clone(),
+        price: calculated_price,
+        max: cfg.max.unwrap_or(false),
+        volume: Default::default(),
+        min_volume: None,
+        cancel_previous: true,
+        base_confs: cfg.base_confs,
+        base_nota: cfg.base_nota,
+        rel_confs: cfg.rel_confs,
+        rel_nota: cfg.rel_nota,
+        save_in_history: true,
+    };
+    let resp = match set_price_strong_type(ctx, req).await {
+        Ok(x) => x,
+        Err(err) => {
+            warn!("Couldn't place the order for {} - reason: {}", key_trade_pair, err);
+            return;
+        },
+    };
+    info!("Successfully placed order for {} - uuid: {}", key_trade_pair, resp.uuid);
 }
 
 async fn process_bot_logic(ctx: &MmArc) {
