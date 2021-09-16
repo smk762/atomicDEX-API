@@ -259,13 +259,30 @@ async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: Stri
     if cfg.check_last_bidirectional_trade_thresh_hold.unwrap_or(false) {
         vwap_apply(&mut calculated_price).await;
     }
+
+    let volume = match cfg.balance_percent {
+        Some(balance_percent) => balance_percent * base_balance.clone(),
+        None => MmNumber::default(),
+    };
+
+    let min_vol: Option<MmNumber> = match cfg.min_volume {
+        Some(min_volume) => {
+            if cfg.max.unwrap_or(false) {
+                Option::from(min_volume * base_balance.clone())
+            } else {
+                Option::from(min_volume * volume.clone())
+            }
+        },
+        None => None,
+    };
+
     let req = SetPriceReq {
         base: cfg.base.clone(),
         rel: cfg.rel.clone(),
         price: calculated_price,
         max: cfg.max.unwrap_or(false),
-        volume: Default::default(),
-        min_volume: None,
+        volume,
+        min_volume: min_vol,
         cancel_previous: true,
         base_confs: cfg.base_confs,
         base_nota: cfg.base_nota,

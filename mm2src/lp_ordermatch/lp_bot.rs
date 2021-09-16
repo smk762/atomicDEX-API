@@ -30,11 +30,11 @@ impl Default for TradingBotState {
 pub type SimpleMakerBotRegistry = HashMap<String, SimpleCoinMarketMakerCfg>;
 
 #[derive(Debug, Serialize, Deserialize, Display, Clone)]
-#[display(fmt = "{} {} {} {}", base, rel, min_volume, spread)]
+#[display(fmt = "{} {} {} {}", base, rel, enable, spread)]
 pub struct SimpleCoinMarketMakerCfg {
     pub base: String,
     pub rel: String,
-    pub min_volume: MmNumber,
+    pub min_volume: Option<MmNumber>,
     pub spread: MmNumber,
     pub base_confs: Option<u64>,
     pub base_nota: Option<bool>,
