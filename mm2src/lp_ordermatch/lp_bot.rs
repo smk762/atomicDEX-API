@@ -48,7 +48,7 @@ pub struct SimpleCoinMarketMakerCfg {
     pub price_elapsed_validity: Option<f64>,
     pub check_last_bidirectional_trade_thresh_hold: Option<bool>,
     pub max: Option<bool>,
-    pub balance_percent: Option<common::mm_number::MmNumber>,
+    pub balance_percent: Option<MmNumber>,
 }
 
 #[derive(Default)]

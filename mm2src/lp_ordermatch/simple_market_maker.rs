@@ -2,7 +2,7 @@ use crate::mm2::lp_ordermatch::lp_bot::RateInfos;
 use crate::{mm2::lp_ordermatch::lp_bot::TickerInfos,
             mm2::lp_ordermatch::lp_bot::{Provider, SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry,
                                          TradingBotContext, TradingBotState},
-            mm2::lp_ordermatch::{cancel_order, set_price_strong_type, MakerOrder, OrdermatchContext, SetPriceReq}};
+            mm2::lp_ordermatch::{cancel_order, create_maker_order, MakerOrder, OrdermatchContext, SetPriceReq}};
 use bigdecimal::Zero;
 use coins::lp_coinfind;
 use common::mm_number::MmNumber;
@@ -301,7 +301,7 @@ async fn update_single_order(
     let registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
     let rates = registry.get_cex_rates(cfg.base.clone(), cfg.rel.clone());
     drop(registry);
-    checks_order_prerequisites(ctx, &rates, &cfg, key_trade_pair.clone(), Option::from(uuid)).await?;
+    checks_order_prerequisites(ctx, &rates, &cfg, key_trade_pair.clone(), Some(uuid)).await?;
     Ok(true)
 }
 
@@ -337,9 +337,9 @@ async fn create_single_order(
     let min_vol: Option<MmNumber> = match cfg.min_volume {
         Some(min_volume) => {
             if cfg.max.unwrap_or(false) {
-                Option::from(min_volume * base_balance.clone())
+                Some(min_volume * base_balance.clone())
             } else {
-                Option::from(min_volume * volume.clone())
+                Some(min_volume * volume.clone())
             }
         },
         None => None,
@@ -359,7 +359,7 @@ async fn create_single_order(
         rel_nota: cfg.rel_nota,
         save_in_history: true,
     };
-    let resp = match set_price_strong_type(ctx, req).await {
+    let resp = match create_maker_order(ctx, req).await {
         Ok(x) => x,
         Err(err) => {
             warn!("Couldn't place the order for {} - reason: {}", key_trade_pair, err);

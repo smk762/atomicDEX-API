@@ -3732,7 +3732,7 @@ async fn get_max_volume(ctx: &MmArc, my_coin: &MmCoinEnum, other_coin: &MmCoinEn
     ))
 }
 
-pub async fn set_price_strong_type(ctx: &MmArc, req: SetPriceReq) -> Result<MakerOrder, String> {
+pub async fn create_maker_order(ctx: &MmArc, req: SetPriceReq) -> Result<MakerOrder, String> {
     let base_coin: MmCoinEnum = match try_s!(lp_coinfind(ctx, &req.base).await) {
         Some(coin) => coin,
         None => return ERR!("Base coin {} is not found", req.base),
@@ -3812,7 +3812,7 @@ pub async fn set_price_strong_type(ctx: &MmArc, req: SetPriceReq) -> Result<Make
 
 pub async fn set_price(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let req: SetPriceReq = try_s!(json::from_value(req));
-    let maker_order = set_price_strong_type(&ctx, req).await?;
+    let maker_order = create_maker_order(&ctx, req).await?;
     let rpc_result = MakerOrderForRpc::from(&maker_order);
     let res = try_s!(json::to_vec(&json!({ "result": rpc_result })));
     Ok(try_s!(Response::builder().body(res)))
