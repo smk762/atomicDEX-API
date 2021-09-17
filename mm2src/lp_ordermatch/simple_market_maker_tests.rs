@@ -29,12 +29,12 @@ mod tests {
             last_price: MmNumber::from("10"),
             last_updated: "".to_string(),
             last_updated_timestamp: 0,
-            volume24_h: "25000".to_string(),
+            volume24_h: MmNumber::from("25000"),
             price_provider: Provider::Binance,
             volume_provider: Provider::Coinpaprika,
             sparkline_7_d: None,
             sparkline_provider: Default::default(),
-            change_24_h: "".to_string(),
+            change_24_h: MmNumber::default(),
             change_24_h_provider: Default::default(),
         });
 
@@ -43,12 +43,12 @@ mod tests {
             last_price: MmNumber::from("500.0"),
             last_updated: "".to_string(),
             last_updated_timestamp: 0,
-            volume24_h: "25000".to_string(),
+            volume24_h: MmNumber::from("25000"),
             price_provider: Provider::Coingecko,
             volume_provider: Provider::Binance,
             sparkline_7_d: None,
             sparkline_provider: Default::default(),
-            change_24_h: "".to_string(),
+            change_24_h: MmNumber::default(),
             change_24_h_provider: Default::default(),
         });
 

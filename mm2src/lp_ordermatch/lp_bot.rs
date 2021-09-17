@@ -61,14 +61,14 @@ pub struct TickerInfos {
     last_updated: String,
     last_updated_timestamp: u64,
     #[serde(rename = "volume24h")]
-    volume24_h: String,
+    volume24_h: MmNumber,
     price_provider: Provider,
     volume_provider: Provider,
     #[serde(rename = "sparkline_7d")]
     sparkline_7_d: Option<Vec<f64>>,
     sparkline_provider: Provider,
     #[serde(rename = "change_24h")]
-    change_24_h: String,
+    change_24_h: MmNumber,
     #[serde(rename = "change_24h_provider")]
     change_24_h_provider: Provider,
 }
