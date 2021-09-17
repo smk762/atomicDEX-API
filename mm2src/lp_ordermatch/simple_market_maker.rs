@@ -1,7 +1,8 @@
+use crate::mm2::lp_ordermatch::lp_bot::RateInfos;
 use crate::{mm2::lp_ordermatch::lp_bot::TickerInfos,
             mm2::lp_ordermatch::lp_bot::{Provider, SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry,
                                          TradingBotContext, TradingBotState},
-            mm2::lp_ordermatch::{set_price_strong_type, MakerOrder, OrdermatchContext, SetPriceReq}};
+            mm2::lp_ordermatch::{cancel_order, set_price_strong_type, MakerOrder, OrdermatchContext, SetPriceReq}};
 use bigdecimal::Zero;
 use coins::lp_coinfind;
 use common::mm_number::MmNumber;
@@ -24,6 +25,32 @@ const KMD_PRICE_ENDPOINT: &str = "https://prices.komodo.live:1313/api/v1/tickers
 // !< Type definitions
 pub type StartSimpleMakerBotResult = Result<StartSimpleMakerBotRes, MmError<StartSimpleMakerBotError>>;
 pub type StopSimpleMakerBotResult = Result<StopSimpleMakerBotRes, MmError<StopSimpleMakerBotError>>;
+pub type OrderProcessingResult = Result<bool, MmError<OrderProcessingError>>;
+
+#[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
+#[serde(tag = "error_type", content = "error_data")]
+pub enum OrderProcessingError {
+    #[display(fmt = "The provider is unknown - skipping")]
+    ProviderUnknown,
+    #[display(fmt = "The rates price is zero - skipping")]
+    PriceIsZero,
+    #[display(fmt = "The rates last updated timestamp is invalid - skipping")]
+    LastUpdatedTimestampInvalid,
+    #[display(fmt = "The price elapsed validity is invalid - skipping")]
+    PriceElapsedValidityExpired,
+    #[display(fmt = "Unable to parse/treat elapsed time - skipping")]
+    PriceElapsedValidityUntreatable,
+    #[display(fmt = "Asset not enabled - skipping")]
+    AssetNotEnabled,
+    #[display(fmt = "Internal coin find error - skipping")]
+    InternalCoinFindError,
+    #[display(fmt = "Internal error when retrieving balance - skipping")]
+    BalanceInternalError,
+    #[display(fmt = "Balance is zero - skipping")]
+    BalanceIsZero,
+    #[display(fmt = "Error when creating the order")]
+    OrderCreationError,
+}
 
 #[allow(dead_code)]
 #[derive(Deserialize)]
@@ -147,16 +174,6 @@ pub async fn tear_down_bot(ctx: MmArc) {
     // todo: cancel all pending orders
 }
 
-async fn update_single_order(
-    cfg: SimpleCoinMarketMakerCfg,
-    uuid: Uuid,
-    _order: MakerOrder,
-    key_trade_pair: String,
-    _ctx: &MmArc,
-) {
-    info!("need to update order: {} of {} - cfg: {}", uuid, key_trade_pair, cfg)
-}
-
 // This function check if coin is enabled and if check_balance is set to true and the balance is non-zero it's returned for later usage
 // e.g i want to use 50% of my KMD balance instead of max, will be used later.
 async fn coin_find_and_checks(
@@ -164,18 +181,18 @@ async fn coin_find_and_checks(
     key_trade_pair: String,
     check_balance: bool,
     ctx: &MmArc,
-) -> (bool, MmNumber) {
+) -> Result<MmNumber, MmError<OrderProcessingError>> {
     let coin = match lp_coinfind(ctx, ticker.as_str()).await {
         Ok(None) => {
             warn!("{} not enabled - skipping for {}", ticker, key_trade_pair);
-            return (false, MmNumber::default());
+            return MmError::err(OrderProcessingError::AssetNotEnabled);
         },
         Err(err) => {
             warn!(
                 "err with {} - reason: {} - skipping for {}",
                 ticker, err, key_trade_pair
             );
-            return (false, MmNumber::default());
+            return MmError::err(OrderProcessingError::InternalCoinFindError);
         },
         Ok(Some(t)) => t,
     };
@@ -190,35 +207,57 @@ async fn coin_find_and_checks(
                     err.to_string(),
                     key_trade_pair
                 );
-                return (false, MmNumber::default());
+                return MmError::err(OrderProcessingError::BalanceInternalError);
             },
         };
         if coin_balance.spendable.is_zero() {
             warn!("balance for: {} is zero - skipping for {}", ticker, key_trade_pair);
-            return (false, MmNumber::default());
+            return MmError::err(OrderProcessingError::BalanceIsZero);
         }
-        return (true, MmNumber::from(coin_balance.spendable));
+        return Ok(MmNumber::from(coin_balance.spendable));
     }
-    (true, MmNumber::default())
+    Ok(MmNumber::default())
 }
 
 async fn vwap_apply(_calculated_price: &mut MmNumber) {}
 
-async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: String, ctx: &MmArc) {
-    info!("need to create order for: {} - cfg: {}", key_trade_pair, cfg);
-    let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
-    let registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
-    let rates = registry.get_cex_rates(cfg.base.clone(), cfg.rel.clone());
-    drop(registry);
+async fn cancel_single_order(ctx: &MmArc, uuid: Uuid) {
+    info!("cancelling single order with uuid: {}", uuid);
+    let resp = match cancel_order(ctx.clone(), json!({"uuid": uuid.to_string()})).await {
+        Ok(resp) => resp,
+        Err(_) => {
+            warn!("Couldn't cancel the order with uuid: {}", uuid);
+            return;
+        },
+    };
 
+    if resp.status() == StatusCode::OK {
+        info!("Order with uuid: {} successfully cancelled", uuid);
+    }
+}
+
+async fn checks_order_prerequisites(
+    ctx: &MmArc,
+    rates: &RateInfos,
+    cfg: &SimpleCoinMarketMakerCfg,
+    key_trade_pair: String,
+    uuid: Option<Uuid>,
+) -> OrderProcessingResult {
+    let cancel_functor = async move || {
+        if let Some(uuid) = uuid {
+            cancel_single_order(ctx, uuid).await
+        };
+    };
     if rates.base_provider == Provider::Unknown || rates.rel_provider == Provider::Unknown {
         warn!("rates from provider are Unknown - skipping for {}", key_trade_pair);
-        return;
+        cancel_functor().await;
+        return MmError::err(OrderProcessingError::ProviderUnknown);
     }
 
     if rates.price.is_zero() {
         warn!("price from provider is zero - skipping for {}", key_trade_pair);
-        return;
+        cancel_functor().await;
+        return MmError::err(OrderProcessingError::PriceIsZero);
     }
 
     if rates.last_updated_timestamp == 0 {
@@ -226,14 +265,15 @@ async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: Stri
             "last updated price timestamp is invalid - skipping for {}",
             key_trade_pair
         );
-        return;
+        cancel_functor().await;
+        return MmError::err(OrderProcessingError::LastUpdatedTimestampInvalid);
     }
 
     // Elapsed validity is the field defined in the cfg or 5 min by default (300 sec)
     let time_diff = rates.retrieve_elapsed_times();
     let elapsed = match time_diff.elapsed() {
         Ok(elapsed) => elapsed.as_secs_f64(),
-        Err(_) => return,
+        Err(_) => return MmError::err(OrderProcessingError::PriceElapsedValidityUntreatable),
     };
     let elapsed_validity = cfg.price_elapsed_validity.unwrap_or(300.0);
 
@@ -242,17 +282,46 @@ async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: Stri
             "last updated price timestamp elapsed {} is more than the elapsed validity {} - skipping for {}",
             elapsed, elapsed_validity, key_trade_pair,
         );
-        return;
+        cancel_functor().await;
+        return MmError::err(OrderProcessingError::PriceElapsedValidityExpired);
     }
+    info!("elapsed since last price update: {} secs", elapsed);
+    Ok(true)
+}
 
-    let (base_checks, base_balance) = coin_find_and_checks(cfg.base.clone(), key_trade_pair.clone(), true, ctx).await;
-    let (rel_checks, _) = coin_find_and_checks(cfg.rel.clone(), key_trade_pair.clone(), false, ctx).await;
-    if !base_checks || !rel_checks {
-        return;
-    }
+async fn update_single_order(
+    cfg: SimpleCoinMarketMakerCfg,
+    uuid: Uuid,
+    _order: MakerOrder,
+    key_trade_pair: String,
+    ctx: &MmArc,
+) -> OrderProcessingResult {
+    info!("need to update order: {} of {} - cfg: {}", uuid, key_trade_pair, cfg);
+    let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
+    let registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
+    let rates = registry.get_cex_rates(cfg.base.clone(), cfg.rel.clone());
+    drop(registry);
+    checks_order_prerequisites(ctx, &rates, &cfg, key_trade_pair.clone(), Option::from(uuid)).await?;
+    Ok(true)
+}
+
+async fn create_single_order(
+    cfg: SimpleCoinMarketMakerCfg,
+    key_trade_pair: String,
+    ctx: &MmArc,
+) -> OrderProcessingResult {
+    info!("need to create order for: {} - cfg: {}", key_trade_pair, cfg);
+    let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
+    let registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
+    let rates = registry.get_cex_rates(cfg.base.clone(), cfg.rel.clone());
+    drop(registry);
+
+    checks_order_prerequisites(ctx, &rates, &cfg, key_trade_pair.clone(), None).await?;
+
+    let base_balance = coin_find_and_checks(cfg.base.clone(), key_trade_pair.clone(), true, ctx).await?;
+    coin_find_and_checks(cfg.rel.clone(), key_trade_pair.clone(), false, ctx).await?;
 
     info!("balance for {} is {}", cfg.base, base_balance);
-    info!("elapsed since last price update: {} secs", elapsed);
 
     let mut calculated_price = rates.price * cfg.spread;
     info!("calculated price is: {}", calculated_price);
@@ -294,10 +363,11 @@ async fn create_single_order(cfg: SimpleCoinMarketMakerCfg, key_trade_pair: Stri
         Ok(x) => x,
         Err(err) => {
             warn!("Couldn't place the order for {} - reason: {}", key_trade_pair, err);
-            return;
+            return MmError::err(OrderProcessingError::OrderCreationError);
         },
     };
     info!("Successfully placed order for {} - uuid: {}", key_trade_pair, resp.uuid);
+    Ok(true)
 }
 
 async fn process_bot_logic(ctx: &MmArc) {
@@ -307,7 +377,10 @@ async fn process_bot_logic(ctx: &MmArc) {
 
     let mut memoization_pair_registry: HashSet<String> = HashSet::new();
     let ordermatch_ctx = OrdermatchContext::from_ctx(ctx).unwrap();
-    let maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
+    let maker_orders_guard = ordermatch_ctx.my_maker_orders.lock().await;
+    // I'm forced to iterate cloned orders here, otherwise i will deadlock if i need to cancel one.
+    let maker_orders = maker_orders_guard.clone();
+    drop(maker_orders_guard);
 
     info!("nb_orders: {}", maker_orders.len());
 
@@ -316,7 +389,8 @@ async fn process_bot_logic(ctx: &MmArc) {
         let key_trade_pair = TradingPair::new(value.base.clone(), value.rel.clone());
         match cfg.get(&key_trade_pair.as_combination()) {
             Some(coin_cfg) => {
-                update_single_order(
+                // res will be used later for reporting error to the users, also usefullt o be coupled with a telegram service to send notification to the user
+                let _res = update_single_order(
                     coin_cfg.clone(),
                     *key,
                     value.clone(),
@@ -330,13 +404,15 @@ async fn process_bot_logic(ctx: &MmArc) {
         }
         println!("{}", key);
     }
-    drop(maker_orders);
 
     // Now iterate over the registry and for every pairs that are not hit let's create an order
     for (trading_pair, cur_cfg) in cfg.iter() {
         match memoization_pair_registry.get(trading_pair) {
             Some(_) => continue,
-            None => create_single_order(cur_cfg.clone(), trading_pair.clone(), ctx).await,
+            None => {
+                // res will be used later for reporting error to the users, also usefullt o be coupled with a telegram service to send notification to the user
+                let _res = create_single_order(cur_cfg.clone(), trading_pair.clone(), ctx).await;
+            },
         };
     }
 }
