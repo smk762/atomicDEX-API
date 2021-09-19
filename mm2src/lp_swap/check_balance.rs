@@ -223,6 +223,7 @@ impl From<BalanceError> for CheckBalanceError {
                 CheckBalanceError::Transport(transport)
             },
             BalanceError::Internal(internal) => CheckBalanceError::InternalError(internal),
+            BalanceError::BalanceIsZero => CheckBalanceError::InternalError("unreachable".to_string()),
         }
     }
 }

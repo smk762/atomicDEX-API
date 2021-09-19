@@ -31,7 +31,7 @@
 #[macro_use] extern crate ser_error_derive;
 
 use async_trait::async_trait;
-use bigdecimal::{BigDecimal, ParseBigDecimalError};
+use bigdecimal::{BigDecimal, ParseBigDecimalError, Zero};
 use common::executor::{spawn, Timer};
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_error::prelude::*;
@@ -332,6 +332,17 @@ pub trait MarketCoinOps {
     fn my_address(&self) -> Result<String, String>;
 
     fn my_balance(&self) -> BalanceFut<CoinBalance>;
+
+    fn get_non_zero_balance(&self) -> Result<CoinBalance, MmError<BalanceError>> {
+        let res = match self.my_balance().wait() {
+            Ok(x) => x,
+            Err(err) => return Err(err),
+        };
+        if res.spendable.is_zero() {
+            return MmError::err(BalanceError::BalanceIsZero);
+        }
+        Ok(res)
+    }
 
     fn my_spendable_balance(&self) -> BalanceFut<BigDecimal> {
         Box::new(self.my_balance().map(|CoinBalance { spendable, .. }| spendable))
@@ -676,6 +687,7 @@ impl NumConversError {
 
 #[derive(Debug, Display, PartialEq)]
 pub enum BalanceError {
+    BalanceIsZero,
     #[display(fmt = "Transport: {}", _0)]
     Transport(String),
     #[display(fmt = "Invalid response: {}", _0)]
@@ -741,6 +753,7 @@ impl From<BalanceError> for WithdrawError {
         match e {
             BalanceError::Transport(error) | BalanceError::InvalidResponse(error) => WithdrawError::Transport(error),
             BalanceError::Internal(internal) => WithdrawError::InternalError(internal),
+            BalanceError::BalanceIsZero => WithdrawError::InternalError("unreachable".to_string()),
         }
     }
 }

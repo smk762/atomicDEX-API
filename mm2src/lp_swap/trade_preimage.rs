@@ -261,6 +261,7 @@ impl From<BalanceError> for TradePreimageRpcError {
                 TradePreimageRpcError::Transport(transport)
             },
             BalanceError::Internal(internal) => TradePreimageRpcError::InternalError(internal),
+            BalanceError::BalanceIsZero => TradePreimageRpcError::InternalError("unreachable".to_string()),
         }
     }
 }

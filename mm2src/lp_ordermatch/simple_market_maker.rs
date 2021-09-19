@@ -1,18 +1,16 @@
-use crate::mm2::lp_ordermatch::lp_bot::{RateInfos, TickerInfosRegistry};
 use crate::{mm2::lp_ordermatch::lp_bot::TickerInfos,
             mm2::lp_ordermatch::lp_bot::{Provider, SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry,
                                          TradingBotContext, TradingBotState},
+            mm2::lp_ordermatch::lp_bot::{RateInfos, TickerInfosRegistry},
             mm2::lp_ordermatch::{cancel_order, create_maker_order, MakerOrder, OrdermatchContext, SetPriceReq}};
-use bigdecimal::Zero;
-use coins::lp_coinfind;
-use common::mm_number::MmNumber;
+use coins::{lp_coinfind, BalanceError};
 use common::{executor::{spawn, Timer},
              log::{error, info, warn},
              mm_ctx::MmArc,
              mm_error::MmError,
+             mm_number::MmNumber,
              slurp_url, HttpStatusCode};
 use derive_more::Display;
-use futures::compat::Future01CompatExt;
 use http::StatusCode;
 use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
@@ -50,6 +48,13 @@ pub enum OrderProcessingError {
     BalanceIsZero,
     #[display(fmt = "Error when creating the order")]
     OrderCreationError,
+
+    AssetError,
+    LegacyError(String),
+}
+
+impl From<std::string::String> for OrderProcessingError {
+    fn from(error: String) -> Self { OrderProcessingError::LegacyError(error) }
 }
 
 #[allow(dead_code)]
@@ -175,51 +180,6 @@ pub async fn tear_down_bot(ctx: MmArc) {
     // todo: cancel all pending orders
 }
 
-// This function check if coin is enabled and if check_balance is set to true and the balance is non-zero it's returned for later usage
-// e.g i want to use 50% of my KMD balance instead of max, will be used later.
-async fn coin_find_and_checks(
-    ticker: String,
-    key_trade_pair: String,
-    check_balance: bool,
-    ctx: &MmArc,
-) -> Result<MmNumber, MmError<OrderProcessingError>> {
-    let coin = match lp_coinfind(ctx, ticker.as_str()).await {
-        Ok(None) => {
-            warn!("{} not enabled - skipping for {}", ticker, key_trade_pair);
-            return MmError::err(OrderProcessingError::AssetNotEnabled);
-        },
-        Err(err) => {
-            warn!(
-                "err with {} - reason: {} - skipping for {}",
-                ticker, err, key_trade_pair
-            );
-            return MmError::err(OrderProcessingError::InternalCoinFindError);
-        },
-        Ok(Some(t)) => t,
-    };
-
-    if check_balance {
-        let coin_balance = match coin.my_balance().compat().await {
-            Ok(coin_balance) => coin_balance,
-            Err(err) => {
-                warn!(
-                    "err with balance: {} - reason: {} - skipping for {}",
-                    ticker,
-                    err.to_string(),
-                    key_trade_pair
-                );
-                return MmError::err(OrderProcessingError::BalanceInternalError);
-            },
-        };
-        if coin_balance.spendable.is_zero() {
-            warn!("balance for: {} is zero - skipping for {}", ticker, key_trade_pair);
-            return MmError::err(OrderProcessingError::BalanceIsZero);
-        }
-        return Ok(MmNumber::from(coin_balance.spendable));
-    }
-    Ok(MmNumber::default())
-}
-
 async fn vwap_apply(_calculated_price: &mut MmNumber) {}
 
 async fn cancel_single_order(ctx: &MmArc, uuid: Uuid) {
@@ -314,8 +274,25 @@ async fn create_single_order(
 
     checks_order_prerequisites(&rates, &cfg, key_trade_pair.clone()).await?;
 
-    let base_balance = coin_find_and_checks(cfg.base.clone(), key_trade_pair.clone(), true, ctx).await?;
-    coin_find_and_checks(cfg.rel.clone(), key_trade_pair.clone(), false, ctx).await?;
+    let base_coin = lp_coinfind(ctx, cfg.base.as_str())
+        .await?
+        .ok_or(MmError::new(OrderProcessingError::AssetError))?;
+
+    let base_balance = match base_coin.get_non_zero_balance() {
+        Ok(x) => MmNumber::from(x.spendable),
+        Err(err) => {
+            return match err.into_inner() {
+                BalanceError::BalanceIsZero => Err(MmError::new(OrderProcessingError::BalanceIsZero)),
+                BalanceError::Transport(_) | BalanceError::InvalidResponse(_) | BalanceError::Internal(_) => {
+                    Err(MmError::new(OrderProcessingError::BalanceInternalError))
+                },
+            }
+        },
+    };
+
+    lp_coinfind(ctx, cfg.rel.as_str())
+        .await?
+        .ok_or(MmError::new(OrderProcessingError::AssetError))?;
 
     info!("balance for {} is {}", cfg.base, base_balance);
 
