@@ -11,8 +11,8 @@ mod tests {
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn test_process_price_request() {
-        let resp = block_on(process_price_request()).unwrap();
-        assert_eq!(resp.0, StatusCode::OK);
+        let resp = block_on(process_price_request());
+        assert_ne!(resp.is_err(), true);
     }
 
     #[test]
