@@ -1,4 +1,4 @@
-use crate::mm2::lp_ordermatch::lp_bot::RateInfos;
+use crate::mm2::lp_ordermatch::lp_bot::{RateInfos, TickerInfosRegistry};
 use crate::{mm2::lp_ordermatch::lp_bot::TickerInfos,
             mm2::lp_ordermatch::lp_bot::{Provider, SimpleCoinMarketMakerCfg, SimpleMakerBotRegistry,
                                          TradingBotContext, TradingBotState},
@@ -13,7 +13,7 @@ use common::{executor::{spawn, Timer},
              slurp_url, HttpStatusCode};
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
-use http::{HeaderMap, StatusCode};
+use http::StatusCode;
 use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
 use std::str::Utf8Error;
@@ -116,6 +116,7 @@ pub enum StartSimpleMakerBotError {
 #[derive(Debug)]
 pub enum PriceServiceRequestError {
     HttpProcessError(String),
+    ParsingAnswerError(String),
 }
 
 impl From<std::string::String> for PriceServiceRequestError {
@@ -436,32 +437,30 @@ pub async fn lp_bot_loop(ctx: MmArc) {
     info!("lp_bot_loop successfully stopped");
 }
 
-pub async fn process_price_request() -> Result<(StatusCode, String, HeaderMap), MmError<PriceServiceRequestError>> {
+pub async fn process_price_request() -> Result<TickerInfosRegistry, MmError<PriceServiceRequestError>> {
     info!("Fetching price from: {}", KMD_PRICE_ENDPOINT);
     let (status, headers, body) = slurp_url(KMD_PRICE_ENDPOINT).await?;
-    Ok((status, std::str::from_utf8(&body)?.trim().into(), headers))
+    let (status_code, body, _) = (status, std::str::from_utf8(&body)?.trim().into(), headers);
+    if status_code != StatusCode::OK {
+        return MmError::err(PriceServiceRequestError::HttpProcessError(body));
+    }
+    let model: HashMap<String, TickerInfos> = match serde_json::from_str(&body) {
+        Ok(model) => model,
+        Err(err) => {
+            return MmError::err(PriceServiceRequestError::ParsingAnswerError(err.to_string()));
+        },
+    };
+
+    Ok(TickerInfosRegistry(model))
 }
 
-async fn fetch_price_tickers(ctx: &MmArc) {
-    let (status_code, body, _) = match process_price_request().await {
-        Ok(x) => x,
-        Err(_) => return,
-    };
-    if status_code == StatusCode::OK {
-        let model: HashMap<String, TickerInfos> = match serde_json::from_str(&body) {
-            Ok(model) => model,
-            Err(_) => {
-                error!("error when unparsing the price fetching answer");
-                return;
-            },
-        };
-        let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
-        let mut price_registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
-        price_registry.0 = model;
-        info!("registry size: {}", price_registry.0.len());
-    } else {
-        error!("error from price request: {} - {}", status_code, body);
-    }
+async fn fetch_price_tickers(ctx: &MmArc) -> Result<bool, MmError<PriceServiceRequestError>> {
+    let model = process_price_request().await?;
+    let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(ctx).unwrap();
+    let mut price_registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
+    *price_registry = model;
+    info!("registry size: {}", price_registry.0.len());
+    Ok(true)
 }
 
 pub async fn lp_price_service_loop(ctx: MmArc) {
@@ -480,7 +479,10 @@ pub async fn lp_price_service_loop(ctx: MmArc) {
             break;
         }
         drop(states);
-        fetch_price_tickers(&ctx).await;
+        match fetch_price_tickers(&ctx).await {
+            Ok(_) => info!("price successfully fetched"),
+            Err(err) => error!("error during fetching price: {:?}", err),
+        };
         Timer::sleep(20.0).await;
     }
     info!("lp_price_service successfully stopped");
