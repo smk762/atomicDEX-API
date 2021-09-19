@@ -237,26 +237,17 @@ async fn cancel_single_order(ctx: &MmArc, uuid: Uuid) {
 }
 
 async fn checks_order_prerequisites(
-    ctx: &MmArc,
     rates: &RateInfos,
     cfg: &SimpleCoinMarketMakerCfg,
     key_trade_pair: String,
-    uuid: Option<Uuid>,
 ) -> OrderProcessingResult {
-    let cancel_functor = async move || {
-        if let Some(uuid) = uuid {
-            cancel_single_order(ctx, uuid).await
-        };
-    };
     if rates.base_provider == Provider::Unknown || rates.rel_provider == Provider::Unknown {
         warn!("rates from provider are Unknown - skipping for {}", key_trade_pair);
-        cancel_functor().await;
         return MmError::err(OrderProcessingError::ProviderUnknown);
     }
 
     if rates.price.is_zero() {
         warn!("price from provider is zero - skipping for {}", key_trade_pair);
-        cancel_functor().await;
         return MmError::err(OrderProcessingError::PriceIsZero);
     }
 
@@ -265,7 +256,6 @@ async fn checks_order_prerequisites(
             "last updated price timestamp is invalid - skipping for {}",
             key_trade_pair
         );
-        cancel_functor().await;
         return MmError::err(OrderProcessingError::LastUpdatedTimestampInvalid);
     }
 
@@ -282,7 +272,6 @@ async fn checks_order_prerequisites(
             "last updated price timestamp elapsed {} is more than the elapsed validity {} - skipping for {}",
             elapsed, elapsed_validity, key_trade_pair,
         );
-        cancel_functor().await;
         return MmError::err(OrderProcessingError::PriceElapsedValidityExpired);
     }
     info!("elapsed since last price update: {} secs", elapsed);
@@ -301,7 +290,13 @@ async fn update_single_order(
     let registry = simple_market_maker_bot_ctx.price_tickers_registry.lock().await;
     let rates = registry.get_cex_rates(cfg.base.clone(), cfg.rel.clone());
     drop(registry);
-    checks_order_prerequisites(ctx, &rates, &cfg, key_trade_pair.clone(), Some(uuid)).await?;
+    match checks_order_prerequisites(&rates, &cfg, key_trade_pair.clone()).await {
+        Ok(x) => x,
+        Err(err) => {
+            cancel_single_order(ctx, uuid).await;
+            return Err(err);
+        },
+    };
     Ok(true)
 }
 
@@ -316,7 +311,7 @@ async fn create_single_order(
     let rates = registry.get_cex_rates(cfg.base.clone(), cfg.rel.clone());
     drop(registry);
 
-    checks_order_prerequisites(ctx, &rates, &cfg, key_trade_pair.clone(), None).await?;
+    checks_order_prerequisites(&rates, &cfg, key_trade_pair.clone()).await?;
 
     let base_balance = coin_find_and_checks(cfg.base.clone(), key_trade_pair.clone(), true, ctx).await?;
     coin_find_and_checks(cfg.rel.clone(), key_trade_pair.clone(), false, ctx).await?;
