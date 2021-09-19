@@ -514,14 +514,13 @@ pub async fn start_simple_market_maker_bot(ctx: MmArc, req: StartSimpleMakerBotR
 pub async fn stop_simple_market_maker_bot(ctx: MmArc, _req: Json) -> StopSimpleMakerBotResult {
     let simple_market_maker_bot_ctx = TradingBotContext::from_ctx(&ctx).unwrap();
     {
-        let mut states = simple_market_maker_bot_ctx.trading_bot_states.lock().await;
-        if *states == TradingBotState::Stopped {
-            return MmError::err(StopSimpleMakerBotError::AlreadyStopped);
-        } else if *states == TradingBotState::Stopping {
-            return MmError::err(StopSimpleMakerBotError::AlreadyStopping);
-        }
+        let mut state = simple_market_maker_bot_ctx.trading_bot_states.lock().await;
 
-        *states = TradingBotState::Stopping;
+        match *state {
+            TradingBotState::Stopped => return MmError::err(StopSimpleMakerBotError::AlreadyStopped),
+            TradingBotState::Stopping => return MmError::err(StopSimpleMakerBotError::AlreadyStopping),
+            _ => *state = TradingBotState::Stopping,
+        }
     }
     info!("simple_market_maker_bot will stop within 30 seconds");
     Ok(StopSimpleMakerBotRes {
