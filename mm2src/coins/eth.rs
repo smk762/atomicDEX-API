@@ -22,6 +22,7 @@ use bigdecimal::BigDecimal;
 use bitcrypto::sha256;
 use common::custom_futures::TimedAsyncMutex;
 use common::executor::Timer;
+use common::log::info;
 use common::mm_ctx::{MmArc, MmWeak};
 use common::mm_error::prelude::*;
 use common::{now_ms, slurp_url, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
@@ -1275,14 +1276,22 @@ async fn sign_and_send_transaction_impl(
     );
     status.status(tags!(), "get_gas_price…");
     let gas_price = try_s!(coin.get_gas_price().compat().await);
+    let gas_limit = try_s!(
+        coin.estimate_gas_for_contract_call(coin.swap_contract_address, Bytes::from(data.clone()))
+            .compat()
+            .await
+    );
     let tx = UnSignedEthTx {
         nonce,
         gas_price,
-        gas,
+        gas: gas_limit,
         action,
         value,
         data,
     };
+    //CallRequest::
+    info!("tx: {:?}", tx);
+
     let signed = tx.sign(coin.key_pair.secret(), coin.chain_id);
     let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
     status.status(tags!(), "send_raw_transaction…");
@@ -1640,7 +1649,7 @@ impl EthCoin {
             value,
             data,
         };
-
+        //info!("eth_call: request is: {:?}", request);
         self.web3.eth().call(request, Some(BlockNumber::Latest))
     }
 
