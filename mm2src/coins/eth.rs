@@ -1276,11 +1276,18 @@ async fn sign_and_send_transaction_impl(
     );
     status.status(tags!(), "get_gas_price…");
     let gas_price = try_s!(coin.get_gas_price().compat().await);
-    let gas_limit = try_s!(
-        coin.estimate_gas_for_contract_call(coin.swap_contract_address, Bytes::from(data.clone()))
-            .compat()
-            .await
-    );
+    let estimate_gas_req = CallRequest {
+        value: Some(value),
+        data: Some(data.clone().into()),
+        from: Some(coin.my_address),
+        to: coin.swap_contract_address,
+        gas: None,
+        // gas price must be supplied because some smart contracts base their
+        // logic on gas price, e.g. TUSD: https://github.com/KomodoPlatform/atomicDEX-API/issues/643
+        gas_price: Some(gas_price),
+    };
+    let gas_limit = try_s!(coin.estimate_gas(estimate_gas_req).compat().await);
+    info!("gas_limit is: {}", gas_limit);
     let tx = UnSignedEthTx {
         nonce,
         gas_price,
