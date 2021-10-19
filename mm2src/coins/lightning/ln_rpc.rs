@@ -1,13 +1,15 @@
 use crate::utxo::rpc_clients::{electrum_script_hash, ElectrumClient, UtxoRpcClientOps, UtxoRpcError};
+use bitcoin::blockdata::block::Block;
 use bitcoin::blockdata::script::Script;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode;
-use bitcoin::hash_types::Txid;
+use bitcoin::hash_types::{BlockHash, Txid};
 use common::block_on;
 use common::mm_error::prelude::MapToMmFutureExt;
 use futures::compat::Future01CompatExt;
 use lightning::chain::{chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator},
                        Filter, WatchedOutput};
+use lightning_block_sync::{AsyncBlockSourceResult, BlockHeaderData, BlockSource};
 use rpc::v1::types::Bytes as BytesJson;
 
 impl FeeEstimator for ElectrumClient {
@@ -70,4 +72,26 @@ impl Filter for ElectrumClient {
         }
         None
     }
+}
+
+impl BlockSource for ElectrumClient {
+    // Retrieves the header corresponding to header_hash
+    #[allow(clippy::needless_lifetimes)]
+    fn get_header<'a>(
+        &'a mut self,
+        _header_hash: &'a BlockHash,
+        _height_hint: Option<u32>,
+    ) -> AsyncBlockSourceResult<'a, BlockHeaderData> {
+        unimplemented!()
+    }
+
+    // Retrieves the block corresponding to header_hash
+    #[allow(clippy::needless_lifetimes)]
+    fn get_block<'a>(&'a mut self, _header_hash: &'a BlockHash) -> AsyncBlockSourceResult<'a, Block> {
+        unimplemented!()
+    }
+
+    // Retrieve the best known block hash and height
+    #[allow(clippy::needless_lifetimes)]
+    fn get_best_block<'a>(&'a mut self) -> AsyncBlockSourceResult<(BlockHash, Option<u32>)> { unimplemented!() }
 }

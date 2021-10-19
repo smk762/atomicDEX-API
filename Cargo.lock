@@ -798,6 +798,7 @@ dependencies = [
  "libc",
  "lightning",
  "lightning-background-processor",
+ "lightning-block-sync",
  "lightning-net-tokio",
  "lightning-persister",
  "metrics",
@@ -2794,6 +2795,16 @@ dependencies = [
  "bitcoin",
  "lightning",
  "lightning-persister",
+]
+
+[[package]]
+name = "lightning-block-sync"
+version = "0.0.101"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c85634909b0137354b28b53747bdd2e7d8fb9bac3ec87d53b70b5e2b5d258ac"
+dependencies = [
+ "bitcoin",
+ "lightning",
 ]
 
 [[package]]

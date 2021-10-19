@@ -14,19 +14,22 @@ use common::log::LogState;
 use common::mm_ctx::MmArc;
 use futures::compat::Future01CompatExt;
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager};
-use lightning::chain::{chainmonitor, Access, BestBlock, Confirm};
+use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Listen, Watch};
 use lightning::ln::channelmanager;
-use lightning::ln::channelmanager::{ChainParameters, SimpleArcChannelManager};
+use lightning::ln::channelmanager::{ChainParameters, ChannelManagerReadArgs, SimpleArcChannelManager};
 use lightning::ln::msgs::NetAddress;
 use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
 use lightning::routing::network_graph::{NetGraphMsgHandler, NetworkGraph};
 use lightning::util::config::UserConfig;
 use lightning::util::events::Event;
+use lightning::util::ser::ReadableArgs;
 use lightning_background_processor::BackgroundProcessor;
+use lightning_block_sync::{init, poll, UnboundedCache};
 use lightning_net_tokio::SocketDescriptor;
 use lightning_persister::FilesystemPersister;
 use rand::RngCore;
 use std::convert::TryInto;
+use std::fs::File;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -191,7 +194,7 @@ pub async fn start_lightning(ctx: &MmArc, conf: LightningConf) -> EnableLightnin
     let keys_manager = Arc::new(KeysManager::new(&seed, cur.as_secs(), cur.subsec_nanos()));
 
     // Read ChannelMonitor state from disk, important for lightning node is restarting and has at least 1 channel
-    let channelmonitors = persister
+    let mut channelmonitors = persister
         .read_channelmonitors(keys_manager.clone())
         .map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
 
@@ -202,7 +205,6 @@ pub async fn start_lightning(ctx: &MmArc, conf: LightningConf) -> EnableLightnin
         }
     }
 
-    // Initialize the ChannelManager to starting a new node without history
     // TODO: Add the case of restarting a node
     let mut user_config = UserConfig::default();
 
@@ -218,21 +220,92 @@ pub async fn start_lightning(ctx: &MmArc, conf: LightningConf) -> EnableLightnin
         .compat()
         .await
         .mm_err(|e| EnableLightningError::RpcError(e.to_string()))?;
-    let best_block_hash =
-        sha256d::Hash::from_slice(&best_block.hash.0).map_to_mm(|e| EnableLightningError::HashError(e.to_string()))?;
-    let chain_params = ChainParameters {
-        network: conf.network,
-        best_block: BestBlock::new(BlockHash::from_hash(best_block_hash), best_block.height as u32),
+
+    let mut restarting_node = true;
+    let (channel_manager_blockhash, mut channel_manager) = {
+        if let Ok(mut f) = File::open(format!("{}/manager", ln_data_dir.clone())) {
+            let mut channel_monitor_mut_references = Vec::new();
+            for (_, channel_monitor) in channelmonitors.iter_mut() {
+                channel_monitor_mut_references.push(channel_monitor);
+            }
+            // Read ChannelManager data from the file
+            let read_args = ChannelManagerReadArgs::new(
+                keys_manager.clone(),
+                fee_estimator.clone(),
+                chain_monitor.clone(),
+                broadcaster.clone(),
+                logger.0.clone(),
+                user_config,
+                channel_monitor_mut_references,
+            );
+            <(BlockHash, SimpleChannelManager)>::read(&mut f, read_args)
+                .map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?
+        } else {
+            // Initialize the ChannelManager to starting a new node without history
+            restarting_node = false;
+            let best_block_hash = sha256d::Hash::from_slice(&best_block.hash.0)
+                .map_to_mm(|e| EnableLightningError::HashError(e.to_string()))?;
+            let chain_params = ChainParameters {
+                network: conf.network,
+                best_block: BestBlock::new(BlockHash::from_hash(best_block_hash), best_block.height as u32),
+            };
+            let new_channel_manager = channelmanager::ChannelManager::new(
+                fee_estimator.clone(),
+                chain_monitor.clone(),
+                broadcaster.clone(),
+                logger.0.clone(),
+                keys_manager.clone(),
+                user_config,
+                chain_params,
+            );
+            (BlockHash::from_hash(best_block_hash), new_channel_manager)
+        }
     };
-    let new_channel_manager = Arc::new(channelmanager::ChannelManager::new(
-        fee_estimator,
-        chain_monitor.clone(),
-        broadcaster,
-        logger.0.clone(),
-        keys_manager.clone(),
-        user_config,
-        chain_params,
-    ));
+
+    // Sync ChannelMonitors and ChannelManager to chain tip if the node is restarting and has open channels
+    let mut chain_listener_channel_monitors = Vec::new();
+    let mut cache = UnboundedCache::new();
+    let mut _chain_tip: Option<poll::ValidatedBlockHeader> = None;
+    if restarting_node {
+        let mut chain_listeners = vec![(channel_manager_blockhash, &mut channel_manager as &mut dyn Listen)];
+
+        for (blockhash, channel_monitor) in channelmonitors.drain(..) {
+            let outpoint = channel_monitor.get_funding_txo().0;
+            chain_listener_channel_monitors.push((
+                blockhash,
+                (
+                    channel_monitor,
+                    broadcaster.clone(),
+                    fee_estimator.clone(),
+                    logger.0.clone(),
+                ),
+                outpoint,
+            ));
+        }
+
+        for monitor_listener_info in chain_listener_channel_monitors.iter_mut() {
+            chain_listeners.push((monitor_listener_info.0, &mut monitor_listener_info.1 as &mut dyn Listen));
+        }
+        // TODO: Use await if it's possible as await not working because chain_listeners is not Send + Sync
+        _chain_tip = Some(
+            common::block_on(init::synchronize_listeners(
+                &mut conf.rpc_client.clone(),
+                conf.network,
+                &mut cache,
+                chain_listeners,
+            ))
+            .map_to_mm(|e| EnableLightningError::RpcError(format!("{:?}", e)))?,
+        );
+    }
+
+    // Give ChannelMonitors to ChainMonitor
+    for item in chain_listener_channel_monitors.drain(..) {
+        let channel_monitor = item.1 .0;
+        let funding_outpoint = item.2;
+        chain_monitor
+            .watch_channel(funding_outpoint, channel_monitor)
+            .map_to_mm(|e| EnableLightningError::IOError(format!("{:?}", e)))?;
+    }
 
     // Initialize the NetGraphMsgHandler. This is used for providing routes to send payments over
     let genesis = genesis_block(conf.network).header.block_hash();
@@ -244,10 +317,11 @@ pub async fn start_lightning(ctx: &MmArc, conf: LightningConf) -> EnableLightnin
 
     // Initialize the PeerManager
     // ephemeral_random_data is used to derive per-connection ephemeral keys
+    let channel_manager: Arc<ChannelManager> = Arc::new(channel_manager);
     let mut ephemeral_bytes = [0; 32];
     rand::thread_rng().fill_bytes(&mut ephemeral_bytes);
     let lightning_msg_handler = MessageHandler {
-        chan_handler: new_channel_manager.clone(),
+        chan_handler: channel_manager.clone(),
         route_handler: router.clone(),
     };
     // IgnoringMessageHandler is used as custom message types (experimental and application-specific messages) is not needed
@@ -269,7 +343,7 @@ pub async fn start_lightning(ctx: &MmArc, conf: LightningConf) -> EnableLightnin
     spawn(ln_best_block_update_loop(
         ctx.clone(),
         chain_monitor.clone(),
-        new_channel_manager.clone(),
+        channel_manager.clone(),
         conf.rpc_client.clone(),
         best_block,
     ));
@@ -289,7 +363,7 @@ pub async fn start_lightning(ctx: &MmArc, conf: LightningConf) -> EnableLightnin
         persist_channel_manager_callback,
         event_handler,
         chain_monitor,
-        new_channel_manager.clone(),
+        channel_manager.clone(),
         Some(router),
         peer_manager,
         logger.0,
@@ -302,7 +376,7 @@ pub async fn start_lightning(ctx: &MmArc, conf: LightningConf) -> EnableLightnin
     // Broadcast Node Announcement
     spawn(ln_node_announcement_loop(
         ctx.clone(),
-        new_channel_manager,
+        channel_manager,
         conf.node_name,
         conf.node_color,
         conf.listening_addr,
