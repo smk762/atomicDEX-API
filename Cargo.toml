@@ -72,6 +72,7 @@ hash-db = "0.15.2"
 hex = "0.4.2"
 hex-literal = "0.3.1"
 http = "0.2"
+hw_common = { path = "mm2src/hw_common" }
 itertools = "0.9"
 keys = { path = "mm2src/mm2_bitcoin/keys" }
 lazy_static = "1.4"
@@ -104,6 +105,7 @@ serialization_derive = { path = "mm2src/mm2_bitcoin/serialization_derive" }
 sp-runtime-interface = { version = "3.0.0", default-features = false, features = ["disable_target_static_assertions"] }
 sp-trie = { version = "3.0", default-features = false }
 sql-builder = "3.1.1"
+trezor = { path = "mm2src/trezor" }
 
 trie-db = { version = "0.22.6", default-features = false }
 trie-root = "0.16.0"
@@ -115,7 +117,7 @@ js-sys = { version = "0.3.27" }
 wasm-bindgen = { version = "0.2.50", features = ["serde-serialize", "nightly"] }
 wasm-bindgen-futures = { version = "0.4.1" }
 wasm-bindgen-test = { version = "0.3.1" }
-web-sys = { version = "0.3.4", features = ["console"] }
+web-sys = { version = "0.3.55", features = ["console"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dirs = { version = "1" }
@@ -137,6 +139,8 @@ regex = "1"
 [workspace]
 members = [
     "mm2src/coins",
+    "mm2src/derives/ser_error",
+    "mm2src/derives/ser_error_derive",
     "mm2src/floodsub",
     "mm2src/mm2_bitcoin/crypto",
     "mm2src/mm2_bitcoin/chain",
@@ -148,8 +152,8 @@ members = [
     "mm2src/mm2_bitcoin/serialization_derive",
     "mm2src/mm2_libp2p",
     "mm2src/gossipsub",
-    "mm2src/derives/ser_error",
-    "mm2src/derives/ser_error_derive",
+    "mm2src/hw_common",
+    "mm2src/trezor",
 ]
 # https://doc.rust-lang.org/beta/cargo/reference/features.html#feature-resolver-version-2
 resolver = "2"

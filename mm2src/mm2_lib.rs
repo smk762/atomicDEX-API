@@ -15,6 +15,10 @@
 #[macro_use] extern crate serialization_derive;
 #[macro_use] extern crate ser_error_derive;
 
+/// TODO remove this when at the next iteration.
+/// The explicit import is required to allow `wasm_bindgen` to export the `test_trezor` extern function.
+extern crate trezor;
+
 #[path = "mm2.rs"] mod mm2;
 
 #[cfg(not(target_arch = "wasm32"))]

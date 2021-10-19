@@ -44,6 +44,7 @@ iguana/exchanges/manychains
 # Subcrate artefacts
 /mm2src/common/c_headers
 /mm2src/*/target
+/mm2src/trezor/src/proto/messages*
 
 # Private IDE configuration
 /mm2src/peers/.vscode/tasks.json

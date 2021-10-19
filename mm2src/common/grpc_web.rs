@@ -26,6 +26,7 @@ impl From<prost::EncodeError> for EncodeBodyError {
     fn from(err: prost::EncodeError) -> Self { EncodeBodyError::Encode(err) }
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn encode_body<T>(msg: &T) -> Result<Vec<u8>, MmError<EncodeBodyError>>
 where
     T: prost::Message,
@@ -65,6 +66,7 @@ impl From<prost::DecodeError> for DecodeBodyError {
     fn from(err: DecodeError) -> Self { DecodeBodyError::DecodeError(err) }
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn decode_body<T>(mut body: Bytes) -> Result<T, MmError<DecodeBodyError>>
 where
     T: Default + prost::Message,
@@ -128,11 +130,11 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn post_grpc_web<Req, Res>(url: &str, req: &Req) -> Result<Res, MmError<PostGrpcWebErr>>
+pub async fn post_grpc_web<Req, Res>(url: &str, _req: &Req) -> Result<Res, MmError<PostGrpcWebErr>>
 where
     Req: prost::Message + Send + 'static,
     Res: prost::Message + Default + Send + 'static,
 {
-    let mut request = FetchRequest::post(url);
+    let _request = FetchRequest::post(url);
     unimplemented!()
 }

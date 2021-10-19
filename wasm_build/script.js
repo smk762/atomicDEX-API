@@ -5,7 +5,16 @@
 // will "boot" the module and make it ready to use. Currently browsers
 // don't support natively imported WebAssembly as an ES module, but
 // eventually the manual initialization won't be required!
-import init, {mm2_main, mm2_main_status, mm2_rpc, LogLevel, Mm2MainErr, MainStatus, Mm2RpcErr} from "./deps/pkg/mm2.js";
+import init, {
+    mm2_main,
+    mm2_main_status,
+    mm2_rpc,
+    test_trezor,
+    LogLevel,
+    Mm2MainErr,
+    MainStatus,
+    Mm2RpcErr
+} from "./deps/pkg/mm2.js";
 
 const LOG_LEVEL = LogLevel.Debug;
 
@@ -146,5 +155,10 @@ init_wasm().then(function () {
         }
 
         await rpc_request(request_js);
+    });
+
+    const test_trezor_button = document.getElementById("wid_test_trezor");
+    test_trezor_button.addEventListener('click', async () => {
+        await test_trezor();
     });
 });
