@@ -11,7 +11,7 @@ use protobuf::ProtobufEnum;
 const CHUNK_LEN: u32 = 64;
 const CHUNK_HEADER_LEN: usize = 9;
 
-/// A link represents a serial connection to send and receive byte chunks from and to a device.
+/// A link represents a serial connection to send and receive byte chunks from and to a Trezor device.
 #[async_trait]
 pub trait Link {
     async fn write_chunk(&mut self, chunk: Vec<u8>) -> TrezorResult<()>;
