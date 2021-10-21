@@ -94,7 +94,7 @@ pub async fn enable_lightning(ctx: MmArc, req: EnableLightningRequest) -> Enable
     let port = req.port.unwrap_or(9735);
 
     let conf = LightningConf::new(client.clone(), network, listen_addr, port, node_name, node_color);
-    start_lightning(&ctx, conf).await?;
+    start_lightning(&ctx, utxo_coin, conf).await?;
 
     Ok("success".into())
 }

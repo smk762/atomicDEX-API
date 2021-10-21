@@ -1,5 +1,7 @@
 use super::*;
 use bigdecimal::{BigDecimal, Zero};
+use bitcoin::blockdata::script::Script as BTCScript;
+use bitcoin::hash_types::Txid;
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
 use chain::constants::SEQUENCE_FINAL;
 use chain::{OutPoint, TransactionInput, TransactionOutput};
@@ -17,6 +19,7 @@ use futures01::future::Either;
 use keys::bytes::Bytes;
 use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHash, KeyPair, Public, SegwitAddress,
            Type as ScriptType};
+use lightning::chain::WatchedOutput;
 use primitives::hash::H512;
 use rpc::v1::types::{Bytes as BytesJson, TransactionInputEnum, H256 as H256Json};
 use script::{Builder, Opcode, Script, ScriptAddress, SignatureVersion, TransactionInputSigner,
@@ -3045,6 +3048,18 @@ where
         .compat()
         .await
         .mm_err(From::from)
+}
+
+// Todo: Need to make sure if Mutex is needed or not
+pub fn register_tx(coin: &UtxoCoinFields, txid: &Txid, script_pubkey: &BTCScript) {
+    let mut ln_registry = coin.ln_registry.lock().unwrap();
+    ln_registry.add_tx(txid, script_pubkey);
+}
+
+// Todo: Need to make sure if Mutex is needed or not
+pub fn register_output(coin: &UtxoCoinFields, output: WatchedOutput) {
+    let mut ln_registry = coin.ln_registry.lock().unwrap();
+    ln_registry.add_output(output);
 }
 
 #[test]

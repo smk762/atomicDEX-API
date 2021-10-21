@@ -1,10 +1,13 @@
-use crate::utxo::rpc_clients::{electrum_script_hash, ElectrumClient, UtxoRpcClientOps, UtxoRpcError};
+use crate::utxo::rpc_clients::{electrum_script_hash, ElectrumClient, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcError};
+use crate::utxo::utxo_common;
+use crate::utxo::utxo_standard::UtxoStandardCoin;
 use bitcoin::blockdata::block::Block;
 use bitcoin::blockdata::script::Script;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode;
 use bitcoin::hash_types::{BlockHash, Txid};
 use common::block_on;
+use common::log::error;
 use common::mm_error::prelude::MapToMmFutureExt;
 use futures::compat::Future01CompatExt;
 use lightning::chain::{chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator},
@@ -37,22 +40,34 @@ impl BroadcasterInterface for ElectrumClient {
     }
 }
 
-impl Filter for ElectrumClient {
+impl Filter for UtxoStandardCoin {
     // Watches for this transaction on-chain
-    fn register_tx(&self, _txid: &Txid, _script_pubkey: &Script) { unimplemented!() }
+    fn register_tx(&self, txid: &Txid, script_pubkey: &Script) {
+        utxo_common::register_tx(&self.as_ref(), txid, script_pubkey)
+    }
 
     // Watches for any transactions that spend this output on-chain
     fn register_output(&self, output: WatchedOutput) -> Option<(usize, Transaction)> {
-        let selfi = self.clone();
+        utxo_common::register_output(&self.as_ref(), output.clone());
+
+        output.block_hash?;
+
+        let client = match &self.as_ref().rpc_client {
+            UtxoRpcClientEnum::Electrum(e) => e.clone(),
+            UtxoRpcClientEnum::Native(_) => {
+                error!("As of now Only electrum client is supported for lightning");
+                return None;
+            },
+        };
         let script_hash = hex::encode(electrum_script_hash(output.script_pubkey.as_ref()));
-        let history = block_on(selfi.scripthash_get_history(&script_hash).compat()).unwrap_or_default();
+        let history = block_on(client.scripthash_get_history(&script_hash).compat()).unwrap_or_default();
 
         if history.len() < 2 {
             return None;
         }
 
         for item in history.iter() {
-            let transaction = match block_on(selfi.get_transaction_bytes(item.tx_hash.clone()).compat()) {
+            let transaction = match block_on(client.get_transaction_bytes(item.tx_hash.clone()).compat()) {
                 Ok(tx) => tx,
                 Err(_) => continue,
             };

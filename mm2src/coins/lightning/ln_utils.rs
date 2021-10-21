@@ -1,6 +1,7 @@
 use super::*;
 use crate::utxo::rpc_clients::{BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient, ElectrumNonce,
                                UtxoRpcClientOps};
+use crate::utxo::utxo_standard::UtxoStandardCoin;
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::consensus::encode::deserialize;
@@ -41,7 +42,7 @@ const BROADCAST_NODE_ANNOUNCEMENT_INTERVAL: u64 = 60;
 
 type ChainMonitor = chainmonitor::ChainMonitor<
     InMemorySigner,
-    Arc<ElectrumClient>,
+    Arc<UtxoStandardCoin>,
     Arc<ElectrumClient>,
     Arc<ElectrumClient>,
     Arc<LogState>,
@@ -148,7 +149,7 @@ async fn handle_ln_events(event: &Event) {
     }
 }
 
-pub async fn start_lightning(ctx: &MmArc, conf: LightningConf) -> EnableLightningResult<()> {
+pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: LightningConf) -> EnableLightningResult<()> {
     if ctx.ln_background_processor.is_some() {
         return MmError::err(EnableLightningError::AlreadyRunning);
     }
@@ -172,7 +173,7 @@ pub async fn start_lightning(ctx: &MmArc, conf: LightningConf) -> EnableLightnin
     let persister = Arc::new(FilesystemPersister::new(ln_data_dir.clone()));
 
     // Initialize the Filter. rpc_client implements the Filter trait, so it'll act as our filter.
-    let filter = Some(Arc::new(conf.rpc_client.clone()));
+    let filter = Some(Arc::new(coin));
 
     // Initialize the ChainMonitor
     let chain_monitor: Arc<ChainMonitor> = Arc::new(chainmonitor::ChainMonitor::new(
