@@ -23,6 +23,10 @@ pub trait Transport {
 #[derive(Clone, Debug)]
 pub struct SessionId([u8; 32]);
 
+impl Default for SessionId {
+    fn default() -> Self { SessionId::new() }
+}
+
 impl SessionId {
     /// Generate a new random `SessionId`.
     pub fn new() -> SessionId {

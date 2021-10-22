@@ -1,8 +1,6 @@
 //! This file is inspired by https://github.com/tezedge/tezedge-client/blob/master/trezor_api/src/messages.rs
 //! In this module we implement the `message_type` getter for all protobuf message types.
 
-use protobuf;
-
 #[allow(clippy::all)] pub mod messages;
 #[allow(clippy::all)] pub mod messages_bitcoin;
 #[allow(clippy::all)] pub mod messages_common;
@@ -41,7 +39,7 @@ impl ProtoMessage {
 
     /// Take the payload from the ProtoMessage and parse it to a protobuf message.
     pub fn into_message<M: protobuf::Message>(self) -> Result<M, protobuf::error::ProtobufError> {
-        Ok(protobuf::Message::parse_from_bytes(&self.into_payload())?)
+        protobuf::Message::parse_from_bytes(&self.into_payload())
     }
 }
 

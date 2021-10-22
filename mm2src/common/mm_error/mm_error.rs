@@ -135,14 +135,7 @@ where
     (E1, E2): NotSame,
 {
     #[track_caller]
-    fn from(orig: MmError<E1>) -> Self {
-        let mut trace = orig.trace;
-        trace.push(TraceLocation::from(Location::caller()));
-        MmError {
-            etype: E2::from(orig.etype),
-            trace,
-        }
-    }
+    fn from(orig: MmError<E1>) -> Self { orig.map(E2::from) }
 }
 
 /// Track the location whenever `MmError<E2>::from(E1)` is called.
@@ -197,6 +190,19 @@ impl<E: NotMmError> MmError<E> {
         MmError {
             etype,
             trace: vec![location],
+        }
+    }
+
+    #[track_caller]
+    pub fn map<MapE, F>(mut self, f: F) -> MmError<MapE>
+    where
+        MapE: NotMmError,
+        F: FnOnce(E) -> MapE,
+    {
+        self.trace.push(TraceLocation::from(Location::caller()));
+        MmError {
+            etype: f(self.etype),
+            trace: self.trace,
         }
     }
 

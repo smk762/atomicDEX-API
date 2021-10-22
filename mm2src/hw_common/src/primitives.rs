@@ -28,8 +28,6 @@ impl fmt::Display for KeyDerivationPath {
 }
 
 impl KeyDerivationPath {
-    pub fn len(&self) -> usize { self.0.len() }
-
     pub fn take(self) -> Vec<u32> { self.0 }
 }
 
@@ -47,11 +45,11 @@ impl FromStr for KeyDerivationPath {
 
         Ok(KeyDerivationPath(
             path.replace("m/", "")
-                .split("/")
+                .split('/')
                 .enumerate()
                 .map(|(_index, part)| {
                     let mut num_str = part.to_string();
-                    let is_hardened = num_str.ends_with("'");
+                    let is_hardened = num_str.ends_with('\'');
 
                     if is_hardened {
                         // remove the tick(')
