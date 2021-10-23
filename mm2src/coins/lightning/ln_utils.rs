@@ -4,6 +4,7 @@ use crate::utxo::rpc_clients::{BestBlock as RpcBestBlock, ElectrumBlockHeader, E
 use crate::utxo::utxo_standard::UtxoStandardCoin;
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::constants::genesis_block;
+use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hash_types::{BlockHash, TxMerkleNode};
 use bitcoin::network::constants::Network;
@@ -15,7 +16,7 @@ use common::log::LogState;
 use common::mm_ctx::MmArc;
 use futures::compat::Future01CompatExt;
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager};
-use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Listen, Watch};
+use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Watch};
 use lightning::ln::channelmanager;
 use lightning::ln::channelmanager::{ChainParameters, ChannelManagerReadArgs, SimpleArcChannelManager};
 use lightning::ln::msgs::NetAddress;
@@ -25,7 +26,6 @@ use lightning::util::config::UserConfig;
 use lightning::util::events::Event;
 use lightning::util::ser::ReadableArgs;
 use lightning_background_processor::BackgroundProcessor;
-use lightning_block_sync::{init, poll, UnboundedCache};
 use lightning_net_tokio::SocketDescriptor;
 use lightning_persister::FilesystemPersister;
 use rand::RngCore;
@@ -173,7 +173,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
     let persister = Arc::new(FilesystemPersister::new(ln_data_dir.clone()));
 
     // Initialize the Filter. rpc_client implements the Filter trait, so it'll act as our filter.
-    let filter = Some(Arc::new(coin));
+    let filter = Some(Arc::new(coin.clone()));
 
     // Initialize the ChainMonitor
     let chain_monitor: Arc<ChainMonitor> = Arc::new(chainmonitor::ChainMonitor::new(
@@ -223,7 +223,8 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
         .mm_err(|e| EnableLightningError::RpcError(e.to_string()))?;
 
     let mut restarting_node = true;
-    let (channel_manager_blockhash, mut channel_manager) = {
+    // TODO: use channel_manager_blockhash to know where to start looking for outputs from
+    let (_channel_manager_blockhash, channel_manager) = {
         if let Ok(mut f) = File::open(format!("{}/manager", ln_data_dir.clone())) {
             let mut channel_monitor_mut_references = Vec::new();
             for (_, channel_monitor) in channelmonitors.iter_mut() {
@@ -263,46 +264,86 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
         }
     };
 
+    let channel_manager: Arc<ChannelManager> = Arc::new(channel_manager);
+
     // Sync ChannelMonitors and ChannelManager to chain tip if the node is restarting and has open channels
-    let mut chain_listener_channel_monitors = Vec::new();
-    let mut cache = UnboundedCache::new();
-    let mut _chain_tip: Option<poll::ValidatedBlockHeader> = None;
     if restarting_node {
-        let mut chain_listeners = vec![(channel_manager_blockhash, &mut channel_manager as &mut dyn Listen)];
+        // Retrieve transaction IDs to check the chain for un-confirmations
+        // TODO: The following code needs to be run with every new block also
+        let channel_manager_relevant_txids = channel_manager.get_relevant_txids();
+        let chain_monitor_relevant_txids = chain_monitor.get_relevant_txids();
 
-        for (blockhash, channel_monitor) in channelmonitors.drain(..) {
-            let outpoint = channel_monitor.get_funding_txo().0;
-            chain_listener_channel_monitors.push((
-                blockhash,
-                (
-                    channel_monitor,
-                    broadcaster.clone(),
-                    fee_estimator.clone(),
-                    logger.0.clone(),
-                ),
-                outpoint,
-            ));
+        for txid in channel_manager_relevant_txids {
+            if coin
+                .as_ref()
+                .rpc_client
+                .get_transaction_bytes(txid.as_hash().into_inner().into())
+                .compat()
+                .await
+                .is_ok()
+            {
+                channel_manager.transaction_unconfirmed(&txid);
+            }
         }
 
-        for monitor_listener_info in chain_listener_channel_monitors.iter_mut() {
-            chain_listeners.push((monitor_listener_info.0, &mut monitor_listener_info.1 as &mut dyn Listen));
+        for txid in chain_monitor_relevant_txids {
+            if coin
+                .as_ref()
+                .rpc_client
+                .get_transaction_bytes(txid.as_hash().into_inner().into())
+                .compat()
+                .await
+                .is_ok()
+            {
+                chain_monitor.transaction_unconfirmed(&txid);
+            }
         }
-        // TODO: Use await if it's possible as await not working because chain_listeners is not Send + Sync
-        _chain_tip = Some(
-            common::block_on(init::synchronize_listeners(
-                &mut conf.rpc_client.clone(),
-                conf.network,
-                &mut cache,
-                chain_listeners,
-            ))
-            .map_to_mm(|e| EnableLightningError::RpcError(format!("{:?}", e)))?,
-        );
+
+        let mut ln_registry = coin.as_ref().ln_registry.lock().await;
+        // TODO: Get the results in a vec then call transactions_confirmed for each header tx_list
+        // also order results to call transactions_confirmed by headers/other required order
+        // TODO: loop through ln_registry.registered_outputs also
+        for (txid, scripts) in ln_registry.registered_txs.clone() {
+            match coin
+                .as_ref()
+                .rpc_client
+                .get_verbose_transaction(&txid.as_hash().into_inner().into())
+                .compat()
+                .await
+            {
+                Ok(tx) => {
+                    if let Some(height) = tx.height {
+                        match conf.rpc_client.blockchain_block_header(height).compat().await {
+                            Ok(h) => {
+                                let header = deserialize(&h).expect("Can't deserialize block header");
+                                let transaction: Transaction =
+                                    deserialize(&tx.hex.clone().into_vec()).expect("Can't deserialize transaction");
+                                let mut tx_data = Vec::new();
+                                for (index, vout) in transaction.output.iter().enumerate() {
+                                    if scripts.contains(&vout.script_pubkey) {
+                                        tx_data.push((index, &transaction));
+                                    }
+                                }
+                                // TODO: double check that tx_data needs the index of the output script not of the transaction in the block
+                                channel_manager.transactions_confirmed(&header, &tx_data, height as u32);
+                                chain_monitor.transactions_confirmed(&header, &tx_data, height as u32);
+                                ln_registry.registered_txs.remove(&txid);
+                            },
+                            Err(_) => continue,
+                        }
+                    }
+                },
+                Err(_) => continue,
+            };
+        }
+
+        let best_header = get_best_header(conf.rpc_client.clone()).await?;
+        update_best_block(chain_monitor.clone(), channel_manager.clone(), best_header).await;
     }
 
     // Give ChannelMonitors to ChainMonitor
-    for item in chain_listener_channel_monitors.drain(..) {
-        let channel_monitor = item.1 .0;
-        let funding_outpoint = item.2;
+    for (_, channel_monitor) in channelmonitors.drain(..) {
+        let funding_outpoint = channel_monitor.get_funding_txo().0;
         chain_monitor
             .watch_channel(funding_outpoint, channel_monitor)
             .map_to_mm(|e| EnableLightningError::IOError(format!("{:?}", e)))?;
@@ -318,7 +359,6 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
 
     // Initialize the PeerManager
     // ephemeral_random_data is used to derive per-connection ephemeral keys
-    let channel_manager: Arc<ChannelManager> = Arc::new(channel_manager);
     let mut ephemeral_bytes = [0; 32];
     rand::thread_rng().fill_bytes(&mut ephemeral_bytes);
     let lightning_msg_handler = MessageHandler {
@@ -411,6 +451,64 @@ async fn ln_p2p_loop(ctx: MmArc, peer_manager: Arc<PeerManager>, listener: TcpLi
     }
 }
 
+async fn get_best_header(best_header_listener: ElectrumClient) -> EnableLightningResult<ElectrumBlockHeader> {
+    best_header_listener
+        .blockchain_headers_subscribe()
+        .compat()
+        .await
+        .map_to_mm(|e| EnableLightningError::RpcError(e.to_string()))
+}
+
+async fn update_best_block(
+    chain_monitor: Arc<ChainMonitor>,
+    channel_manager: Arc<ChannelManager>,
+    best_header: ElectrumBlockHeader,
+) {
+    {
+        let (new_best_header, new_best_height) = match best_header {
+            ElectrumBlockHeader::V12(h) => {
+                let nonce = match h.nonce {
+                    ElectrumNonce::Number(n) => n as u32,
+                    ElectrumNonce::Hash(_) => {
+                        return;
+                    },
+                };
+                let prev_blockhash = match sha256d::Hash::from_slice(&h.prev_block_hash.0) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        log::error!("Error while parsing previous block hash for lightning node: {}", e);
+                        return;
+                    },
+                };
+                let merkle_root = match sha256d::Hash::from_slice(&h.merkle_root.0) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        log::error!("Error while parsing merkle root for lightning node: {}", e);
+                        return;
+                    },
+                };
+                (
+                    BlockHeader {
+                        version: h.version as i32,
+                        prev_blockhash: BlockHash::from_hash(prev_blockhash),
+                        merkle_root: TxMerkleNode::from_hash(merkle_root),
+                        time: h.timestamp as u32,
+                        bits: h.bits as u32,
+                        nonce,
+                    },
+                    h.block_height as u32,
+                )
+            },
+            ElectrumBlockHeader::V14(h) => (
+                deserialize(&h.hex.into_vec()).expect("Can't deserialize block header"),
+                h.height as u32,
+            ),
+        };
+        channel_manager.best_block_updated(&new_best_header, new_best_height);
+        chain_monitor.best_block_updated(&new_best_header, new_best_height);
+    }
+}
+
 async fn ln_best_block_update_loop(
     ctx: MmArc,
     chain_monitor: Arc<ChainMonitor>,
@@ -423,7 +521,7 @@ async fn ln_best_block_update_loop(
         if ctx.is_stopping() {
             break;
         }
-        let best_header = match best_header_listener.blockchain_headers_subscribe().compat().await {
+        let best_header = match get_best_header(best_header_listener.clone()).await {
             Ok(h) => h,
             Err(e) => {
                 log::error!("Error while requesting best header for lightning node: {}", e);
@@ -433,50 +531,7 @@ async fn ln_best_block_update_loop(
         };
         if current_best_block != best_header.clone().into() {
             current_best_block = best_header.clone().into();
-            let (new_best_header, new_best_height) = match best_header {
-                ElectrumBlockHeader::V12(h) => {
-                    let nonce = match h.nonce {
-                        ElectrumNonce::Number(n) => n as u32,
-                        ElectrumNonce::Hash(_) => {
-                            Timer::sleep(CHECK_FOR_NEW_BEST_BLOCK_INTERVAL as f64).await;
-                            continue;
-                        },
-                    };
-                    let prev_blockhash = match sha256d::Hash::from_slice(&h.prev_block_hash.0) {
-                        Ok(h) => h,
-                        Err(e) => {
-                            log::error!("Error while parsing previous block hash for lightning node: {}", e);
-                            Timer::sleep(CHECK_FOR_NEW_BEST_BLOCK_INTERVAL as f64).await;
-                            continue;
-                        },
-                    };
-                    let merkle_root = match sha256d::Hash::from_slice(&h.merkle_root.0) {
-                        Ok(h) => h,
-                        Err(e) => {
-                            log::error!("Error while parsing merkle root for lightning node: {}", e);
-                            Timer::sleep(CHECK_FOR_NEW_BEST_BLOCK_INTERVAL as f64).await;
-                            continue;
-                        },
-                    };
-                    (
-                        BlockHeader {
-                            version: h.version as i32,
-                            prev_blockhash: BlockHash::from_hash(prev_blockhash),
-                            merkle_root: TxMerkleNode::from_hash(merkle_root),
-                            time: h.timestamp as u32,
-                            bits: h.bits as u32,
-                            nonce,
-                        },
-                        h.block_height as u32,
-                    )
-                },
-                ElectrumBlockHeader::V14(h) => (
-                    deserialize(&h.hex.into_vec()).expect("Can't deserialize block header"),
-                    h.height as u32,
-                ),
-            };
-            channel_manager.best_block_updated(&new_best_header, new_best_height);
-            chain_monitor.best_block_updated(&new_best_header, new_best_height);
+            update_best_block(chain_monitor.clone(), channel_manager.clone(), best_header).await;
         }
         Timer::sleep(CHECK_FOR_NEW_BEST_BLOCK_INTERVAL as f64).await;
     }

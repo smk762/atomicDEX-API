@@ -3051,14 +3051,14 @@ where
 }
 
 // Todo: Need to make sure if Mutex is needed or not
-pub fn register_tx(coin: &UtxoCoinFields, txid: &Txid, script_pubkey: &BTCScript) {
-    let mut ln_registry = coin.ln_registry.lock().unwrap();
+pub async fn register_tx(coin: &UtxoCoinFields, txid: &Txid, script_pubkey: &BTCScript) {
+    let mut ln_registry = coin.ln_registry.lock().await;
     ln_registry.add_tx(txid, script_pubkey);
 }
 
 // Todo: Need to make sure if Mutex is needed or not
-pub fn register_output(coin: &UtxoCoinFields, output: WatchedOutput) {
-    let mut ln_registry = coin.ln_registry.lock().unwrap();
+pub async fn register_output(coin: &UtxoCoinFields, output: WatchedOutput) {
+    let mut ln_registry = coin.ln_registry.lock().await;
     ln_registry.add_output(output);
 }
 

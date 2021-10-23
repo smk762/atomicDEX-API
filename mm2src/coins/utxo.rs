@@ -530,7 +530,7 @@ pub struct UtxoCoinFields {
     pub recently_spent_outpoints: AsyncMutex<RecentlySpentOutPoints>,
     pub tx_hash_algo: TxHashAlgo,
     // This cache stores both the transactions and the outputs that the LN node has interest in.
-    pub ln_registry: Mutex<LnRegistry>,
+    pub ln_registry: AsyncMutex<LnRegistry>,
 }
 
 #[derive(Debug, Display)]
@@ -1417,7 +1417,7 @@ pub trait UtxoCoinBuilder {
             recently_spent_outpoints: AsyncMutex::new(RecentlySpentOutPoints::new(my_script_pubkey)),
             tx_fee,
             tx_hash_algo,
-            ln_registry: Mutex::new(LnRegistry::new()),
+            ln_registry: AsyncMutex::new(LnRegistry::new()),
         };
         Ok(coin)
     }

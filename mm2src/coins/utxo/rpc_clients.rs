@@ -1563,6 +1563,11 @@ impl ElectrumClient {
         }
     }
 
+    /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-block-header
+    pub fn blockchain_block_header(&self, height: u64) -> RpcRes<BytesJson> {
+        rpc_func!(self, "blockchain.block.header", height)
+    }
+
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-block-headers
     pub fn blockchain_block_headers(&self, start_height: u64, count: NonZeroU64) -> RpcRes<ElectrumBlockHeadersRes> {
         rpc_func!(self, "blockchain.block.headers", start_height, count)
