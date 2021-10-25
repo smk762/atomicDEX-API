@@ -1,3 +1,4 @@
+use crate::transport::{send_event_recv_response, InternalError};
 use common::executor::spawn_local;
 use common::log::error;
 use common::mm_error::prelude::*;
@@ -49,6 +50,10 @@ pub enum WebUsbError {
     TypeMismatch { expected: String, found: String },
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
+}
+
+impl InternalError for WebUsbError {
+    fn internal(e: String) -> Self { WebUsbError::Internal(e) }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -362,24 +367,6 @@ impl WebUsbDevice {
         let bytes = Uint8Array::new(&buffer);
         let chunk = bytes.to_vec();
         Ok(chunk)
-    }
-}
-
-async fn send_event_recv_response<Event, Result>(
-    event_tx: &mpsc::UnboundedSender<Event>,
-    event: Event,
-    result_rx: oneshot::Receiver<WebUsbResult<Result>>,
-) -> WebUsbResult<Result> {
-    if let Err(e) = event_tx.unbounded_send(event) {
-        let error = format!("Error sending event: {}", e);
-        return MmError::err(WebUsbError::Internal(error));
-    }
-    match result_rx.await {
-        Ok(result) => result,
-        Err(e) => {
-            let error = format!("Error receiving result: {}", e);
-            MmError::err(WebUsbError::Internal(error))
-        },
     }
 }
 

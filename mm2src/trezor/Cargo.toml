@@ -17,6 +17,10 @@ rand = { version = "0.7", features = ["std", "wasm-bindgen"] }
 serde = "1.0"
 serde_derive = "1.0"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = "0.7.1"
+log = "0.4"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = { version = "0.3.27" }
 wasm-bindgen = { version = "0.2.50", features = ["serde-serialize", "nightly"] }

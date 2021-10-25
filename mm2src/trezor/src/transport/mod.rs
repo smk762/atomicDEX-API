@@ -4,7 +4,28 @@ use async_trait::async_trait;
 use rand::RngCore;
 
 mod protocol;
+#[cfg(not(target_arch = "wasm32"))] pub mod usb;
 #[cfg(target_arch = "wasm32")] pub mod webusb;
+
+pub const TREZOR_DEVICES: [TrezorDevice; 3] = [
+    // TREZOR v1
+    // won't get opened, but we can show error at least
+    TrezorDevice::new(0x534c, 0x0001),
+    // TREZOR webusb Bootloader
+    TrezorDevice::new(0x1209, 0x53c0),
+    // TREZOR webusb Firmware
+    TrezorDevice::new(0x1209, 0x53c1),
+];
+
+#[derive(Clone, Copy)]
+pub struct TrezorDevice {
+    pub vendor_id: u16,
+    pub product_id: u16,
+}
+
+impl TrezorDevice {
+    const fn new(vendor_id: u16, product_id: u16) -> TrezorDevice { TrezorDevice { vendor_id, product_id } }
+}
 
 /// The transport interface that is implemented by the different ways to communicate with a Trezor
 /// device.

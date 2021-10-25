@@ -2140,6 +2140,7 @@ dependencies = [
  "futures 0.3.15",
  "hidapi",
  "js-sys",
+ "rusb",
  "serde",
  "serde_derive",
  "wasm-bindgen",
@@ -2788,6 +2789,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64d31059f22935e6c31830db5249ba2b7ecd54fd73a9909286f0a67aa55c2fbd"
 dependencies = [
  "cc",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
+name = "libusb1-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e22e89d08bbe6816c6c5d446203b859eba35b8fa94bf1b7edb2f6d25d43f023f"
+dependencies = [
+ "cc",
+ "libc",
  "pkg-config",
  "vcpkg",
 ]
@@ -4457,6 +4470,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusb"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c470dc7dc6e4710b6f85e9c4aa4650bc742260b39a36328180578db76fa258c1"
+dependencies = [
+ "libc",
+ "libusb1-sys",
+]
+
+[[package]]
 name = "rusqlite"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5648,9 +5671,11 @@ dependencies = [
  "byteorder 1.4.3",
  "common",
  "derive_more",
+ "env_logger",
  "futures 0.3.15",
  "hw_common",
  "js-sys",
+ "log 0.4.11",
  "protobuf",
  "protoc-rust",
  "rand 0.7.3",

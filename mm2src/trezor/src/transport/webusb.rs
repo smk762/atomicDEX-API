@@ -1,6 +1,6 @@
 use crate::proto::ProtoMessage;
 use crate::transport::protocol::{Link, Protocol, ProtocolV1};
-use crate::transport::Transport;
+use crate::transport::{Transport, TrezorDevice, TREZOR_DEVICES};
 use crate::{TrezorError, TrezorResult};
 use async_trait::async_trait;
 use common::executor::Timer;
@@ -14,15 +14,9 @@ const T1HID_VENDOR: u16 = 0x534c;
 const CONFIGURATION_ID: u8 = 1;
 const DEBUG_ENDPOINT_ID: u8 = 2;
 
-const TREZOR_DEVICES: [DeviceFilter; 3] = [
-    // TREZOR v1
-    // won't get opened, but we can show error at least
-    DeviceFilter::with_product_id(0x534c, 0x0001),
-    // TREZOR webusb Bootloader
-    DeviceFilter::with_product_id(0x1209, 0x53c0),
-    // TREZOR webusb Firmware
-    DeviceFilter::with_product_id(0x1209, 0x53c1),
-];
+impl From<TrezorDevice> for DeviceFilter {
+    fn from(d: TrezorDevice) -> Self { DeviceFilter::with_product_id(d.vendor_id, d.product_id) }
+}
 
 pub struct WebUsbTransport {
     protocol: ProtocolV1<WebUsbLink>,
@@ -139,7 +133,9 @@ pub struct FoundDevices {
 /// This function **must** be called via a user gesture like a touch or mouse click.
 pub async fn find_devices() -> TrezorResult<FoundDevices> {
     let wrapper = WebUsbWrapper::new()?;
-    wrapper.request_device(TREZOR_DEVICES.to_vec()).await?;
+    wrapper
+        .request_device(TREZOR_DEVICES.iter().copied().map(DeviceFilter::from).collect())
+        .await?;
     let devices_iter = wrapper.get_devices().await?.into_iter().filter(is_trezor);
     let mut available = Vec::new();
     let mut not_supported = Vec::new();
@@ -166,7 +162,7 @@ fn is_trezor(device: &WebUsbDevice) -> bool {
     let (vendor_id, product_id) = (device.device_info.vendor_id, device.device_info.product_id);
     TREZOR_DEVICES
         .iter()
-        .any(|expected| vendor_id == expected.vendor_id && product_id == expected.product_id.unwrap_or(product_id))
+        .any(|expected| vendor_id == expected.vendor_id && product_id == expected.product_id)
 }
 
 fn is_hid(device: &WebUsbDevice) -> bool { device.device_info.vendor_id == T1HID_VENDOR }

@@ -6,7 +6,7 @@
 //! The problem with `hidapi` is in that we can't determine when the device is disconnected.
 //! https://github.com/libusb/hidapi/issues/103#issuecomment-537336680
 
-use common::log::{error, warn};
+use common::log::warn;
 use common::mm_error::prelude::*;
 use derive_more::Display;
 use futures::lock::Mutex as AsyncMutex;
@@ -172,7 +172,7 @@ impl HidDevice {
     }
 
     pub async fn write_chunk(&self, chunk: Vec<u8>) -> HidResult<()> {
-        let mut ctx = self.ctx.lock().await;
+        let ctx = self.ctx.lock().await;
         let chunk_len = chunk.len();
 
         let device = ctx
@@ -190,7 +190,7 @@ impl HidDevice {
     ///
     /// May return a chunk with the length less than `chunk_len`.
     pub async fn read_chunk(&self, chunk_len: usize) -> HidResult<Vec<u8>> {
-        let mut ctx = self.ctx.lock().await;
+        let ctx = self.ctx.lock().await;
         let device = ctx
             .connected_devices
             .get(&self.device_info)
