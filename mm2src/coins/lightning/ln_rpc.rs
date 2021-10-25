@@ -1,6 +1,8 @@
 use crate::utxo::rpc_clients::{electrum_script_hash, ElectrumClient, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcError};
 use crate::utxo::utxo_common;
 use crate::utxo::utxo_standard::UtxoStandardCoin;
+#[cfg(not(target_arch = "wasm32"))]
+use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::script::Script;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode;
@@ -38,6 +40,109 @@ impl BroadcasterInterface for ElectrumClient {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn find_watched_output_spend_with_header(
+    coin: &UtxoStandardCoin,
+    output: WatchedOutput,
+) -> Option<(BlockHeader, usize, Transaction, u64)> {
+    let client = match &coin.as_ref().rpc_client {
+        UtxoRpcClientEnum::Electrum(e) => e.clone(),
+        UtxoRpcClientEnum::Native(_) => {
+            error!("As of now Only electrum client is supported for lightning");
+            return None;
+        },
+    };
+
+    let script_hash = hex::encode(electrum_script_hash(output.script_pubkey.as_ref()));
+    let history = client
+        .scripthash_get_history(&script_hash)
+        .compat()
+        .await
+        .unwrap_or_default();
+
+    if history.len() < 2 {
+        return None;
+    }
+
+    for item in history.iter() {
+        let transaction = match coin
+            .as_ref()
+            .rpc_client
+            .get_verbose_transaction(&item.tx_hash.clone())
+            .compat()
+            .await
+        {
+            Ok(tx) => tx,
+            Err(_) => continue,
+        };
+
+        let maybe_spend_tx: Transaction = match encode::deserialize(&transaction.hex.clone().into_vec()) {
+            Ok(tx) => tx,
+            Err(_) => continue,
+        };
+
+        for (index, input) in maybe_spend_tx.input.iter().enumerate() {
+            if input.previous_output.txid == output.outpoint.txid
+                && input.previous_output.vout == output.outpoint.index as u32
+            {
+                match transaction.height {
+                    Some(height) => match client.blockchain_block_header(height).compat().await {
+                        Ok(header) => {
+                            let header = encode::deserialize(&header).expect("Can't deserialize block header");
+                            return Some((header, index, maybe_spend_tx, height));
+                        },
+                        Err(_) => continue,
+                    },
+                    None => continue,
+                }
+            }
+        }
+    }
+    None
+}
+
+pub async fn find_watched_output_spend(coin: &UtxoStandardCoin, output: WatchedOutput) -> Option<(usize, Transaction)> {
+    let client = match &coin.as_ref().rpc_client {
+        UtxoRpcClientEnum::Electrum(e) => e.clone(),
+        UtxoRpcClientEnum::Native(_) => {
+            error!("As of now Only electrum client is supported for lightning");
+            return None;
+        },
+    };
+
+    let script_hash = hex::encode(electrum_script_hash(output.script_pubkey.as_ref()));
+    let history = client
+        .scripthash_get_history(&script_hash)
+        .compat()
+        .await
+        .unwrap_or_default();
+
+    if history.len() < 2 {
+        return None;
+    }
+
+    for item in history.iter() {
+        let transaction = match client.get_transaction_bytes(item.tx_hash.clone()).compat().await {
+            Ok(tx) => tx,
+            Err(_) => continue,
+        };
+
+        let maybe_spend_tx: Transaction = match encode::deserialize(transaction.as_slice()) {
+            Ok(tx) => tx,
+            Err(_) => continue,
+        };
+
+        for (index, input) in maybe_spend_tx.input.iter().enumerate() {
+            if input.previous_output.txid == output.outpoint.txid
+                && input.previous_output.vout == output.outpoint.index as u32
+            {
+                return Some((index, maybe_spend_tx));
+            }
+        }
+    }
+    None
+}
+
 impl Filter for UtxoStandardCoin {
     // Watches for this transaction on-chain
     fn register_tx(&self, txid: &Txid, script_pubkey: &Script) {
@@ -50,39 +155,6 @@ impl Filter for UtxoStandardCoin {
 
         output.block_hash?;
 
-        let client = match &self.as_ref().rpc_client {
-            UtxoRpcClientEnum::Electrum(e) => e.clone(),
-            UtxoRpcClientEnum::Native(_) => {
-                error!("As of now Only electrum client is supported for lightning");
-                return None;
-            },
-        };
-        let script_hash = hex::encode(electrum_script_hash(output.script_pubkey.as_ref()));
-        let history = block_on(client.scripthash_get_history(&script_hash).compat()).unwrap_or_default();
-
-        if history.len() < 2 {
-            return None;
-        }
-
-        for item in history.iter() {
-            let transaction = match block_on(client.get_transaction_bytes(item.tx_hash.clone()).compat()) {
-                Ok(tx) => tx,
-                Err(_) => continue,
-            };
-
-            let maybe_spend_tx: Transaction = match encode::deserialize(transaction.as_slice()) {
-                Ok(tx) => tx,
-                Err(_) => continue,
-            };
-
-            for (index, input) in maybe_spend_tx.input.iter().enumerate() {
-                if input.previous_output.txid == output.outpoint.txid
-                    && input.previous_output.vout == output.outpoint.index as u32
-                {
-                    return Some((index, maybe_spend_tx));
-                }
-            }
-        }
-        None
+        block_on(find_watched_output_spend(&self, output))
     }
 }

@@ -29,16 +29,21 @@ use lightning_background_processor::BackgroundProcessor;
 use lightning_net_tokio::SocketDescriptor;
 use lightning_persister::FilesystemPersister;
 use rand::RngCore;
+use secp256k1::PublicKey;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs::File;
-use std::net::{IpAddr, Ipv4Addr};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::net::TcpListener;
 
 const CHECK_FOR_NEW_BEST_BLOCK_INTERVAL: u64 = 60;
 const BROADCAST_NODE_ANNOUNCEMENT_INTERVAL: u64 = 60;
+const TRY_RECONNECTING_TO_PEER_INTERVAL: u64 = 60;
 
 type ChainMonitor = chainmonitor::ChainMonitor<
     InMemorySigner,
@@ -268,75 +273,13 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
 
     // Sync ChannelMonitors and ChannelManager to chain tip if the node is restarting and has open channels
     if restarting_node {
-        // Retrieve transaction IDs to check the chain for un-confirmations
-        // TODO: The following code needs to be run with every new block also
-        let channel_manager_relevant_txids = channel_manager.get_relevant_txids();
-        let chain_monitor_relevant_txids = chain_monitor.get_relevant_txids();
-
-        for txid in channel_manager_relevant_txids {
-            if coin
-                .as_ref()
-                .rpc_client
-                .get_transaction_bytes(txid.as_hash().into_inner().into())
-                .compat()
-                .await
-                .is_ok()
-            {
-                channel_manager.transaction_unconfirmed(&txid);
-            }
-        }
-
-        for txid in chain_monitor_relevant_txids {
-            if coin
-                .as_ref()
-                .rpc_client
-                .get_transaction_bytes(txid.as_hash().into_inner().into())
-                .compat()
-                .await
-                .is_ok()
-            {
-                chain_monitor.transaction_unconfirmed(&txid);
-            }
-        }
-
-        let mut ln_registry = coin.as_ref().ln_registry.lock().await;
-        // TODO: Get the results in a vec then call transactions_confirmed for each header tx_list
-        // also order results to call transactions_confirmed by headers/other required order
-        // TODO: loop through ln_registry.registered_outputs also
-        for (txid, scripts) in ln_registry.registered_txs.clone() {
-            match coin
-                .as_ref()
-                .rpc_client
-                .get_verbose_transaction(&txid.as_hash().into_inner().into())
-                .compat()
-                .await
-            {
-                Ok(tx) => {
-                    if let Some(height) = tx.height {
-                        match conf.rpc_client.blockchain_block_header(height).compat().await {
-                            Ok(h) => {
-                                let header = deserialize(&h).expect("Can't deserialize block header");
-                                let transaction: Transaction =
-                                    deserialize(&tx.hex.clone().into_vec()).expect("Can't deserialize transaction");
-                                let mut tx_data = Vec::new();
-                                for (index, vout) in transaction.output.iter().enumerate() {
-                                    if scripts.contains(&vout.script_pubkey) {
-                                        tx_data.push((index, &transaction));
-                                    }
-                                }
-                                // TODO: double check that tx_data needs the index of the output script not of the transaction in the block
-                                channel_manager.transactions_confirmed(&header, &tx_data, height as u32);
-                                chain_monitor.transactions_confirmed(&header, &tx_data, height as u32);
-                                ln_registry.registered_txs.remove(&txid);
-                            },
-                            Err(_) => continue,
-                        }
-                    }
-                },
-                Err(_) => continue,
-            };
-        }
-
+        process_txs_confirmations(
+            filter.clone().unwrap().clone(),
+            conf.rpc_client.clone(),
+            chain_monitor.clone(),
+            channel_manager.clone(),
+        )
+        .await;
         let best_header = get_best_header(conf.rpc_client.clone()).await?;
         update_best_block(chain_monitor.clone(), channel_manager.clone(), best_header).await;
     }
@@ -383,6 +326,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
     // Update best block whenever there's a new chain tip or a block has been newly disconnected
     spawn(ln_best_block_update_loop(
         ctx.clone(),
+        filter.unwrap(),
         chain_monitor.clone(),
         channel_manager.clone(),
         conf.rpc_client.clone(),
@@ -406,13 +350,25 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
         chain_monitor,
         channel_manager.clone(),
         Some(router),
-        peer_manager,
+        peer_manager.clone(),
         logger.0,
     );
 
     if ctx.ln_background_processor.pin(background_processor).is_err() {
         return MmError::err(EnableLightningError::AlreadyRunning);
     };
+
+    // If node is restarting read peer data from disk and reconnect to channel peers if possible.
+    if restarting_node {
+        let mut peer_data = read_peer_data_from_file(&my_ln_data_dir(ctx))?;
+        for (pubkey, peer_addr) in peer_data.drain() {
+            for chan_info in channel_manager.list_channels() {
+                if pubkey == chan_info.counterparty.node_id {
+                    spawn(connect_to_peer(ctx.clone(), pubkey, peer_addr, peer_manager.clone()));
+                }
+            }
+        }
+    }
 
     // Broadcast Node Announcement
     spawn(ln_node_announcement_loop(
@@ -448,6 +404,94 @@ async fn ln_p2p_loop(ctx: MmArc, peer_manager: Arc<PeerManager>, listener: TcpLi
                 lightning_net_tokio::setup_inbound(peer_mgr.clone(), stream).await;
             })
         };
+    }
+}
+
+async fn process_txs_confirmations(
+    filter: Arc<UtxoStandardCoin>,
+    client: ElectrumClient,
+    chain_monitor: Arc<ChainMonitor>,
+    channel_manager: Arc<ChannelManager>,
+) {
+    // Retrieve transaction IDs to check the chain for un-confirmations
+    // TODO: The following code needs to be run with every new block also
+    let channel_manager_relevant_txids = channel_manager.get_relevant_txids();
+    let chain_monitor_relevant_txids = chain_monitor.get_relevant_txids();
+
+    for txid in channel_manager_relevant_txids {
+        if filter
+            .as_ref()
+            .as_ref()
+            .rpc_client
+            .get_transaction_bytes(txid.as_hash().into_inner().into())
+            .compat()
+            .await
+            .is_ok()
+        {
+            channel_manager.transaction_unconfirmed(&txid);
+        }
+    }
+
+    for txid in chain_monitor_relevant_txids {
+        if filter
+            .as_ref()
+            .as_ref()
+            .rpc_client
+            .get_transaction_bytes(txid.as_hash().into_inner().into())
+            .compat()
+            .await
+            .is_ok()
+        {
+            chain_monitor.transaction_unconfirmed(&txid);
+        }
+    }
+
+    let mut ln_registry = filter.as_ref().as_ref().ln_registry.lock().await;
+    // TODO: Get the results in a vec then call transactions_confirmed for each header tx_list
+    // also order results to call transactions_confirmed by headers/other required order
+    // TODO: loop through ln_registry.registered_outputs also
+    for (txid, scripts) in ln_registry.registered_txs.clone() {
+        match filter
+            .as_ref()
+            .as_ref()
+            .rpc_client
+            .get_verbose_transaction(&txid.as_hash().into_inner().into())
+            .compat()
+            .await
+        {
+            Ok(tx) => {
+                if let Some(height) = tx.height {
+                    match client.blockchain_block_header(height).compat().await {
+                        Ok(h) => {
+                            let header = deserialize(&h).expect("Can't deserialize block header");
+                            let transaction: Transaction =
+                                deserialize(&tx.hex.clone().into_vec()).expect("Can't deserialize transaction");
+                            let mut tx_data = Vec::new();
+                            for (index, vout) in transaction.output.iter().enumerate() {
+                                if scripts.contains(&vout.script_pubkey) {
+                                    tx_data.push((index, &transaction));
+                                }
+                            }
+                            // TODO: double check that tx_data needs the index of the output script not of the transaction in the block
+                            channel_manager.transactions_confirmed(&header, &tx_data, height as u32);
+                            chain_monitor.transactions_confirmed(&header, &tx_data, height as u32);
+                            ln_registry.registered_txs.remove(&txid);
+                        },
+                        Err(_) => continue,
+                    }
+                }
+            },
+            Err(_) => continue,
+        };
+    }
+
+    for output in ln_registry.registered_outputs.clone() {
+        let result = ln_rpc::find_watched_output_spend_with_header(&filter.as_ref(), output.0.clone()).await;
+        if let Some((header, index, tx, height)) = result {
+            channel_manager.transactions_confirmed(&header, &[(index, &tx)], height as u32);
+            chain_monitor.transactions_confirmed(&header, &[(index, &tx)], height as u32);
+            ln_registry.registered_outputs.remove(&output);
+        }
     }
 }
 
@@ -511,6 +555,7 @@ async fn update_best_block(
 
 async fn ln_best_block_update_loop(
     ctx: MmArc,
+    filter: Arc<UtxoStandardCoin>,
     chain_monitor: Arc<ChainMonitor>,
     channel_manager: Arc<ChannelManager>,
     best_header_listener: ElectrumClient,
@@ -530,6 +575,13 @@ async fn ln_best_block_update_loop(
             },
         };
         if current_best_block != best_header.clone().into() {
+            process_txs_confirmations(
+                filter.clone(),
+                best_header_listener.clone(),
+                chain_monitor.clone(),
+                channel_manager.clone(),
+            )
+            .await;
             current_best_block = best_header.clone().into();
             update_best_block(chain_monitor.clone(), channel_manager.clone(), best_header).await;
         }
@@ -571,5 +623,89 @@ async fn ln_node_announcement_loop(
         channel_manager.broadcast_node_announcement(node_color, node_name, addresses_to_announce);
 
         Timer::sleep(BROADCAST_NODE_ANNOUNCEMENT_INTERVAL as f64).await;
+    }
+}
+
+fn parse_peer_info(peer_pubkey_and_ip_addr: String) -> EnableLightningResult<(PublicKey, SocketAddr)> {
+    let mut pubkey_and_addr = peer_pubkey_and_ip_addr.split('@');
+
+    let pubkey = pubkey_and_addr.next().ok_or_else(|| {
+        EnableLightningError::IOError(format!(
+            "Incorrect peer info format for {}. The format should be `pubkey@host:port`",
+            peer_pubkey_and_ip_addr
+        ))
+    })?;
+
+    let peer_addr_str = pubkey_and_addr.next().ok_or_else(|| {
+        EnableLightningError::IOError(format!(
+            "Incorrect peer info format for {}. The format should be `pubkey@host:port`",
+            peer_pubkey_and_ip_addr
+        ))
+    })?;
+
+    let peer_addr = peer_addr_str
+        .to_socket_addrs()
+        .map(|mut r| r.next())
+        .map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?
+        .ok_or_else(|| {
+            EnableLightningError::IOError(format!("Couldn't parse {} into a socket address", peer_addr_str))
+        })?;
+
+    let pubkey = PublicKey::from_str(pubkey).map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
+
+    Ok((pubkey, peer_addr))
+}
+
+fn read_peer_data_from_file(path: &Path) -> EnableLightningResult<HashMap<PublicKey, SocketAddr>> {
+    let peer_data_path = path.join("channel_peer_data");
+    if !peer_data_path.as_path().exists() {
+        return Ok(HashMap::new());
+    }
+    let mut peer_data = HashMap::new();
+    let file = File::open(path).map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line.map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
+        let (pubkey, socket_addr) = parse_peer_info(line)?;
+        peer_data.insert(pubkey, socket_addr);
+    }
+    Ok(peer_data)
+}
+
+async fn connect_to_peer(ctx: MmArc, pubkey: PublicKey, peer_addr: SocketAddr, peer_manager: Arc<PeerManager>) {
+    for node_pubkey in peer_manager.get_peer_node_ids() {
+        if node_pubkey == pubkey {
+            log::info!("Already connected to peer: {}", node_pubkey);
+            return;
+        }
+    }
+
+    'try_reconnect: loop {
+        if ctx.is_stopping() {
+            break;
+        }
+
+        match lightning_net_tokio::connect_outbound(Arc::clone(&peer_manager), pubkey, peer_addr).await {
+            Some(connection_closed_future) => {
+                let mut connection_closed_future = Box::pin(connection_closed_future);
+                'waiting: loop {
+                    // Make sure the connection is still established.
+                    match futures::poll!(&mut connection_closed_future) {
+                        std::task::Poll::Ready(_) => {
+                            log::error!("Peer {} disconnected before finishing the handshake", pubkey);
+                            break 'waiting;
+                        },
+                        std::task::Poll::Pending => {},
+                    }
+                    // Wait for the handshake to complete.
+                    match peer_manager.get_peer_node_ids().iter().find(|id| **id == pubkey) {
+                        Some(_) => break 'try_reconnect,
+                        None => Timer::sleep_ms(10).await,
+                    }
+                }
+            },
+            None => log::error!("Failed to connect to peer: {}", pubkey),
+        }
+        Timer::sleep(TRY_RECONNECTING_TO_PEER_INTERVAL as f64).await;
     }
 }

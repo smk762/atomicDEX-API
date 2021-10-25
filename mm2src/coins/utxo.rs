@@ -356,7 +356,8 @@ impl RecentlySpentOutPoints {
     }
 }
 
-pub struct LnWatchedOutput(WatchedOutput);
+#[derive(Clone)]
+pub struct LnWatchedOutput(pub WatchedOutput);
 
 impl PartialEq for LnWatchedOutput {
     fn eq(&self, other: &Self) -> bool {
