@@ -5,6 +5,7 @@ use derive_more::Display;
 use http::StatusCode;
 
 pub type EnableLightningResult<T> = Result<T, MmError<EnableLightningError>>;
+pub type ConnectToNodeResult<T> = Result<T, MmError<ConnectToNodeError>>;
 
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
@@ -31,6 +32,7 @@ pub enum EnableLightningError {
     HashError(String),
     #[display(fmt = "RPC error {}", _0)]
     RpcError(String),
+    ConnectToNodeError(String),
 }
 
 impl HttpStatusCode for EnableLightningError {
@@ -46,7 +48,8 @@ impl HttpStatusCode for EnableLightningError {
             | EnableLightningError::InvalidPath(_)
             | EnableLightningError::SystemTimeError(_)
             | EnableLightningError::IOError(_)
-            | EnableLightningError::HashError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            | EnableLightningError::HashError(_)
+            | EnableLightningError::ConnectToNodeError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             EnableLightningError::NoSuchCoin(_) => StatusCode::PRECONDITION_REQUIRED,
         }
     }
@@ -57,5 +60,38 @@ impl From<CoinFindError> for EnableLightningError {
         match e {
             CoinFindError::NoSuchCoin { coin } => EnableLightningError::NoSuchCoin(coin),
         }
+    }
+}
+
+#[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
+#[serde(tag = "error_type", content = "error_data")]
+pub enum ConnectToNodeError {
+    #[display(fmt = "{} is only supported in {} mode", _0, _1)]
+    UnsupportedMode(String, String),
+    #[display(fmt = "You have to run 'enable_lightning' for {} first", _0)]
+    LightningNotEnabled(String),
+    #[display(fmt = "Parse error: {}", _0)]
+    ParseError(String),
+    #[display(fmt = "Error connecting to node: {}", _0)]
+    ConnectionError(String),
+    #[display(fmt = "I/O error {}", _0)]
+    IOError(String),
+}
+
+impl HttpStatusCode for ConnectToNodeError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            ConnectToNodeError::UnsupportedMode(_, _) | ConnectToNodeError::LightningNotEnabled(_) => {
+                StatusCode::METHOD_NOT_ALLOWED
+            },
+            ConnectToNodeError::ParseError(_) | ConnectToNodeError::IOError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ConnectToNodeError::ConnectionError(_) => StatusCode::REQUEST_TIMEOUT,
+        }
+    }
+}
+
+impl From<ConnectToNodeError> for EnableLightningError {
+    fn from(err: ConnectToNodeError) -> EnableLightningError {
+        EnableLightningError::ConnectToNodeError(err.to_string())
     }
 }

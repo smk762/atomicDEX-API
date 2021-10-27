@@ -2,6 +2,7 @@ use super::*;
 use crate::utxo::rpc_clients::{BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient, ElectrumNonce,
                                UtxoRpcClientOps};
 use crate::utxo::utxo_standard::UtxoStandardCoin;
+use crate::MarketCoinOps;
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::transaction::Transaction;
@@ -13,8 +14,8 @@ use common::executor::{spawn, Timer};
 use common::ip_addr::fetch_external_ip;
 use common::log;
 use common::log::LogState;
-use common::mm_ctx::MmArc;
-use futures::compat::Future01CompatExt;
+use common::mm_ctx::{from_ctx, MmArc};
+use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex};
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager};
 use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Watch};
 use lightning::ln::channelmanager;
@@ -32,8 +33,8 @@ use rand::RngCore;
 use secp256k1::PublicKey;
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -43,7 +44,7 @@ use tokio::net::TcpListener;
 
 const CHECK_FOR_NEW_BEST_BLOCK_INTERVAL: u64 = 60;
 const BROADCAST_NODE_ANNOUNCEMENT_INTERVAL: u64 = 60;
-const TRY_RECONNECTING_TO_PEER_INTERVAL: u64 = 60;
+const TRY_RECONNECTING_TO_NODE_INTERVAL: u64 = 60;
 
 type ChainMonitor = chainmonitor::ChainMonitor<
     InMemorySigner,
@@ -73,6 +74,20 @@ type PeerManager = SimpleArcPeerManager<
 >;
 
 type SimpleChannelManager = SimpleArcChannelManager<ChainMonitor, ElectrumClient, ElectrumClient, LogState>;
+
+#[derive(Default)]
+pub struct LightningContext {
+    pub peer_managers: AsyncMutex<HashMap<String, Arc<PeerManager>>>,
+}
+
+impl LightningContext {
+    /// Obtains a reference to this crate context, creating it if necessary.
+    pub fn from_ctx(ctx: &MmArc) -> Result<Arc<LightningContext>, String> {
+        Ok(try_s!(from_ctx(&ctx.lightning_ctx, move || {
+            Ok(LightningContext::default())
+        })))
+    }
+}
 
 #[derive(Debug)]
 pub struct LightningConf {
@@ -139,6 +154,8 @@ fn netaddress_from_ipaddr(addr: IpAddr, port: u16) -> Vec<NetAddress> {
 }
 
 fn my_ln_data_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("LIGHTNING") }
+
+pub fn nodes_data_path(ctx: &MmArc) -> PathBuf { my_ln_data_dir(ctx).join("channel_nodes_data") }
 
 // TODO: Implement all the cases
 async fn handle_ln_events(event: &Event) {
@@ -358,13 +375,18 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
         return MmError::err(EnableLightningError::AlreadyRunning);
     };
 
-    // If node is restarting read peer data from disk and reconnect to channel peers if possible.
+    // If node is restarting read other nodes data from disk and reconnect to channel nodes/peers if possible.
     if restarting_node {
-        let mut peer_data = read_peer_data_from_file(&my_ln_data_dir(ctx))?;
-        for (pubkey, peer_addr) in peer_data.drain() {
+        let mut nodes_data = read_nodes_data_from_file(&nodes_data_path(ctx))?;
+        for (pubkey, node_addr) in nodes_data.drain() {
             for chan_info in channel_manager.list_channels() {
                 if pubkey == chan_info.counterparty.node_id {
-                    spawn(connect_to_peer(ctx.clone(), pubkey, peer_addr, peer_manager.clone()));
+                    spawn(connect_to_node_loop(
+                        ctx.clone(),
+                        pubkey,
+                        node_addr,
+                        peer_manager.clone(),
+                    ));
                 }
             }
         }
@@ -380,6 +402,10 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
         conf.listening_port,
     ));
 
+    let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
+    let mut peer_managers = lightning_ctx.peer_managers.lock().await;
+    peer_managers.insert(coin.ticker().to_string(), peer_manager);
+
     Ok(())
 }
 
@@ -391,7 +417,7 @@ async fn ln_p2p_loop(ctx: MmArc, peer_manager: Arc<PeerManager>, listener: TcpLi
         let peer_mgr = peer_manager.clone();
         let tcp_stream = match listener.accept().await {
             Ok((stream, addr)) => {
-                log::debug!("New incoming lightning connection from peer address: {}", addr);
+                log::debug!("New incoming lightning connection from node address: {}", addr);
                 stream
             },
             Err(e) => {
@@ -626,86 +652,128 @@ async fn ln_node_announcement_loop(
     }
 }
 
-fn parse_peer_info(peer_pubkey_and_ip_addr: String) -> EnableLightningResult<(PublicKey, SocketAddr)> {
-    let mut pubkey_and_addr = peer_pubkey_and_ip_addr.split('@');
-
-    let pubkey = pubkey_and_addr.next().ok_or_else(|| {
-        EnableLightningError::IOError(format!(
-            "Incorrect peer info format for {}. The format should be `pubkey@host:port`",
-            peer_pubkey_and_ip_addr
-        ))
-    })?;
-
-    let peer_addr_str = pubkey_and_addr.next().ok_or_else(|| {
-        EnableLightningError::IOError(format!(
-            "Incorrect peer info format for {}. The format should be `pubkey@host:port`",
-            peer_pubkey_and_ip_addr
-        ))
-    })?;
-
-    let peer_addr = peer_addr_str
+fn pubkey_and_addr_from_str(pubkey_str: &str, addr_str: &str) -> ConnectToNodeResult<(PublicKey, SocketAddr)> {
+    let addr = addr_str
         .to_socket_addrs()
         .map(|mut r| r.next())
-        .map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?
-        .ok_or_else(|| {
-            EnableLightningError::IOError(format!("Couldn't parse {} into a socket address", peer_addr_str))
-        })?;
+        .map_to_mm(|e| ConnectToNodeError::ParseError(e.to_string()))?
+        .ok_or_else(|| ConnectToNodeError::ParseError(format!("Couldn't parse {} into a socket address", addr_str)))?;
 
-    let pubkey = PublicKey::from_str(pubkey).map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
+    let pubkey = PublicKey::from_str(pubkey_str).map_to_mm(|e| ConnectToNodeError::ParseError(e.to_string()))?;
 
-    Ok((pubkey, peer_addr))
+    Ok((pubkey, addr))
 }
 
-fn read_peer_data_from_file(path: &Path) -> EnableLightningResult<HashMap<PublicKey, SocketAddr>> {
-    let peer_data_path = path.join("channel_peer_data");
-    if !peer_data_path.as_path().exists() {
+pub fn parse_node_info(node_pubkey_and_ip_addr: String) -> ConnectToNodeResult<(PublicKey, SocketAddr)> {
+    let mut pubkey_and_addr = node_pubkey_and_ip_addr.split('@');
+
+    let pubkey = pubkey_and_addr.next().ok_or_else(|| {
+        ConnectToNodeError::ParseError(format!(
+            "Incorrect node id format for {}. The format should be `pubkey@host:port`",
+            node_pubkey_and_ip_addr
+        ))
+    })?;
+
+    let node_addr_str = pubkey_and_addr.next().ok_or_else(|| {
+        ConnectToNodeError::ParseError(format!(
+            "Incorrect node id format for {}. The format should be `pubkey@host:port`",
+            node_pubkey_and_ip_addr
+        ))
+    })?;
+
+    let (pubkey, node_addr) = pubkey_and_addr_from_str(pubkey, node_addr_str)?;
+    Ok((pubkey, node_addr))
+}
+
+fn read_nodes_data_from_file(path: &Path) -> EnableLightningResult<HashMap<PublicKey, SocketAddr>> {
+    if !path.exists() {
         return Ok(HashMap::new());
     }
-    let mut peer_data = HashMap::new();
+    let mut nodes_data = HashMap::new();
     let file = File::open(path).map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
     let reader = BufReader::new(file);
     for line in reader.lines() {
         let line = line.map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
-        let (pubkey, socket_addr) = parse_peer_info(line)?;
-        peer_data.insert(pubkey, socket_addr);
+        let (pubkey, socket_addr) = parse_node_info(line)?;
+        nodes_data.insert(pubkey, socket_addr);
     }
-    Ok(peer_data)
+    Ok(nodes_data)
 }
 
-async fn connect_to_peer(ctx: MmArc, pubkey: PublicKey, peer_addr: SocketAddr, peer_manager: Arc<PeerManager>) {
+pub fn save_node_data_to_file(path: &Path, node_info: &str) -> ConnectToNodeResult<()> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_to_mm(|e| ConnectToNodeError::IOError(e.to_string()))?;
+    file.write_all(format!("{}\n", node_info).as_bytes())
+        .map_to_mm(|e| ConnectToNodeError::IOError(e.to_string()))
+}
+
+pub async fn connect_to_node(
+    pubkey: PublicKey,
+    node_addr: SocketAddr,
+    peer_manager: Arc<PeerManager>,
+) -> ConnectToNodeResult<()> {
     for node_pubkey in peer_manager.get_peer_node_ids() {
         if node_pubkey == pubkey {
-            log::info!("Already connected to peer: {}", node_pubkey);
+            return MmError::err(ConnectToNodeError::ConnectionError(format!(
+                "Already connected to node: {}@{}",
+                node_pubkey, node_addr
+            )));
+        }
+    }
+
+    match lightning_net_tokio::connect_outbound(Arc::clone(&peer_manager), pubkey, node_addr).await {
+        Some(connection_closed_future) => {
+            let mut connection_closed_future = Box::pin(connection_closed_future);
+            loop {
+                // Make sure the connection is still established.
+                match futures::poll!(&mut connection_closed_future) {
+                    std::task::Poll::Ready(_) => {
+                        return MmError::err(ConnectToNodeError::ConnectionError(format!(
+                            "Node {} disconnected before finishing the handshake",
+                            pubkey
+                        )));
+                    },
+                    std::task::Poll::Pending => {},
+                }
+                // Wait for the handshake to complete.
+                match peer_manager.get_peer_node_ids().iter().find(|id| **id == pubkey) {
+                    Some(_) => break,
+                    None => Timer::sleep_ms(10).await,
+                }
+            }
+        },
+        None => {
+            return MmError::err(ConnectToNodeError::ConnectionError(format!(
+                "Failed to connect to node: {}",
+                pubkey
+            )))
+        },
+    }
+
+    Ok(())
+}
+
+async fn connect_to_node_loop(ctx: MmArc, pubkey: PublicKey, node_addr: SocketAddr, peer_manager: Arc<PeerManager>) {
+    for node_pubkey in peer_manager.get_peer_node_ids() {
+        if node_pubkey == pubkey {
+            log::info!("Already connected to node: {}", node_pubkey);
             return;
         }
     }
 
-    'try_reconnect: loop {
+    loop {
         if ctx.is_stopping() {
             break;
         }
 
-        match lightning_net_tokio::connect_outbound(Arc::clone(&peer_manager), pubkey, peer_addr).await {
-            Some(connection_closed_future) => {
-                let mut connection_closed_future = Box::pin(connection_closed_future);
-                'waiting: loop {
-                    // Make sure the connection is still established.
-                    match futures::poll!(&mut connection_closed_future) {
-                        std::task::Poll::Ready(_) => {
-                            log::error!("Peer {} disconnected before finishing the handshake", pubkey);
-                            break 'waiting;
-                        },
-                        std::task::Poll::Pending => {},
-                    }
-                    // Wait for the handshake to complete.
-                    match peer_manager.get_peer_node_ids().iter().find(|id| **id == pubkey) {
-                        Some(_) => break 'try_reconnect,
-                        None => Timer::sleep_ms(10).await,
-                    }
-                }
-            },
-            None => log::error!("Failed to connect to peer: {}", pubkey),
+        match connect_to_node(pubkey, node_addr, peer_manager.clone()).await {
+            Ok(_) => break,
+            Err(e) => log::error!("{}", e.to_string()),
         }
-        Timer::sleep(TRY_RECONNECTING_TO_PEER_INTERVAL as f64).await;
+
+        Timer::sleep(TRY_RECONNECTING_TO_NODE_INTERVAL as f64).await;
     }
 }

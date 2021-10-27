@@ -4,9 +4,10 @@ use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use common::ip_addr::myipaddr;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
-use ln_errors::{EnableLightningError, EnableLightningResult};
+use ln_errors::{ConnectToNodeError, ConnectToNodeResult, EnableLightningError, EnableLightningResult};
 #[cfg(not(target_arch = "wasm32"))]
-use ln_utils::{network_from_string, start_lightning, LightningConf};
+use ln_utils::{connect_to_node, network_from_string, nodes_data_path, parse_node_info, save_node_data_to_file,
+               start_lightning, LightningConf, LightningContext};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::{lp_coinfind_or_err, MmCoinEnum};
@@ -95,6 +96,45 @@ pub async fn enable_lightning(ctx: MmArc, req: EnableLightningRequest) -> Enable
 
     let conf = LightningConf::new(client.clone(), network, listen_addr, port, node_name, node_color);
     start_lightning(&ctx, utxo_coin, conf).await?;
+
+    Ok("success".into())
+}
+
+#[derive(Deserialize)]
+pub struct ConnectToNodeRequest {
+    pub coin: String,
+    pub node_id: String,
+    #[serde(default)]
+    pub reconnect_on_restart: bool,
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn connect_to_lightning_node(_ctx: MmArc, _req: ConnectToNodeRequest) -> ConnectToNodeResult<String> {
+    MmError::err(ConnectToNodeError::UnsupportedMode(
+        "'connect_to_lightning_node'".into(),
+        "native".into(),
+    ))
+}
+
+/// Connect to a certain node on the lightning network.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn connect_to_lightning_node(ctx: MmArc, req: ConnectToNodeRequest) -> ConnectToNodeResult<String> {
+    if ctx.ln_background_processor.is_none() {
+        return MmError::err(ConnectToNodeError::LightningNotEnabled(req.coin));
+    }
+
+    let (node_pubkey, node_addr) = parse_node_info(req.node_id.clone())?;
+
+    if req.reconnect_on_restart {
+        save_node_data_to_file(&nodes_data_path(&ctx), &req.node_id)?
+    }
+
+    let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
+    let peer_managers = lightning_ctx.peer_managers.lock().await;
+    let peer_manager = peer_managers
+        .get(&req.coin)
+        .ok_or(ConnectToNodeError::LightningNotEnabled(req.coin))?;
+    connect_to_node(node_pubkey, node_addr, peer_manager.clone()).await?;
 
     Ok("success".into())
 }
