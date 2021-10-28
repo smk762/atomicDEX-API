@@ -15,6 +15,7 @@ use common::ip_addr::fetch_external_ip;
 use common::log;
 use common::log::LogState;
 use common::mm_ctx::{from_ctx, MmArc};
+use derive_more::Display;
 use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex};
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager};
 use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Watch};
@@ -81,6 +82,9 @@ pub struct LightningContext {
     pub peer_managers: AsyncMutex<HashMap<String, Arc<PeerManager>>>,
     /// The lightning nodes background processors that take care of tasks that need to happen periodically
     pub background_processors: AsyncMutex<HashMap<String, BackgroundProcessor>>,
+    /// The lightning nodes channel managers which keep track of the number of open channels and sends messages to the appropriate
+    /// channel, also tracks HTLC preimages and forwards onion packets appropriately.
+    pub channel_managers: AsyncMutex<HashMap<String, Arc<ChannelManager>>>,
 }
 
 impl LightningContext {
@@ -242,21 +246,19 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
         }
     }
 
-    // TODO: Add the case of restarting a node
-    let mut user_config = UserConfig::default();
-
-    // When set to false an incoming channel doesn't have to match our announced channel preference which allows public channels
-    // TODO: Add user config to LightningConf maybe get it from coin config
-    user_config
-        .peer_channel_config_limits
-        .force_announced_channel_preference = false;
-
     let best_block = conf
         .rpc_client
         .get_best_block()
         .compat()
         .await
         .mm_err(|e| EnableLightningError::RpcError(e.to_string()))?;
+
+    let mut user_config = UserConfig::default();
+    // When set to false an incoming channel doesn't have to match our announced channel preference which allows public channels
+    // TODO: Add user config to LightningConf maybe get it from coin config / also add to lightning context
+    user_config
+        .peer_channel_config_limits
+        .force_announced_channel_preference = false;
 
     let mut restarting_node = true;
     // TODO: use channel_manager_blockhash to know where to start looking for outputs from
@@ -407,18 +409,25 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
         }
     }
 
+    {
+        let mut peer_managers = lightning_ctx.peer_managers.lock().await;
+        peer_managers.insert(coin.ticker().to_string(), peer_manager);
+    }
+
     // Broadcast Node Announcement
     spawn(ln_node_announcement_loop(
         ctx.clone(),
-        channel_manager,
+        channel_manager.clone(),
         conf.node_name,
         conf.node_color,
         conf.listening_addr,
         conf.listening_port,
     ));
 
-    let mut peer_managers = lightning_ctx.peer_managers.lock().await;
-    peer_managers.insert(coin.ticker().to_string(), peer_manager);
+    {
+        let mut channel_managers = lightning_ctx.channel_managers.lock().await;
+        channel_managers.insert(coin.ticker().to_string(), channel_manager);
+    }
 
     Ok(())
 }
@@ -725,17 +734,25 @@ pub fn save_node_data_to_file(path: &Path, node_info: &str) -> ConnectToNodeResu
         .map_to_mm(|e| ConnectToNodeError::IOError(e.to_string()))
 }
 
+#[derive(Display)]
+pub enum ConnectToNodeRes {
+    #[display(fmt = "Already connected to node: {}@{}", _0, _1)]
+    AlreadyConnected(String, String),
+    #[display(fmt = "Connected successfully to node : {}@{}", _0, _1)]
+    ConnectedSuccessfully(String, String),
+}
+
 pub async fn connect_to_node(
     pubkey: PublicKey,
     node_addr: SocketAddr,
     peer_manager: Arc<PeerManager>,
-) -> ConnectToNodeResult<()> {
+) -> ConnectToNodeResult<ConnectToNodeRes> {
     for node_pubkey in peer_manager.get_peer_node_ids() {
         if node_pubkey == pubkey {
-            return MmError::err(ConnectToNodeError::ConnectionError(format!(
-                "Already connected to node: {}@{}",
-                node_pubkey, node_addr
-            )));
+            return Ok(ConnectToNodeRes::AlreadyConnected(
+                node_pubkey.to_string(),
+                node_addr.to_string(),
+            ));
         }
     }
 
@@ -768,7 +785,10 @@ pub async fn connect_to_node(
         },
     }
 
-    Ok(())
+    Ok(ConnectToNodeRes::ConnectedSuccessfully(
+        pubkey.to_string(),
+        node_addr.to_string(),
+    ))
 }
 
 async fn connect_to_node_loop(ctx: MmArc, pubkey: PublicKey, node_addr: SocketAddr, peer_manager: Arc<PeerManager>) {
@@ -785,10 +805,42 @@ async fn connect_to_node_loop(ctx: MmArc, pubkey: PublicKey, node_addr: SocketAd
         }
 
         match connect_to_node(pubkey, node_addr, peer_manager.clone()).await {
-            Ok(_) => break,
+            Ok(res) => {
+                log::info!("{}", res.to_string());
+                break;
+            },
             Err(e) => log::error!("{}", e.to_string()),
         }
 
         Timer::sleep(TRY_RECONNECTING_TO_NODE_INTERVAL as f64).await;
+    }
+}
+
+pub fn open_ln_channel(
+    node_pubkey: PublicKey,
+    amount_in_sat: u64,
+    events_id: u64,
+    announce_channel: bool,
+    channel_manager: Arc<ChannelManager>,
+) -> OpenChannelResult<()> {
+    // TODO: get user_config from context when it's added to it
+    let mut user_config = UserConfig::default();
+    user_config
+        .peer_channel_config_limits
+        .force_announced_channel_preference = false;
+    user_config.channel_options.announced_channel = announce_channel;
+
+    // TODO: push_msat parameter
+    match channel_manager.create_channel(node_pubkey, amount_in_sat, 0, events_id, Some(user_config)) {
+        Ok(_) => {
+            log::info!("Initiated opening a channel with node {}", node_pubkey);
+            Ok(())
+        },
+        Err(e) => {
+            return MmError::err(OpenChannelError::FailureToOpenChannel(
+                node_pubkey.to_string(),
+                format!("{:?}", e),
+            ));
+        },
     }
 }

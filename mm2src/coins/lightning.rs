@@ -4,10 +4,11 @@ use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use common::ip_addr::myipaddr;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
-use ln_errors::{ConnectToNodeError, ConnectToNodeResult, EnableLightningError, EnableLightningResult};
+use ln_errors::{ConnectToNodeError, ConnectToNodeResult, EnableLightningError, EnableLightningResult,
+                OpenChannelError, OpenChannelResult};
 #[cfg(not(target_arch = "wasm32"))]
-use ln_utils::{connect_to_node, network_from_string, nodes_data_path, parse_node_info, save_node_data_to_file,
-               start_lightning, LightningConf, LightningContext};
+use ln_utils::{connect_to_node, network_from_string, nodes_data_path, open_ln_channel, parse_node_info,
+               save_node_data_to_file, start_lightning, ConnectToNodeRes, LightningConf, LightningContext};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::{lp_coinfind_or_err, MmCoinEnum};
@@ -138,7 +139,76 @@ pub async fn connect_to_lightning_node(ctx: MmArc, req: ConnectToNodeRequest) ->
     let peer_manager = peer_managers
         .get(&req.coin)
         .ok_or(ConnectToNodeError::LightningNotEnabled(req.coin))?;
-    connect_to_node(node_pubkey, node_addr, peer_manager.clone()).await?;
+    let res = connect_to_node(node_pubkey, node_addr, peer_manager.clone()).await?;
+
+    Ok(res.to_string())
+}
+
+fn get_true() -> bool { true }
+
+#[derive(Deserialize)]
+pub struct OpenChannelRequest {
+    pub coin: String,
+    pub node_id: String,
+    pub amount_in_sat: u64,
+    // Helps in tracking which FundingGenerationReady events corresponds to which open_channel call
+    pub request_id: u64,
+    #[serde(default = "get_true")]
+    pub announce_channel: bool,
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn open_channel(_ctx: MmArc, _req: OpenChannelRequest) -> OpenChannelResult<String> {
+    MmError::err(OpenChannelError::UnsupportedMode(
+        "'open_channel'".into(),
+        "native".into(),
+    ))
+}
+
+/// Opens a channel on the lightning network.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelResult<String> {
+    let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
+
+    {
+        let background_processor = lightning_ctx.background_processors.lock().await;
+        if !background_processor.contains_key(&req.coin) {
+            return MmError::err(OpenChannelError::LightningNotEnabled(req.coin));
+        }
+    }
+
+    // Todo: check the cases when you can open a channel with a node with only the pubkey / and how to use save_node_data_to_file with it
+    let (node_pubkey, node_addr) = parse_node_info(req.node_id.clone())?;
+
+    let connect_to_node_res = {
+        let peer_managers = lightning_ctx.peer_managers.lock().await;
+        let peer_manager = peer_managers
+            .get(&req.coin)
+            .ok_or_else(|| ConnectToNodeError::LightningNotEnabled(req.coin.clone()))?;
+        connect_to_node(node_pubkey, node_addr, peer_manager.clone()).await?
+    };
+
+    match connect_to_node_res {
+        ConnectToNodeRes::ConnectedSuccessfully(_, _) => save_node_data_to_file(&nodes_data_path(&ctx), &req.node_id)?,
+        // Todo: for save_node_data_to_file should have a file for each node to check if it was saved before or not
+        // for the case of if a node is already connected through "connect_to_lightning_node" RPC with reconnect_on_restart as true
+        // this should be better than keeping track of saved nodes for restart in memory
+        ConnectToNodeRes::AlreadyConnected(_, _) => (),
+    }
+
+    {
+        let channel_managers = lightning_ctx.channel_managers.lock().await;
+        let channel_manager = channel_managers
+            .get(&req.coin)
+            .ok_or(ConnectToNodeError::LightningNotEnabled(req.coin))?;
+        open_ln_channel(
+            node_pubkey,
+            req.amount_in_sat,
+            req.request_id,
+            req.announce_channel,
+            channel_manager.clone(),
+        )?;
+    }
 
     Ok("success".into())
 }

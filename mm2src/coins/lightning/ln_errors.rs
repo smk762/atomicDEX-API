@@ -6,6 +6,7 @@ use http::StatusCode;
 
 pub type EnableLightningResult<T> = Result<T, MmError<EnableLightningError>>;
 pub type ConnectToNodeResult<T> = Result<T, MmError<ConnectToNodeError>>;
+pub type OpenChannelResult<T> = Result<T, MmError<OpenChannelError>>;
 
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
@@ -94,4 +95,33 @@ impl From<ConnectToNodeError> for EnableLightningError {
     fn from(err: ConnectToNodeError) -> EnableLightningError {
         EnableLightningError::ConnectToNodeError(err.to_string())
     }
+}
+
+#[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
+#[serde(tag = "error_type", content = "error_data")]
+pub enum OpenChannelError {
+    #[display(fmt = "{} is only supported in {} mode", _0, _1)]
+    UnsupportedMode(String, String),
+    #[display(fmt = "You have to run 'enable_lightning' for {} first", _0)]
+    LightningNotEnabled(String),
+    #[display(fmt = "Failure to open channel with node {}: {}", _0, _1)]
+    FailureToOpenChannel(String, String),
+    ConnectToNodeError(String),
+}
+
+impl HttpStatusCode for OpenChannelError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            OpenChannelError::UnsupportedMode(_, _) | OpenChannelError::LightningNotEnabled(_) => {
+                StatusCode::METHOD_NOT_ALLOWED
+            },
+            OpenChannelError::FailureToOpenChannel(_, _) | OpenChannelError::ConnectToNodeError(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
+        }
+    }
+}
+
+impl From<ConnectToNodeError> for OpenChannelError {
+    fn from(err: ConnectToNodeError) -> OpenChannelError { OpenChannelError::ConnectToNodeError(err.to_string()) }
 }
