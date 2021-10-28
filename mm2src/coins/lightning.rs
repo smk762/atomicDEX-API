@@ -119,8 +119,13 @@ pub async fn connect_to_lightning_node(_ctx: MmArc, _req: ConnectToNodeRequest) 
 /// Connect to a certain node on the lightning network.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn connect_to_lightning_node(ctx: MmArc, req: ConnectToNodeRequest) -> ConnectToNodeResult<String> {
-    if ctx.ln_background_processor.is_none() {
-        return MmError::err(ConnectToNodeError::LightningNotEnabled(req.coin));
+    let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
+
+    {
+        let background_processor = lightning_ctx.background_processors.lock().await;
+        if !background_processor.contains_key(&req.coin) {
+            return MmError::err(ConnectToNodeError::LightningNotEnabled(req.coin));
+        }
     }
 
     let (node_pubkey, node_addr) = parse_node_info(req.node_id.clone())?;
@@ -129,7 +134,6 @@ pub async fn connect_to_lightning_node(ctx: MmArc, req: ConnectToNodeRequest) ->
         save_node_data_to_file(&nodes_data_path(&ctx), &req.node_id)?
     }
 
-    let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
     let peer_managers = lightning_ctx.peer_managers.lock().await;
     let peer_manager = peer_managers
         .get(&req.coin)

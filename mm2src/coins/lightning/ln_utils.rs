@@ -77,7 +77,10 @@ type SimpleChannelManager = SimpleArcChannelManager<ChainMonitor, ElectrumClient
 
 #[derive(Default)]
 pub struct LightningContext {
+    /// The lightning nodes peer managers that take care of connecting to peers, etc..
     pub peer_managers: AsyncMutex<HashMap<String, Arc<PeerManager>>>,
+    /// The lightning nodes background processors that take care of tasks that need to happen periodically
+    pub background_processors: AsyncMutex<HashMap<String, BackgroundProcessor>>,
 }
 
 impl LightningContext {
@@ -172,9 +175,15 @@ async fn handle_ln_events(event: &Event) {
 }
 
 pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: LightningConf) -> EnableLightningResult<()> {
-    if ctx.ln_background_processor.is_some() {
-        return MmError::err(EnableLightningError::AlreadyRunning);
+    let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
+
+    {
+        let background_processor = lightning_ctx.background_processors.lock().await;
+        if background_processor.contains_key(&coin.ticker().to_string()) {
+            return MmError::err(EnableLightningError::AlreadyRunning);
+        }
     }
+
     // Initialize the FeeEstimator. rpc_client implements the FeeEstimator trait, so it'll act as our fee estimator.
     let fee_estimator = Arc::new(conf.rpc_client.clone());
 
@@ -208,6 +217,9 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
 
     let seed: [u8; 32] = ctx.secp256k1_key_pair().private().secret.into();
 
+    // Lock context and wait 1ms before dropping to insure randomness for different coins
+    // when starting multiple lightning nodes for different coins at the same time
+    let background_processor = lightning_ctx.background_processors.lock().await;
     // The current time is used to derive random numbers from the seed where required, to ensure all random generation is unique across restarts.
     let cur = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -215,6 +227,8 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
 
     // Initialize the KeysManager
     let keys_manager = Arc::new(KeysManager::new(&seed, cur.as_secs(), cur.subsec_nanos()));
+    Timer::sleep_ms(1).await;
+    drop(background_processor);
 
     // Read ChannelMonitor state from disk, important for lightning node is restarting and has at least 1 channel
     let mut channelmonitors = persister
@@ -371,9 +385,10 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
         logger.0,
     );
 
-    if ctx.ln_background_processor.pin(background_processor).is_err() {
-        return MmError::err(EnableLightningError::AlreadyRunning);
-    };
+    {
+        let mut background_processors = lightning_ctx.background_processors.lock().await;
+        background_processors.insert(coin.ticker().to_string(), background_processor);
+    }
 
     // If node is restarting read other nodes data from disk and reconnect to channel nodes/peers if possible.
     if restarting_node {
@@ -402,7 +417,6 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
         conf.listening_port,
     ));
 
-    let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
     let mut peer_managers = lightning_ctx.peer_managers.lock().await;
     peer_managers.insert(coin.ticker().to_string(), peer_manager);
 
@@ -653,6 +667,7 @@ async fn ln_node_announcement_loop(
 }
 
 fn pubkey_and_addr_from_str(pubkey_str: &str, addr_str: &str) -> ConnectToNodeResult<(PublicKey, SocketAddr)> {
+    // TODO: support connection to onion addresses
     let addr = addr_str
         .to_socket_addrs()
         .map(|mut r| r.next())

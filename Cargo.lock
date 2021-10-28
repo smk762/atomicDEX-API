@@ -879,7 +879,6 @@ dependencies = [
  "lazy_static",
  "libc",
  "lightning",
- "lightning-background-processor",
  "log 0.4.11",
  "log4rs",
  "metrics",
