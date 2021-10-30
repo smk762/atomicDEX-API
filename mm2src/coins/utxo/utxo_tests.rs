@@ -71,7 +71,7 @@ fn utxo_coin_fields_for_test(
     let key_pair = key_pair_from_seed(&seed).unwrap();
     let my_address = Address {
         prefix: 60,
-        hash: key_pair.public().address_hash(),
+        hash: key_pair.public().address_hash().into(),
         t_addr_prefix: 0,
         checksum_type,
         hrp: None,
@@ -126,6 +126,7 @@ fn utxo_coin_fields_for_test(
         tx_cache_directory: None,
         recently_spent_outpoints: AsyncMutex::new(RecentlySpentOutPoints::new(my_script_pubkey)),
         tx_hash_algo: TxHashAlgo::DSHA256,
+        ln_registry: AsyncMutex::new(LnRegistry::new()),
     }
 }
 

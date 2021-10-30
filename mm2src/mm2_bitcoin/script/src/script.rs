@@ -1,7 +1,7 @@
 //! Serialized script, used inside transaction inputs and outputs.
 
 use bytes::Bytes;
-use keys::{self, AddressHash, Public};
+use keys::{self, AddressHashEnum, Public};
 use std::{fmt, ops};
 use {Error, Opcode};
 
@@ -32,12 +32,12 @@ pub struct ScriptAddress {
     /// The type of the address.
     pub kind: keys::Type,
     /// Public key hash.
-    pub hash: AddressHash,
+    pub hash: AddressHashEnum,
 }
 
 impl ScriptAddress {
     /// Creates P2PKH-type ScriptAddress
-    pub fn new_p2pkh(hash: AddressHash) -> Self {
+    pub fn new_p2pkh(hash: AddressHashEnum) -> Self {
         ScriptAddress {
             kind: keys::Type::P2PKH,
             hash,
@@ -45,7 +45,7 @@ impl ScriptAddress {
     }
 
     /// Creates P2SH-type ScriptAddress
-    pub fn new_p2sh(hash: AddressHash) -> Self {
+    pub fn new_p2sh(hash: AddressHashEnum) -> Self {
         ScriptAddress {
             kind: keys::Type::P2SH,
             hash,
@@ -53,7 +53,7 @@ impl ScriptAddress {
     }
 
     /// Creates P2SH-type ScriptAddress
-    pub fn new_p2wpkh(hash: AddressHash) -> Self {
+    pub fn new_p2wpkh(hash: AddressHashEnum) -> Self {
         ScriptAddress {
             kind: keys::Type::P2WPKH,
             hash,
@@ -406,10 +406,18 @@ impl Script {
                     x if x == Opcode::OP_PUSHBYTES_65 as u8 => &self.data[1..66],
                     _ => unreachable!(), // because we are relying on script_type() checks here
                 })
-                .map(|public| vec![ScriptAddress::new_p2pkh(public.address_hash())])
+                .map(|public| {
+                    vec![ScriptAddress::new_p2pkh(AddressHashEnum::AddressHash(
+                        public.address_hash(),
+                    ))]
+                })
             },
-            ScriptType::PubKeyHash => Ok(vec![ScriptAddress::new_p2pkh(self.data[3..23].into())]),
-            ScriptType::ScriptHash => Ok(vec![ScriptAddress::new_p2sh(self.data[2..22].into())]),
+            ScriptType::PubKeyHash => Ok(vec![ScriptAddress::new_p2pkh(AddressHashEnum::AddressHash(
+                self.data[3..23].into(),
+            ))]),
+            ScriptType::ScriptHash => Ok(vec![ScriptAddress::new_p2sh(AddressHashEnum::AddressHash(
+                self.data[2..22].into(),
+            ))]),
             ScriptType::Multisig => {
                 let mut addresses: Vec<ScriptAddress> = Vec::new();
                 let mut pc = 1;
@@ -421,7 +429,7 @@ impl Script {
                         .data
                         .expect("this method depends on previous check in script_type()");
                     let address = Public::from_slice(data)?.address_hash();
-                    addresses.push(ScriptAddress::new_p2pkh(address));
+                    addresses.push(ScriptAddress::new_p2pkh(AddressHashEnum::AddressHash(address)));
                     pc += instruction.step;
                 }
                 Ok(addresses)
@@ -430,7 +438,9 @@ impl Script {
             ScriptType::WitnessScript => {
                 Ok(vec![]) // TODO
             },
-            ScriptType::WitnessKey => Ok(vec![ScriptAddress::new_p2wpkh(self.data[2..22].into())]),
+            ScriptType::WitnessKey => Ok(vec![ScriptAddress::new_p2wpkh(AddressHashEnum::AddressHash(
+                self.data[2..22].into(),
+            ))]),
             ScriptType::CallSender => {
                 Ok(vec![]) // TODO
             },
@@ -740,7 +750,7 @@ OP_ADD
         assert_eq!(script.script_type(), ScriptType::PubKey);
         assert_eq!(
             script.extract_destinations(),
-            Ok(vec![ScriptAddress::new_p2pkh(address),])
+            Ok(vec![ScriptAddress::new_p2pkh(address.into()),])
         );
     }
 
@@ -755,7 +765,7 @@ OP_ADD
         assert_eq!(script.script_type(), ScriptType::PubKey);
         assert_eq!(
             script.extract_destinations(),
-            Ok(vec![ScriptAddress::new_p2pkh(address),])
+            Ok(vec![ScriptAddress::new_p2pkh(address.into()),])
         );
     }
 
@@ -816,8 +826,8 @@ OP_ADD
         assert_eq!(
             script.extract_destinations(),
             Ok(vec![
-                ScriptAddress::new_p2pkh(address1),
-                ScriptAddress::new_p2pkh(address2),
+                ScriptAddress::new_p2pkh(address1.into()),
+                ScriptAddress::new_p2pkh(address2.into()),
             ])
         );
     }

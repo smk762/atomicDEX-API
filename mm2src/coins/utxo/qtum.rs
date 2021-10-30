@@ -5,6 +5,7 @@ use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
 use ethereum_types::H160;
 use futures::{FutureExt, TryFutureExt};
+use keys::AddressHashEnum;
 use serialization::CoinVariant;
 
 pub const QTUM_STANDARD_DUST: u64 = 1000;
@@ -92,7 +93,7 @@ pub trait QtumBasedCoin: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps {
         Address {
             prefix: utxo.conf.pub_addr_prefix,
             t_addr_prefix: utxo.conf.pub_t_addr_prefix,
-            hash: address.0.into(),
+            hash: AddressHashEnum::AddressHash(address.0.into()),
             checksum_type: utxo.conf.checksum_type,
             hrp: utxo.conf.bech32_hrp.clone(),
             addr_format: utxo.my_address.addr_format.clone(),
@@ -106,7 +107,7 @@ pub trait QtumBasedCoin: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps {
         Address {
             prefix: utxo.conf.pub_addr_prefix,
             t_addr_prefix: utxo.conf.pub_t_addr_prefix,
-            hash: address.0.into(),
+            hash: AddressHashEnum::AddressHash(address.0.into()),
             checksum_type: utxo.conf.checksum_type,
             hrp: utxo.conf.bech32_hrp.clone(),
             addr_format: utxo.my_address.addr_format.clone(),
@@ -651,7 +652,14 @@ impl MmCoin for QtumCoin {
 /// Qtum Contract addresses have another checksum verification algorithm, because of this do not use [`eth::valid_addr_from_str`].
 pub fn contract_addr_from_str(addr: &str) -> Result<H160, String> { eth::addr_from_str(addr) }
 
-pub fn contract_addr_from_utxo_addr(address: Address) -> H160 { address.hash.take().into() }
+pub fn contract_addr_from_utxo_addr(address: Address) -> H160 {
+    match address.hash {
+        AddressHashEnum::AddressHash(h) => h.take().into(),
+        // contract_addr_from_utxo_addr should not be called on P2WSH
+        // TODO: error handling
+        AddressHashEnum::WitnessScriptHash(_) => H160::default(),
+    }
+}
 
 pub fn display_as_contract_address(address: Address) -> String {
     let address = qtum::contract_addr_from_utxo_addr(address);

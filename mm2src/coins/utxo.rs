@@ -55,7 +55,8 @@ use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use futures::stream::StreamExt;
 use futures01::Future;
 use keys::bytes::Bytes;
-pub use keys::{Address, AddressFormat as UtxoAddressFormat, KeyPair, Private, Public, Secret, Type as ScriptType};
+pub use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHashEnum, KeyPair, Private, Public, Secret,
+               Type as ScriptType};
 use lightning::chain::WatchedOutput;
 #[cfg(test)] use mocktopus::macros::*;
 use num_traits::ToPrimitive;
@@ -1391,7 +1392,7 @@ pub trait UtxoCoinBuilder {
         let my_address = Address {
             prefix: conf.pub_addr_prefix,
             t_addr_prefix: conf.pub_t_addr_prefix,
-            hash: key_pair.public().address_hash(),
+            hash: AddressHashEnum::AddressHash(key_pair.public().address_hash()),
             checksum_type: conf.checksum_type,
             hrp: conf.bech32_hrp.clone(),
             addr_format,
@@ -2085,7 +2086,7 @@ pub fn p2pkh_spend(
     signature_version: SignatureVersion,
     fork_id: u32,
 ) -> Result<TransactionInput, String> {
-    let script = Builder::build_p2pkh(&key_pair.public().address_hash());
+    let script = Builder::build_p2pkh(&key_pair.public().address_hash().into());
     if script != *prev_script {
         return ERR!(
             "p2pkh script {} built from input key pair doesn't match expected prev script {}",
@@ -2149,7 +2150,7 @@ fn p2wpkh_spend(
     signature_version: SignatureVersion,
     fork_id: u32,
 ) -> Result<TransactionInput, String> {
-    let script = Builder::build_p2pkh(&key_pair.public().address_hash());
+    let script = Builder::build_p2pkh(&key_pair.public().address_hash().into());
 
     if script != *prev_script {
         return ERR!(
@@ -2233,7 +2234,7 @@ pub fn address_by_conf_and_pubkey_str(
     let address = Address {
         prefix: utxo_conf.pub_addr_prefix,
         t_addr_prefix: utxo_conf.pub_t_addr_prefix,
-        hash,
+        hash: hash.into(),
         checksum_type: utxo_conf.checksum_type,
         hrp: utxo_conf.bech32_hrp,
         addr_format,

@@ -56,6 +56,18 @@ pub async fn enable_lightning(ctx: MmArc, req: EnableLightningRequest) -> Enable
         ));
     }
 
+    // Channel funding transactions need to spend segwit outputs
+    // and while the witness script can be generated from pubkey and be used
+    // it's better for the coin to be enabled in segwit to check if balance is enough for funding transaction, etc...
+    // TODO: when merging with the "mm2.1-orderbook-ticker-btc-segwit" PR, we should have a different coin called BTC-Lightning
+    // with same ticker as BTC and to open a channel the BTC-Segwit wallet should be used to fund the transaction
+    if !utxo_coin.as_ref().my_address.addr_format.is_segwit() {
+        return MmError::err(EnableLightningError::UnsupportedMode(
+            "Lightning network".into(),
+            "segwit".into(),
+        ));
+    }
+
     let client = match &utxo_coin.as_ref().rpc_client {
         UtxoRpcClientEnum::Electrum(c) => c,
         UtxoRpcClientEnum::Native(_) => {
@@ -201,6 +213,8 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
         let channel_manager = channel_managers
             .get(&req.coin)
             .ok_or(ConnectToNodeError::LightningNotEnabled(req.coin))?;
+        // TODO: Check if there is enough balance to open a channel. Here a check for if the balance > amount_in_sat is enough
+        // and when generating the actual funding transaction a check for fees should be done. ()
         open_ln_channel(
             node_pubkey,
             req.amount_in_sat,
@@ -210,5 +224,6 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
         )?;
     }
 
+    // TODO: What about if the funding transaction failed? Maybe I can use wait for log here for now?? or maybe use a mpsc::channel??
     Ok("success".into())
 }

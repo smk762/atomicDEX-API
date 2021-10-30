@@ -17,7 +17,7 @@ use futures::compat::Future01CompatExt;
 use futures::future::{FutureExt, TryFutureExt};
 use futures01::future::Either;
 use keys::bytes::Bytes;
-use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHash, KeyPair, Public, SegwitAddress,
+use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHashEnum, KeyPair, Public, SegwitAddress,
            Type as ScriptType};
 use lightning::chain::WatchedOutput;
 use primitives::hash::H512;
@@ -1202,7 +1202,7 @@ where
         &try_fus!(Public::from_slice(other_pub)),
     );
     let hash = dhash160(&script);
-    let p2sh = Builder::build_p2sh(&hash);
+    let p2sh = Builder::build_p2sh(&hash.into());
     let script_hash = electrum_script_hash(&p2sh);
     let fut = async move {
         match &coin.as_ref().rpc_client {
@@ -1222,7 +1222,7 @@ where
                 let target_addr = Address {
                     t_addr_prefix: coin.as_ref().conf.p2sh_t_addr_prefix,
                     prefix: coin.as_ref().conf.p2sh_addr_prefix,
-                    hash,
+                    hash: hash.into(),
                     checksum_type: coin.as_ref().conf.checksum_type,
                     hrp: coin.as_ref().conf.bech32_hrp.clone(),
                     addr_format: coin.as_ref().my_address.addr_format.clone(),
@@ -2376,7 +2376,7 @@ where
         let value = sat_from_big_decimal(&dex_fee_amount, decimals)?;
         let output = TransactionOutput {
             value,
-            script_pubkey: Builder::build_p2pkh(&AddressHash::default()).to_bytes(),
+            script_pubkey: Builder::build_p2pkh(&AddressHashEnum::default_address_hash()).to_bytes(),
         };
         let gas_fee = None;
         let fee_amount = coin
@@ -2625,7 +2625,7 @@ pub fn address_from_raw_pubkey(
     Ok(Address {
         t_addr_prefix,
         prefix,
-        hash: try_s!(Public::from_slice(pub_key)).address_hash(),
+        hash: try_s!(Public::from_slice(pub_key)).address_hash().into(),
         checksum_type,
         hrp,
         addr_format,
@@ -2686,7 +2686,7 @@ where
 
             let expected_output = TransactionOutput {
                 value: amount,
-                script_pubkey: Builder::build_p2sh(&dhash160(&expected_redeem)).into(),
+                script_pubkey: Builder::build_p2sh(&dhash160(&expected_redeem).into()).into(),
             };
 
             let actual_output = tx.outputs.get(output_index);
@@ -2717,7 +2717,7 @@ async fn search_for_swap_output_spend(
     let mut tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.tx_hash_algo;
     let script = payment_script(time_lock, secret_hash, first_pub, second_pub);
-    let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script)).to_bytes();
+    let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script).into()).to_bytes();
     if tx.outputs[0].script_pubkey != expected_script_pubkey {
         return ERR!(
             "Transaction {:?} output 0 script_pubkey doesn't match expected {:?}",
@@ -2782,7 +2782,7 @@ where
     let amount = try_s!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
     let htlc_out = TransactionOutput {
         value: amount,
-        script_pubkey: Builder::build_p2sh(&redeem_script_hash).into(),
+        script_pubkey: Builder::build_p2sh(&redeem_script_hash.into()).into(),
     };
     // record secret hash to blockchain too making it impossible to lose
     // lock time may be easily brute forced so it is not mandatory to record it
@@ -2804,7 +2804,7 @@ where
 
     let payment_address = Address {
         checksum_type: coin.as_ref().conf.checksum_type,
-        hash: redeem_script_hash,
+        hash: redeem_script_hash.into(),
         prefix: coin.as_ref().conf.p2sh_addr_prefix,
         t_addr_prefix: coin.as_ref().conf.p2sh_t_addr_prefix,
         hrp: coin.as_ref().conf.bech32_hrp.clone(),

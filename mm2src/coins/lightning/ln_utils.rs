@@ -5,6 +5,7 @@ use crate::utxo::utxo_standard::UtxoStandardCoin;
 use crate::MarketCoinOps;
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::constants::genesis_block;
+use bitcoin::blockdata::script::Script;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hash_types::{BlockHash, TxMerkleNode};
@@ -165,9 +166,30 @@ fn my_ln_data_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("LIGHTNING") }
 pub fn nodes_data_path(ctx: &MmArc) -> PathBuf { my_ln_data_dir(ctx).join("channel_nodes_data") }
 
 // TODO: Implement all the cases
-async fn handle_ln_events(event: &Event) {
-    match event {
-        Event::FundingGenerationReady { .. } => (),
+async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, network: Network) {
+    // TODO: remove clone
+    match event.clone() {
+        Event::FundingGenerationReady {
+            temporary_channel_id,
+            channel_value_satoshis,
+            output_script,
+            user_channel_id,
+        } => {
+            let funding_tx = generate_funding_transaction(
+                temporary_channel_id,
+                channel_value_satoshis,
+                output_script,
+                user_channel_id,
+                network,
+            )
+            .await;
+            // Give the funding transaction back to LDK for opening the channel.
+            match channel_manager.funding_transaction_generated(&temporary_channel_id, funding_tx) {
+                Ok(res) => res,
+                // TODO: More verbose error for mm2 (Check LDK APIError and provide better error description for the logs)
+                Err(e) => log::error!("{:?}", e),
+            }
+        },
         Event::PaymentReceived { .. } => (),
         Event::PaymentSent { .. } => (),
         Event::PaymentPathFailed { .. } => (),
@@ -261,6 +283,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
         .force_announced_channel_preference = false;
 
     let mut restarting_node = true;
+    let network = conf.network;
     // TODO: use channel_manager_blockhash to know where to start looking for outputs from
     let (_channel_manager_blockhash, channel_manager) = {
         if let Ok(mut f) = File::open(format!("{}/manager", ln_data_dir.clone())) {
@@ -286,7 +309,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
             let best_block_hash = sha256d::Hash::from_slice(&best_block.hash.0)
                 .map_to_mm(|e| EnableLightningError::HashError(e.to_string()))?;
             let chain_params = ChainParameters {
-                network: conf.network,
+                network,
                 best_block: BestBlock::new(BlockHash::from_hash(best_block_hash), best_block.height as u32),
             };
             let new_channel_manager = channelmanager::ChannelManager::new(
@@ -326,7 +349,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
     }
 
     // Initialize the NetGraphMsgHandler. This is used for providing routes to send payments over
-    let genesis = genesis_block(conf.network).header.block_hash();
+    let genesis = genesis_block(network).header.block_hash();
     let router = Arc::new(NetGraphMsgHandler::new(
         NetworkGraph::new(genesis),
         None::<Arc<dyn Access + Send + Sync>>,
@@ -369,7 +392,9 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
     // Handle LN Events
     // TODO: Implement EventHandler trait instead of this
     let handle = tokio::runtime::Handle::current();
-    let event_handler = move |event: &Event| handle.block_on(handle_ln_events(event));
+    let channel_manager_event_listener = channel_manager.clone();
+    let event_handler =
+        move |event: &Event| handle.block_on(handle_ln_events(event, channel_manager_event_listener.clone(), network));
 
     // Persist ChannelManager
     // Note: if the ChannelManager is not persisted properly to disk, there is risk of channels force closing the next time LN starts up
@@ -843,4 +868,15 @@ pub fn open_ln_channel(
             ));
         },
     }
+}
+
+// Generates the raw funding transaction with one output equal to the channel value.
+async fn generate_funding_transaction(
+    _temporary_channel_id: [u8; 32],
+    _channel_value_satoshis: u64,
+    _output_script: Script,
+    _user_channel_id: u64,
+    _network: Network,
+) -> Transaction {
+    unimplemented!()
 }
