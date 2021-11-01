@@ -655,9 +655,7 @@ pub fn contract_addr_from_str(addr: &str) -> Result<H160, String> { eth::addr_fr
 pub fn contract_addr_from_utxo_addr(address: Address) -> H160 {
     match address.hash {
         AddressHashEnum::AddressHash(h) => h.take().into(),
-        // contract_addr_from_utxo_addr should not be called on P2WSH
-        // TODO: error handling
-        AddressHashEnum::WitnessScriptHash(_) => H160::default(),
+        AddressHashEnum::WitnessScriptHash(_) => panic!("Unexpected AddressHashEnum"),
     }
 }
 

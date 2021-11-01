@@ -2202,11 +2202,12 @@ fn script_sig(message: &H256, key_pair: &KeyPair, fork_id: u32) -> Result<Bytes,
 
 pub fn output_script(address: &Address, script_type: ScriptType) -> Script {
     match address.addr_format {
-        UtxoAddressFormat::Segwit => Builder::build_p2wpkh(&address.hash),
+        UtxoAddressFormat::Segwit => Builder::build_witness_script(&address.hash),
         _ => match script_type {
             ScriptType::P2PKH => Builder::build_p2pkh(&address.hash),
             ScriptType::P2SH => Builder::build_p2sh(&address.hash),
-            ScriptType::P2WPKH => Builder::build_p2wpkh(&address.hash),
+            ScriptType::P2WPKH => Builder::build_witness_script(&address.hash),
+            ScriptType::P2WSH => Builder::build_witness_script(&address.hash),
         },
     }
 }

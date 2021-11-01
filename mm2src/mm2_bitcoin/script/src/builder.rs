@@ -39,8 +39,8 @@ impl Builder {
             .into_script()
     }
 
-    /// Builds p2wpkh script pubkey
-    pub fn build_p2wpkh(address: &AddressHashEnum) -> Script {
+    /// Builds p2wpkh or p2wsh script pubkey
+    pub fn build_witness_script(address: &AddressHashEnum) -> Script {
         Builder::default()
             .push_opcode(Opcode::OP_0)
             .push_bytes(&address.to_vec())

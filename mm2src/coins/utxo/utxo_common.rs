@@ -214,6 +214,7 @@ pub fn addresses_from_script(coin: &UtxoCoinFields, script: &Script) -> Result<V
                     conf.default_address_format.clone(),
                 ),
                 ScriptType::P2WPKH => (conf.pub_addr_prefix, conf.pub_t_addr_prefix, UtxoAddressFormat::Segwit),
+                ScriptType::P2WSH => (conf.pub_addr_prefix, conf.pub_t_addr_prefix, UtxoAddressFormat::Segwit),
             };
 
             Address {

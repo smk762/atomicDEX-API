@@ -52,10 +52,18 @@ impl ScriptAddress {
         }
     }
 
-    /// Creates P2SH-type ScriptAddress
+    /// Creates P2WPKH-type ScriptAddress
     pub fn new_p2wpkh(hash: AddressHashEnum) -> Self {
         ScriptAddress {
             kind: keys::Type::P2WPKH,
+            hash,
+        }
+    }
+
+    /// Creates P2WSH-type ScriptAddress
+    pub fn new_p2wsh(hash: AddressHashEnum) -> Self {
+        ScriptAddress {
+            kind: keys::Type::P2WSH,
             hash,
         }
     }
@@ -435,9 +443,9 @@ impl Script {
                 Ok(addresses)
             },
             ScriptType::NullData => Ok(vec![]),
-            ScriptType::WitnessScript => {
-                Ok(vec![]) // TODO
-            },
+            ScriptType::WitnessScript => Ok(vec![ScriptAddress::new_p2wsh(AddressHashEnum::WitnessScriptHash(
+                self.data[2..34].into(),
+            ))]),
             ScriptType::WitnessKey => Ok(vec![ScriptAddress::new_p2wpkh(AddressHashEnum::AddressHash(
                 self.data[2..22].into(),
             ))]),
@@ -801,11 +809,29 @@ OP_ADD
         )
         .unwrap()
         .hash;
-        let script = Builder::build_p2wpkh(&address);
+        let script = Builder::build_witness_script(&address);
         assert_eq!(script.script_type(), ScriptType::WitnessKey);
         assert_eq!(
             script.extract_destinations(),
             Ok(vec![ScriptAddress::new_p2wpkh(address),])
+        );
+    }
+
+    #[test]
+    fn test_extract_destinations_witness_script_hash() {
+        let address = Address::from_segwitaddress(
+            "bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3",
+            ChecksumType::DSHA256,
+            0,
+            0,
+        )
+        .unwrap()
+        .hash;
+        let script = Builder::build_witness_script(&address);
+        assert_eq!(script.script_type(), ScriptType::WitnessScript);
+        assert_eq!(
+            script.extract_destinations(),
+            Ok(vec![ScriptAddress::new_p2wsh(address),])
         );
     }
 

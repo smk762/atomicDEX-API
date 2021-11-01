@@ -28,9 +28,15 @@ pub enum Type {
     /// https://bitcoin.org/en/glossary/p2sh-address
     P2SH,
     /// Pay to Witness PubKey Hash
-    /// Common P2WPKH which begins with the human readable part followed by 1, eg: bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4.
+    /// Segwit P2WPKH which begins with the human readable part followed by 1 followed by 39 base32 characters
+    /// as the address hash, eg: bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4.
     /// https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki
     P2WPKH,
+    /// Pay to Witness Script Hash
+    /// Segwit P2WSH which begins with the human readable part followed by 1 followed by 59 base32 characters
+    /// as the scripthash, eg: bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3.
+    /// https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki
+    P2WSH,
 }
 
 #[derive(Clone, Debug, Display, Deserialize, PartialEq, Serialize)]
