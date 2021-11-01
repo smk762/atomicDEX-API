@@ -3,10 +3,16 @@ use crate::proto::messages_common as proto_common;
 use crate::proto::TrezorMessage;
 use crate::{TrezorError, TrezorResult};
 use common::mm_error::prelude::*;
+use futures::FutureExt;
 use std::fmt;
+use std::future::Future;
 
 pub use crate::proto::messages_common::ButtonRequest_ButtonRequestType as ButtonRequestType;
 pub use crate::proto::messages_common::PinMatrixRequest_PinMatrixRequestType as PinMatrixRequestType;
+
+type ButtonHandlerFuture<T> = dyn Future<Output = TrezorResult<TrezorResponse<T>>> + Unpin + Send;
+type PinHandlerFuture<T> = dyn Future<Output = TrezorResult<TrezorResponse<T>>> + Unpin + Send;
+type PinHandlerFn<T> = dyn FnOnce(String) -> Box<PinHandlerFuture<T>> + Send;
 
 /// The different types of user interactions the Trezor device can request.
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -22,19 +28,17 @@ pub enum InteractionType {
 /// On every message exchange, instead of the expected/desired response,
 /// the Trezor can ask for some user interaction, or can send a failure.
 #[derive(Debug)]
-pub enum TrezorResponse<'a, T, R: TrezorMessage> {
+pub enum TrezorResponse<T> {
     Ok(T),
-    Failure(proto_common::Failure),
-    ButtonRequest(ButtonRequest<'a, T, R>),
-    PinMatrixRequest(PinMatrixRequest<'a, T, R>),
+    ButtonRequest(ButtonRequest<T>),
+    PinMatrixRequest(PinMatrixRequest<T>),
 }
 
-impl<'a, T, R: TrezorMessage> TrezorResponse<'a, T, R> {
+impl<T: 'static> TrezorResponse<T> {
     /// Get the actual `Ok` response value or an error if not `Ok`.
     pub fn ok(self) -> TrezorResult<T> {
         match self {
             TrezorResponse::Ok(m) => Ok(m),
-            TrezorResponse::Failure(err) => MmError::err(TrezorError::FailureResponse(err)),
             TrezorResponse::ButtonRequest(_) => {
                 MmError::err(TrezorError::UnexpectedInteractionRequest(InteractionType::Button))
             },
@@ -56,9 +60,6 @@ impl<'a, T, R: TrezorMessage> TrezorResponse<'a, T, R> {
                 Self::Ok(val) => {
                     return Ok(val);
                 },
-                Self::Failure(err) => {
-                    return MmError::err(TrezorError::FailureResponse(err));
-                },
                 Self::ButtonRequest(req) => req.ack().await?,
                 Self::PinMatrixRequest(_) => {
                     return MmError::err(TrezorError::UnexpectedInteractionRequest(InteractionType::PinMatrix));
@@ -67,72 +68,104 @@ impl<'a, T, R: TrezorMessage> TrezorResponse<'a, T, R> {
         }
     }
 
-    pub(crate) fn new_button_request(
+    pub(crate) fn new_button_request<R: TrezorMessage>(
         message: proto_common::ButtonRequest,
-        client: &'a mut TrezorClient,
-        result_handler: ResultHandler<'a, T, R>,
+        client: TrezorClient,
+        result_handler: ResultHandler<T, R>,
     ) -> Self {
         TrezorResponse::ButtonRequest(ButtonRequest {
             message,
-            client,
-            result_handler,
+            button_handler: ButtonRequest::button_handler_wrapped(client, result_handler),
         })
     }
 
-    pub(crate) fn new_pin_matrix_request(
+    pub(crate) fn new_pin_matrix_request<R: TrezorMessage>(
         message: proto_common::PinMatrixRequest,
-        client: &'a mut TrezorClient,
-        result_handler: ResultHandler<'a, T, R>,
+        client: TrezorClient,
+        result_handler: ResultHandler<T, R>,
     ) -> Self {
         TrezorResponse::PinMatrixRequest(PinMatrixRequest {
             message,
-            client,
-            result_handler,
+            pin_handler: PinMatrixRequest::pin_handler_wrapped(client, result_handler),
         })
     }
 }
 
 /// A button request message sent by the device.
-pub struct ButtonRequest<'a, T, R: TrezorMessage> {
+pub struct ButtonRequest<T> {
     message: proto_common::ButtonRequest,
-    client: &'a mut TrezorClient,
-    result_handler: ResultHandler<'a, T, R>,
+    /// This future is [`ButtonRequest::button_handler`] that already captured the required parameters
+    /// like `client` and `result_handler`.
+    /// This trick allows us to avoid having a `R: TrezorMessage` type parameter for `ButtonRequest` structure.
+    button_handler: Box<ButtonHandlerFuture<T>>,
 }
 
-impl<'a, T, R: TrezorMessage> fmt::Debug for ButtonRequest<'a, T, R> {
+impl<T> fmt::Debug for ButtonRequest<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{:?}", self.message) }
 }
 
 /// A PIN matrix request message sent by the device.
-pub struct PinMatrixRequest<'a, T, R: TrezorMessage> {
+pub struct PinMatrixRequest<T> {
     message: proto_common::PinMatrixRequest,
-    client: &'a mut TrezorClient,
-    result_handler: ResultHandler<'a, T, R>,
+    /// This function is [`PinMatrixRequest::pin_handler`] that already captured the required parameters
+    /// like `client` and `result_handler`.
+    /// This trick allows us to avoid having a `R: TrezorMessage` type parameter for `PinMatrixRequest` structure.
+    pin_handler: Box<PinHandlerFn<T>>,
 }
 
-impl<'a, T, R: TrezorMessage> fmt::Debug for PinMatrixRequest<'a, T, R> {
+impl<T> fmt::Debug for PinMatrixRequest<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{:?}", self.message) }
 }
 
-impl<'a, T, R: TrezorMessage> ButtonRequest<'a, T, R> {
+impl<T: 'static> ButtonRequest<T> {
     /// The type of button request.
     pub fn request_type(&self) -> ButtonRequestType { self.message.get_code() }
 
     /// Ack the request and get the next message from the device.
-    pub async fn ack(self) -> TrezorResult<TrezorResponse<'a, T, R>> {
+    pub async fn ack(self) -> TrezorResult<TrezorResponse<T>> { self.button_handler.await }
+
+    async fn button_handler<R: TrezorMessage>(
+        client: TrezorClient,
+        result_handler: ResultHandler<T, R>,
+    ) -> TrezorResult<TrezorResponse<T>> {
         let req = proto_common::ButtonAck::new();
-        self.client.call(req, self.result_handler).await
+        client.call(req, result_handler).await
+    }
+
+    fn button_handler_wrapped<R: TrezorMessage>(
+        client: TrezorClient,
+        result_handler: ResultHandler<T, R>,
+    ) -> Box<ButtonHandlerFuture<T>> {
+        Box::new(ButtonRequest::button_handler(client, result_handler).boxed())
     }
 }
 
-impl<'a, T, R: TrezorMessage> PinMatrixRequest<'a, T, R> {
+impl<T: 'static> PinMatrixRequest<T> {
     /// The type of PIN matrix request.
     pub fn request_type(&self) -> PinMatrixRequestType { self.message.get_field_type() }
 
     /// Ack the request with a PIN and get the next message from the device.
-    pub async fn ack_pin(self, pin: String) -> TrezorResult<TrezorResponse<'a, T, R>> {
+    pub async fn ack_pin(self, pin: String) -> TrezorResult<TrezorResponse<T>> { (self.pin_handler)(pin).await }
+
+    async fn pin_handler<R: TrezorMessage>(
+        client: TrezorClient,
+        result_handler: ResultHandler<T, R>,
+        pin: String,
+    ) -> TrezorResult<TrezorResponse<T>> {
         let mut req = proto_common::PinMatrixAck::new();
         req.set_pin(pin);
-        self.client.call(req, self.result_handler).await
+        client.call(req, result_handler).await
+    }
+
+    fn pin_handler_wrapped<R: TrezorMessage>(
+        client: TrezorClient,
+        result_handler: ResultHandler<T, R>,
+    ) -> Box<PinHandlerFn<T>> {
+        let pin_handler = move |pin: String| {
+            let fut = PinMatrixRequest::pin_handler(client, result_handler, pin);
+            let fut: Box<PinHandlerFuture<T>> = Box::new(fut.boxed());
+            fut
+        };
+        Box::new(pin_handler)
     }
 }

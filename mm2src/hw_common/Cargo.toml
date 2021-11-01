@@ -7,6 +7,7 @@ edition = "2018"
 
 [dependencies]
 async-trait = "0.1"
+bip32 = "0.2.2"
 common = { path = "../common" }
 derive_more = "0.99"
 futures = { version = "0.3", package = "futures", features = ["compat", "async-await"] }

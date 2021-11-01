@@ -183,6 +183,14 @@ where
     fn status_code(&self) -> StatusCode { self.etype.status_code() }
 }
 
+pub struct MmErrorTrace {
+    trace: Vec<TraceLocation>,
+}
+
+impl MmErrorTrace {
+    pub fn new(trace: Vec<TraceLocation>) -> MmErrorTrace { MmErrorTrace { trace } }
+}
+
 impl<E: NotMmError> MmError<E> {
     #[track_caller]
     pub fn new(etype: E) -> MmError<E> {
@@ -192,6 +200,17 @@ impl<E: NotMmError> MmError<E> {
             trace: vec![location],
         }
     }
+
+    #[track_caller]
+    pub fn new_with_trace(etype: E, mut trace: MmErrorTrace) -> MmError<E> {
+        trace.trace.push(TraceLocation::from(Location::caller()));
+        MmError {
+            etype,
+            trace: trace.trace,
+        }
+    }
+
+    pub fn split(self) -> (E, MmErrorTrace) { (self.etype, MmErrorTrace::new(self.trace)) }
 
     #[track_caller]
     pub fn map<MapE, F>(mut self, f: F) -> MmError<MapE>
@@ -208,6 +227,11 @@ impl<E: NotMmError> MmError<E> {
 
     #[track_caller]
     pub fn err<T>(etype: E) -> Result<T, MmError<E>> { Err(MmError::new(etype)) }
+
+    #[track_caller]
+    pub fn err_with_trace<T>(etype: E, trace: MmErrorTrace) -> Result<T, MmError<E>> {
+        Err(MmError::new_with_trace(etype, trace))
+    }
 
     pub fn get_inner(&self) -> &E { &self.etype }
 

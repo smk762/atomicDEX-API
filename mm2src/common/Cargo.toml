@@ -45,6 +45,7 @@ primitives = { path = "../mm2_bitcoin/primitives" }
 prost = "0.8"
 rand = { version = "0.7", features = ["std", "small_rng", "wasm-bindgen"] }
 regex = "1"
+rustc-hex = "2"
 serde = "1"
 serde_bytes = "0.11"
 serde_derive = "1"

@@ -1,5 +1,5 @@
 use crate::proto::messages::MessageType;
-use crate::proto::messages_common::Failure;
+use crate::proto::messages_common::{Failure, Failure_FailureType};
 use crate::response::InteractionType;
 use common::mm_error::prelude::*;
 use derive_more::Display;
@@ -28,11 +28,33 @@ pub enum TrezorError {
     ProtocolError(String),
     #[display(fmt = "Received unexpected message type: {:?}", _0)]
     UnexpectedMessageType(MessageType),
-    #[display(fmt = "Failure response: {:?}", _0)]
-    FailureResponse(Failure),
+    Failure(OperationFailure),
     #[display(fmt = "Unexpected interaction request: {:?}", _0)]
     UnexpectedInteractionRequest(InteractionType),
     Internal(String),
+}
+
+#[derive(Display, Debug)]
+pub enum OperationFailure {
+    InvalidPin,
+    /// TODO expand it to other types.
+    #[display(fmt = "Operation failed due to unknown reason: {}", _0)]
+    Other(String),
+}
+
+impl From<Failure> for OperationFailure {
+    fn from(failure: Failure) -> Self {
+        match failure.get_code() {
+            Failure_FailureType::Failure_PinInvalid | Failure_FailureType::Failure_PinMismatch => {
+                OperationFailure::InvalidPin
+            },
+            _ => OperationFailure::Other(format!("{:?}", failure)),
+        }
+    }
+}
+
+impl From<OperationFailure> for TrezorError {
+    fn from(failure: OperationFailure) -> Self { TrezorError::Failure(failure) }
 }
 
 impl From<ProtobufError> for TrezorError {

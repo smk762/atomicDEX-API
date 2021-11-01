@@ -58,6 +58,7 @@ common = { path = "mm2src/common" }
 crc = "1.8"
 crc32fast = { version = "1.2", features = ["std", "nightly"] }
 crossbeam = "0.7"
+crypto = { path = "mm2src/crypto" }
 derive_more = "0.99"
 either = "1.6"
 ethereum-types = { version = "0.4", default-features = false, features = ["std", "serialize"] }
@@ -140,10 +141,10 @@ regex = "1"
 [workspace]
 members = [
     "mm2src/coins",
+    "mm2src/crypto",
     "mm2src/derives/ser_error",
     "mm2src/derives/ser_error_derive",
     "mm2src/floodsub",
-#    "mm2src/ledger",
     "mm2src/mm2_bitcoin/crypto",
     "mm2src/mm2_bitcoin/chain",
     "mm2src/mm2_bitcoin/keys",
