@@ -80,7 +80,7 @@ impl CryptoCtx {
     }
 
     pub async fn with_trezor() -> CryptoInitResult<CryptoResponse<CryptoCtx>> {
-        let client = HwClient::trezor().await?;
+        let _client = HwClient::trezor().await?;
         // let x = client.
         todo!()
     }

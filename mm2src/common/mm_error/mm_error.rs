@@ -97,6 +97,7 @@ pub mod prelude {
     pub use crate::mm_error::map_mm_error::MapMmError;
     pub use crate::mm_error::map_to_mm::MapToMmResult;
     pub use crate::mm_error::map_to_mm_fut::MapToMmFutureExt;
+    pub use crate::mm_error::mm_json_error::MmJsonError;
     pub use crate::mm_error::or_mm_error::OrMmError;
     pub use crate::mm_error::{MmError, NotMmError, SerMmErrorType};
     pub use ser_error::SerializeErrorType;
@@ -105,6 +106,7 @@ pub mod prelude {
 mod map_mm_error;
 mod map_to_mm;
 mod map_to_mm_fut;
+mod mm_json_error;
 mod or_mm_error;
 
 pub auto trait NotMmError {}
@@ -120,7 +122,7 @@ pub trait SerMmErrorType: SerializeErrorType + fmt::Display + NotMmError {}
 impl<E> SerMmErrorType for E where E: SerializeErrorType + fmt::Display + NotMmError {}
 
 /// The unified error representation tracing an error path.
-#[derive(Debug, Display, Eq, PartialEq)]
+#[derive(Clone, Debug, Display, Eq, PartialEq)]
 #[display(fmt = "{} {}", "trace.formatted()", etype)]
 pub struct MmError<E: NotMmError> {
     etype: E,
@@ -269,7 +271,7 @@ pub trait FormattedTrace {
 /// ```txt
 /// location_file:379]
 /// ```
-#[derive(Debug, Display, Eq, PartialEq)]
+#[derive(Clone, Debug, Display, Eq, PartialEq)]
 #[display(fmt = "{}:{}]", file, line)]
 pub struct TraceLocation {
     file: &'static str,

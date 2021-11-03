@@ -24,9 +24,7 @@
 #[macro_use] extern crate lazy_static;
 #[macro_use] pub extern crate serde_derive;
 #[macro_use] pub extern crate serde_json;
-#[cfg(test)]
-#[macro_use]
-extern crate ser_error_derive;
+#[macro_use] extern crate ser_error_derive;
 
 /// Fills a C character array with a zero-terminated C string,
 /// returning an error if the string is too large.
@@ -99,6 +97,7 @@ pub mod mm_ctx;
 #[path = "mm_error/mm_error.rs"] pub mod mm_error;
 pub mod mm_number;
 pub mod privkey;
+pub mod rpc_task;
 pub mod seri;
 #[path = "patterns/state_machine.rs"] pub mod state_machine;
 pub mod time_cache;
@@ -1223,6 +1222,29 @@ where
         },
     };
     Box::new(rf)
+}
+
+/// An mmrpc 2.0 compatible error variant that is used when the serialization of an RPC response is failed.
+#[derive(Serialize, SerializeErrorType)]
+#[serde(tag = "error_type", content = "error_data")]
+pub enum SerializationError {
+    InternalError(String),
+}
+
+impl fmt::Display for SerializationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SerializationError::InternalError(internal) => {
+                write!(f, "Internal error: Couldn't serialize an RPC response: {}", internal)
+            },
+        }
+    }
+}
+
+impl SerializationError {
+    pub fn from_error<E: serde::ser::Error>(e: E) -> SerializationError {
+        SerializationError::InternalError(e.to_string())
+    }
 }
 
 #[derive(Serialize)]

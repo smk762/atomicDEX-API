@@ -1,6 +1,5 @@
 use common::mm_error::prelude::*;
-use common::HttpStatusCode;
-use derive_more::Display;
+use common::{HttpStatusCode, SerializationError};
 use http::{Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{self as json, Value as Json};
@@ -10,6 +9,8 @@ use serde_json::{self as json, Value as Json};
 pub enum MmRpcVersion {
     #[serde(rename = "2.0")]
     V2,
+    #[serde(rename = "3.0")]
+    V3,
 }
 
 #[derive(Deserialize)]
@@ -110,13 +111,6 @@ impl<T: Serialize, E: SerMmErrorType> MmRpcResponse<T, E> {
     }
 
     fn error_to_json(&self, error: impl serde::ser::Error) -> Json {
-        #[derive(Display, Serialize, SerializeErrorType)]
-        #[serde(tag = "error_type", content = "error_data")]
-        enum SerializationError {
-            #[display(fmt = "Internal error: Couldn't serialize an RPC response: {}", _0)]
-            InternalError(String),
-        }
-
         let response: MmRpcResponse<(), _> = MmRpcResponse {
             mmrpc: self.mmrpc,
             result: MmRpcResult::Err(MmError::new(SerializationError::InternalError(error.to_string()))),

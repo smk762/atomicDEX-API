@@ -1,5 +1,6 @@
 use crate::log::{self, LogState};
 use crate::mm_metrics::{MetricsArc, MetricsOps};
+use crate::rpc_task::RpcTaskManager;
 use crate::{bits256, small_rng};
 use gstuff::Constructible;
 use keys::KeyPair;
@@ -104,6 +105,7 @@ pub struct MmCtx {
     pub mm_version: String,
     #[cfg(target_arch = "wasm32")]
     pub db_namespace: DbNamespaceId,
+    pub rpc_task_manager: Mutex<RpcTaskManager>,
 }
 
 impl MmCtx {
@@ -136,6 +138,7 @@ impl MmCtx {
             mm_version: "".into(),
             #[cfg(target_arch = "wasm32")]
             db_namespace: DbNamespaceId::Main,
+            rpc_task_manager: Mutex::new(RpcTaskManager::default()),
         }
     }
 
@@ -272,6 +275,10 @@ impl MmCtx {
             .or(&|| panic!("sqlite_connection is not initialized"))
             .lock()
             .unwrap()
+    }
+
+    pub fn rpc_task_manager(&self) -> MutexGuard<RpcTaskManager> {
+        self.rpc_task_manager.lock().expect("Error locking 'rpc_task_manager'")
     }
 }
 
