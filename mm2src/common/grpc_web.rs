@@ -2,19 +2,21 @@
 /// Implementation was taken from https://github.com/hyperium/tonic/blob/ddab65ede90f503360b7adb0d7afe6d5b7bb8b02/examples/src/grpc-web/client.rs
 /// with minor refactoring
 use crate::mm_error::prelude::*;
+use crate::transport::SlurpError;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use prost::DecodeError;
 
 cfg_native! {
-    use crate::wio::slurp_req;
+    use crate::transport::slurp_req;
     use http::header::{ACCEPT, CONTENT_TYPE};
 }
 
 cfg_wasm32! {
-    use crate::wasm_http::FetchRequest;
+    use crate::transport::wasm_http::FetchRequest;
 }
 
 // one byte for the compression flag plus four bytes for the length
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const GRPC_HEADER_SIZE: usize = 5;
 
 #[derive(Debug)]
@@ -89,22 +91,37 @@ where
 
 #[derive(Debug)]
 pub enum PostGrpcWebErr {
-    Http(http::Error),
-    Request(String),
-    EncodeBody(EncodeBodyError),
-    DecodeBody(DecodeBodyError),
+    InvalidRequest(String),
+    EncodeBody(String),
+    DecodeBody(String),
+    Transport { uri: String, error: String },
+    Internal(String),
 }
 
 impl From<EncodeBodyError> for PostGrpcWebErr {
-    fn from(err: EncodeBodyError) -> Self { PostGrpcWebErr::EncodeBody(err) }
+    fn from(err: EncodeBodyError) -> Self { PostGrpcWebErr::EncodeBody(format!("{:?}", err)) }
 }
 
 impl From<DecodeBodyError> for PostGrpcWebErr {
-    fn from(err: DecodeBodyError) -> Self { PostGrpcWebErr::DecodeBody(err) }
+    fn from(err: DecodeBodyError) -> Self { PostGrpcWebErr::DecodeBody(format!("{:?}", err)) }
 }
 
+/// `http::Error` can appear on an HTTP request [`http::Builder::build`] building.
 impl From<http::Error> for PostGrpcWebErr {
-    fn from(err: http::Error) -> Self { PostGrpcWebErr::Http(err) }
+    fn from(err: http::Error) -> Self { PostGrpcWebErr::InvalidRequest(err.to_string()) }
+}
+
+impl From<SlurpError> for PostGrpcWebErr {
+    fn from(e: SlurpError) -> Self {
+        let error = e.to_string();
+        match e {
+            SlurpError::ErrorDeserializing { .. } => PostGrpcWebErr::DecodeBody(error),
+            SlurpError::Transport { uri, .. } | SlurpError::Timeout { uri, .. } => {
+                PostGrpcWebErr::Transport { uri, error }
+            },
+            SlurpError::Internal(_) | SlurpError::InvalidRequest(_) => PostGrpcWebErr::Internal(error),
+        }
+    }
 }
 
 /// Send POST gRPC WEB HTTPS request and parse response
@@ -122,7 +139,7 @@ where
         .header(ACCEPT, "application/grpc-web")
         .body(encode_body(req)?)?;
 
-    let response = slurp_req(request).await.map_to_mm(PostGrpcWebErr::Request)?;
+    let response = slurp_req(request).await?;
 
     let reply = decode_body(response.2.into())?;
 

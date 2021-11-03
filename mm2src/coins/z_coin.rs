@@ -2,9 +2,9 @@ use crate::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps,
                                UtxoRpcResult};
 use crate::utxo::utxo_common::{big_decimal_from_sat_unsigned, payment_script, UtxoArcBuilder};
 use crate::utxo::{sat_from_big_decimal, utxo_common, ActualTxFee, AdditionalTxData, Address, BroadcastTxErr,
-                  FeePolicy, HistoryUtxoTx, HistoryUtxoTxMap, RecentlySpentOutPoints, UtxoActivationParams, UtxoArc,
-                  UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoFeeDetails, UtxoTxBroadcastOps,
-                  UtxoTxGenerationOps, UtxoWeak, VerboseTransactionFrom};
+                  FeePolicy, HistoryUtxoTx, HistoryUtxoTxMap, RecentlySpentOutPoints, UtxoActivationParams,
+                  UtxoAddressFormat, UtxoArc, UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoFeeDetails,
+                  UtxoTxBroadcastOps, UtxoTxGenerationOps, UtxoWeak, VerboseTransactionFrom};
 use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
             NegotiateSwapContractAddrErr, NumConversError, SwapOps, TradeFee, TradePreimageFut, TradePreimageResult,
             TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut, TxFeeDetails,
@@ -1089,6 +1089,7 @@ impl MmCoin for ZCoin {
                 coin: coin.ticker().to_owned(),
                 internal_id: tx_hash.into(),
                 kmd_rewards: None,
+                transaction_type: Default::default(),
             })
         };
         Box::new(fut.boxed().compat())
@@ -1195,7 +1196,7 @@ impl UtxoCommonOps for ZCoin {
     }
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<Address>, String> {
-        utxo_common::addresses_from_script(self.as_ref(), script)
+        utxo_common::addresses_from_script(self, script)
     }
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo_arc, satoshi) }
@@ -1293,6 +1294,10 @@ impl UtxoCommonOps for ZCoin {
 
     async fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> Result<u32, MmError<UtxoRpcError>> {
         utxo_common::p2sh_tx_locktime(self, self.ticker(), htlc_locktime).await
+    }
+
+    fn addr_format_for_standard_scripts(&self) -> UtxoAddressFormat {
+        utxo_common::addr_format_for_standard_scripts(self)
     }
 }
 
