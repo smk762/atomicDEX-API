@@ -1,4 +1,4 @@
-use crate::utxo::rpc_clients::{electrum_script_hash, ElectrumClient, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcError};
+use crate::utxo::rpc_clients::{electrum_script_hash, ElectrumClient, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common;
 use crate::utxo::utxo_standard::UtxoStandardCoin;
 #[cfg(not(target_arch = "wasm32"))]
@@ -7,10 +7,10 @@ use bitcoin::blockdata::script::Script;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode;
 use bitcoin::hash_types::Txid;
-use common::block_on;
-use common::log::error;
-use common::mm_error::prelude::MapToMmFutureExt;
+use common::executor::spawn;
+use common::{block_on, log};
 use futures::compat::Future01CompatExt;
+use hex::FromHex;
 use lightning::chain::{chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator},
                        Filter, WatchedOutput};
 use rpc::v1::types::Bytes as BytesJson;
@@ -32,11 +32,18 @@ impl FeeEstimator for ElectrumClient {
 
 impl BroadcasterInterface for ElectrumClient {
     fn broadcast_transaction(&self, tx: &Transaction) {
-        let tx_bytes = BytesJson::from(encode::serialize_hex(tx).as_bytes());
-        let _ = Box::new(
-            self.blockchain_transaction_broadcast(tx_bytes)
-                .map_to_mm_fut(UtxoRpcError::from),
-        );
+        let tx_hex = encode::serialize_hex(tx);
+        let tx_bytes =
+            BytesJson::new(Vec::from_hex(tx_hex.clone()).expect("Transaction serialization should not fail!"));
+        log::debug!("Trying to broadcast transaction: {}", tx_hex);
+        let tx_id = tx.txid();
+        let fut = self.blockchain_transaction_broadcast(tx_bytes);
+        spawn(async move {
+            match fut.compat().await {
+                Ok(id) => log::info!("Transaction broadcasted successfully: {:?} ", id),
+                Err(e) => log::error!("Broadcast transaction {} failed: {}", tx_id, e),
+            }
+        });
     }
 }
 
@@ -48,7 +55,7 @@ pub async fn find_watched_output_spend_with_header(
     let client = match &coin.as_ref().rpc_client {
         UtxoRpcClientEnum::Electrum(e) => e.clone(),
         UtxoRpcClientEnum::Native(_) => {
-            error!("As of now Only electrum client is supported for lightning");
+            log::error!("As of now Only electrum client is supported for lightning");
             return None;
         },
     };
@@ -105,7 +112,7 @@ pub async fn find_watched_output_spend(coin: &UtxoStandardCoin, output: WatchedO
     let client = match &coin.as_ref().rpc_client {
         UtxoRpcClientEnum::Electrum(e) => e.clone(),
         UtxoRpcClientEnum::Native(_) => {
-            error!("As of now Only electrum client is supported for lightning");
+            log::error!("As of now Only electrum client is supported for lightning");
             return None;
         },
     };

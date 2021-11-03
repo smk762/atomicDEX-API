@@ -1,12 +1,13 @@
 use super::*;
 use crate::utxo::rpc_clients::{BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient, ElectrumNonce,
                                UtxoRpcClientOps};
+use crate::utxo::utxo_common::{big_decimal_from_sat, withdraw};
 use crate::utxo::utxo_standard::UtxoStandardCoin;
-use crate::MarketCoinOps;
+use crate::{MarketCoinOps, WithdrawError, WithdrawRequest};
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::script::Script;
-use bitcoin::blockdata::transaction::Transaction;
+use bitcoin::blockdata::transaction::{Transaction, TxOut};
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hash_types::{BlockHash, TxMerkleNode};
 use bitcoin::network::constants::Network;
@@ -18,8 +19,10 @@ use common::log::LogState;
 use common::mm_ctx::{from_ctx, MmArc};
 use derive_more::Display;
 use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex};
+use keys::{AddressHashEnum, SegwitAddress};
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager};
-use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Watch};
+use lightning::chain::transaction::OutPoint;
+use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Filter, Watch, WatchedOutput};
 use lightning::ln::channelmanager;
 use lightning::ln::channelmanager::{ChainParameters, ChannelManagerReadArgs, SimpleArcChannelManager};
 use lightning::ln::msgs::NetAddress;
@@ -31,6 +34,7 @@ use lightning::util::ser::ReadableArgs;
 use lightning_background_processor::BackgroundProcessor;
 use lightning_net_tokio::SocketDescriptor;
 use lightning_persister::FilesystemPersister;
+use primitives::hash::H256;
 use rand::RngCore;
 use secp256k1::PublicKey;
 use std::collections::HashMap;
@@ -166,7 +170,12 @@ fn my_ln_data_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("LIGHTNING") }
 pub fn nodes_data_path(ctx: &MmArc) -> PathBuf { my_ln_data_dir(ctx).join("channel_nodes_data") }
 
 // TODO: Implement all the cases
-async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, network: Network) {
+async fn handle_ln_events(
+    event: &Event,
+    channel_manager: Arc<ChannelManager>,
+    network: Network,
+    coin: Arc<UtxoStandardCoin>,
+) {
     // TODO: remove clone
     match event.clone() {
         Event::FundingGenerationReady {
@@ -175,17 +184,52 @@ async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, n
             output_script,
             user_channel_id,
         } => {
-            let funding_tx = generate_funding_transaction(
+            let funding_tx = match generate_funding_transaction(
                 temporary_channel_id,
                 channel_value_satoshis,
-                output_script,
+                output_script.clone(),
                 user_channel_id,
                 network,
+                coin.clone(),
             )
-            .await;
+            .await
+            {
+                Ok(tx) => tx,
+                Err(e) => {
+                    log::error!(
+                        "Error generating funding transaction for temporary channel id {:?}: {}",
+                        temporary_channel_id,
+                        e.to_string()
+                    );
+                    // TODO: When the task management feature is merged maybe I can return a failed status with the transaction hex to be broadcasted when
+                    // the reason for failure is resolved (e.g. not enough balance due to other withdraws before broadcasting the funding transaction,
+                    // the transaction can be broadcasted again when the balance is enough)
+                    return;
+                },
+            };
             // Give the funding transaction back to LDK for opening the channel.
-            match channel_manager.funding_transaction_generated(&temporary_channel_id, funding_tx) {
-                Ok(res) => res,
+            match channel_manager.funding_transaction_generated(&temporary_channel_id, funding_tx.clone()) {
+                Ok(_) => {
+                    let txid = funding_tx.txid();
+                    coin.register_tx(&txid, &output_script);
+                    let output_to_be_registered = TxOut {
+                        value: channel_value_satoshis,
+                        script_pubkey: output_script.clone(),
+                    };
+                    let output_index = funding_tx
+                        .output
+                        .iter()
+                        .position(|tx_out| tx_out == &output_to_be_registered)
+                        .expect("Output to register should be found in the transaction output");
+                    coin.register_output(WatchedOutput {
+                        block_hash: None,
+                        outpoint: OutPoint {
+                            txid,
+                            index: output_index as u16,
+                        },
+                        script_pubkey: output_script,
+                    });
+                },
                 // TODO: More verbose error for mm2 (Check LDK APIError and provide better error description for the logs)
                 Err(e) => log::error!("{:?}", e),
             }
@@ -202,11 +246,12 @@ async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, n
 
 pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: LightningConf) -> EnableLightningResult<()> {
     let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
+    let ticker = coin.ticker().to_string();
 
     {
         let background_processor = lightning_ctx.background_processors.lock().await;
-        if background_processor.contains_key(&coin.ticker().to_string()) {
-            return MmError::err(EnableLightningError::AlreadyRunning);
+        if background_processor.contains_key(&ticker) {
+            return MmError::err(EnableLightningError::AlreadyRunning(ticker.clone()));
         }
     }
 
@@ -334,6 +379,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
             conf.rpc_client.clone(),
             chain_monitor.clone(),
             channel_manager.clone(),
+            best_block.height,
         )
         .await;
         let best_header = get_best_header(conf.rpc_client.clone()).await?;
@@ -382,7 +428,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
     // Update best block whenever there's a new chain tip or a block has been newly disconnected
     spawn(ln_best_block_update_loop(
         ctx.clone(),
-        filter.unwrap(),
+        filter.clone().unwrap(),
         chain_monitor.clone(),
         channel_manager.clone(),
         conf.rpc_client.clone(),
@@ -393,8 +439,14 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
     // TODO: Implement EventHandler trait instead of this
     let handle = tokio::runtime::Handle::current();
     let channel_manager_event_listener = channel_manager.clone();
-    let event_handler =
-        move |event: &Event| handle.block_on(handle_ln_events(event, channel_manager_event_listener.clone(), network));
+    let event_handler = move |event: &Event| {
+        handle.block_on(handle_ln_events(
+            event,
+            channel_manager_event_listener.clone(),
+            network,
+            filter.clone().unwrap(),
+        ))
+    };
 
     // Persist ChannelManager
     // Note: if the ChannelManager is not persisted properly to disk, there is risk of channels force closing the next time LN starts up
@@ -414,7 +466,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
 
     {
         let mut background_processors = lightning_ctx.background_processors.lock().await;
-        background_processors.insert(coin.ticker().to_string(), background_processor);
+        background_processors.insert(ticker.clone(), background_processor);
     }
 
     // If node is restarting read other nodes data from disk and reconnect to channel nodes/peers if possible.
@@ -436,7 +488,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
 
     {
         let mut peer_managers = lightning_ctx.peer_managers.lock().await;
-        peer_managers.insert(coin.ticker().to_string(), peer_manager);
+        peer_managers.insert(ticker.clone(), peer_manager);
     }
 
     // Broadcast Node Announcement
@@ -451,7 +503,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
 
     {
         let mut channel_managers = lightning_ctx.channel_managers.lock().await;
-        channel_managers.insert(coin.ticker().to_string(), channel_manager);
+        channel_managers.insert(ticker, channel_manager);
     }
 
     Ok(())
@@ -486,6 +538,7 @@ async fn process_txs_confirmations(
     client: ElectrumClient,
     chain_monitor: Arc<ChainMonitor>,
     channel_manager: Arc<ChannelManager>,
+    current_height: u64,
 ) {
     // Retrieve transaction IDs to check the chain for un-confirmations
     // TODO: The following code needs to be run with every new block also
@@ -529,33 +582,36 @@ async fn process_txs_confirmations(
             .as_ref()
             .as_ref()
             .rpc_client
-            .get_verbose_transaction(&txid.as_hash().into_inner().into())
+            .get_verbose_transaction(&H256::from(txid.as_hash().into_inner()).reversed().into())
             .compat()
             .await
         {
             Ok(tx) => {
-                if let Some(height) = tx.height {
-                    match client.blockchain_block_header(height).compat().await {
-                        Ok(h) => {
-                            let header = deserialize(&h).expect("Can't deserialize block header");
-                            let transaction: Transaction =
-                                deserialize(&tx.hex.clone().into_vec()).expect("Can't deserialize transaction");
-                            let mut tx_data = Vec::new();
-                            for (index, vout) in transaction.output.iter().enumerate() {
-                                if scripts.contains(&vout.script_pubkey) {
-                                    tx_data.push((index, &transaction));
-                                }
+                // TODO: find a better way to get the block height as there might be a new mined block after passing current_height and before calling get_verbose_transaction
+                let tx_block_height = current_height - tx.confirmations as u64 + 1;
+                match client.blockchain_block_header(tx_block_height).compat().await {
+                    Ok(h) => {
+                        let header = deserialize(&h).expect("Can't deserialize block header");
+                        let transaction: Transaction =
+                            deserialize(&tx.hex.clone().into_vec()).expect("Can't deserialize transaction");
+                        let mut tx_data = Vec::new();
+                        for (index, vout) in transaction.output.iter().enumerate() {
+                            if scripts.contains(&vout.script_pubkey) {
+                                tx_data.push((index, &transaction));
                             }
-                            // TODO: double check that tx_data needs the index of the output script not of the transaction in the block
-                            channel_manager.transactions_confirmed(&header, &tx_data, height as u32);
-                            chain_monitor.transactions_confirmed(&header, &tx_data, height as u32);
-                            ln_registry.registered_txs.remove(&txid);
-                        },
-                        Err(_) => continue,
-                    }
+                        }
+                        // TODO: double check that tx_data needs the index of the output script not of the transaction in the block
+                        channel_manager.transactions_confirmed(&header, &tx_data, tx_block_height as u32);
+                        chain_monitor.transactions_confirmed(&header, &tx_data, tx_block_height as u32);
+                        ln_registry.registered_txs.remove(&txid);
+                    },
+                    Err(_) => continue,
                 }
             },
-            Err(_) => continue,
+            Err(e) => {
+                log::error!("Error getting transaction {} from chain: {}", txid, e);
+                continue;
+            },
         };
     }
 
@@ -654,6 +710,7 @@ async fn ln_best_block_update_loop(
                 best_header_listener.clone(),
                 chain_monitor.clone(),
                 channel_manager.clone(),
+                best_header.block_height(),
             )
             .await;
             current_best_block = best_header.clone().into();
@@ -856,6 +913,7 @@ pub fn open_ln_channel(
     user_config.channel_options.announced_channel = announce_channel;
 
     // TODO: push_msat parameter
+    // TODO: check balance before opening channel and also prevent withdraws until transaction is broadcasted
     match channel_manager.create_channel(node_pubkey, amount_in_sat, 0, events_id, Some(user_config)) {
         Ok(_) => {
             log::info!("Initiated opening a channel with node {}", node_pubkey);
@@ -873,10 +931,32 @@ pub fn open_ln_channel(
 // Generates the raw funding transaction with one output equal to the channel value.
 async fn generate_funding_transaction(
     _temporary_channel_id: [u8; 32],
-    _channel_value_satoshis: u64,
-    _output_script: Script,
+    channel_value_satoshis: u64,
+    output_script: Script,
     _user_channel_id: u64,
     _network: Network,
-) -> Transaction {
-    unimplemented!()
+    coin: Arc<UtxoStandardCoin>,
+) -> Result<Transaction, WithdrawError> {
+    let utxo_coin = coin.as_ref().as_ref();
+    let addr = SegwitAddress::new(
+        &AddressHashEnum::WitnessScriptHash(output_script[2..].into()),
+        utxo_coin
+            .conf
+            .bech32_hrp
+            .clone()
+            .expect("Coin should have a bech32_hrp"),
+    )
+    .to_string();
+    // TODO: find a way to use max in the withdraw request
+    // TODO: add WithdrawFee to the open_channel request to use with new_with_amount (will need to be passed in the context)
+    let amount = big_decimal_from_sat(channel_value_satoshis as i64, utxo_coin.decimals);
+    let withdraw_req = WithdrawRequest::new_with_amount(utxo_coin.conf.ticker.clone(), addr, amount);
+    let transaction_details = match withdraw(coin.as_ref().clone(), withdraw_req).await {
+        Ok(tx) => tx,
+        Err(e) => return Err(e.into_inner()),
+    };
+    let final_tx: Transaction =
+        deserialize(&transaction_details.tx_hex.into_vec()).expect("Can't deserialize transaction");
+
+    Ok(final_tx)
 }

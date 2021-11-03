@@ -17,8 +17,8 @@ pub enum EnableLightningError {
     InvalidAddress(String),
     #[display(fmt = "Invalid path: {}", _0)]
     InvalidPath(String),
-    #[display(fmt = "Lightning node already running")]
-    AlreadyRunning,
+    #[display(fmt = "Lightning node already running for coin: {}", _0)]
+    AlreadyRunning(String),
     #[display(fmt = "{} is only supported in {} mode", _0, _1)]
     UnsupportedMode(String, String),
     #[display(fmt = "Lightning network is not supported for {}: {}", _0, _1)]
@@ -42,7 +42,7 @@ impl HttpStatusCode for EnableLightningError {
             EnableLightningError::InvalidRequest(_)
             | EnableLightningError::RpcError(_)
             | EnableLightningError::UnsupportedCoin(_, _) => StatusCode::BAD_REQUEST,
-            EnableLightningError::AlreadyRunning | EnableLightningError::UnsupportedMode(_, _) => {
+            EnableLightningError::AlreadyRunning(_) | EnableLightningError::UnsupportedMode(_, _) => {
                 StatusCode::METHOD_NOT_ALLOWED
             },
             EnableLightningError::InvalidAddress(_)

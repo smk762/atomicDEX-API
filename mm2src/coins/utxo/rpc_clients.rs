@@ -1044,7 +1044,7 @@ pub enum EstimateFeeMode {
 }
 
 impl ElectrumBlockHeader {
-    fn block_height(&self) -> u64 {
+    pub fn block_height(&self) -> u64 {
         match self {
             ElectrumBlockHeader::V12(h) => h.block_height,
             ElectrumBlockHeader::V14(h) => h.height,
