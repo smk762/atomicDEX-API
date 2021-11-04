@@ -176,7 +176,6 @@ async fn handle_ln_events(
     network: Network,
     coin: Arc<UtxoStandardCoin>,
 ) {
-    // TODO: remove clone
     match event.clone() {
         Event::FundingGenerationReady {
             temporary_channel_id,
@@ -230,7 +229,6 @@ async fn handle_ln_events(
                         script_pubkey: output_script,
                     });
                 },
-                // TODO: More verbose error for mm2 (Check LDK APIError and provide better error description for the logs)
                 Err(e) => log::error!("{:?}", e),
             }
         },
@@ -241,6 +239,7 @@ async fn handle_ln_events(
         Event::SpendableOutputs { .. } => (),
         Event::PaymentForwarded { .. } => (),
         Event::ChannelClosed { .. } => (),
+        Event::DiscardFunding { .. } => (),
     }
 }
 
@@ -904,7 +903,7 @@ pub fn open_ln_channel(
     events_id: u64,
     announce_channel: bool,
     channel_manager: Arc<ChannelManager>,
-) -> OpenChannelResult<()> {
+) -> OpenChannelResult<[u8; 32]> {
     // TODO: get user_config from context when it's added to it
     let mut user_config = UserConfig::default();
     user_config
@@ -914,18 +913,9 @@ pub fn open_ln_channel(
 
     // TODO: push_msat parameter
     // TODO: check balance before opening channel and also prevent withdraws until transaction is broadcasted
-    match channel_manager.create_channel(node_pubkey, amount_in_sat, 0, events_id, Some(user_config)) {
-        Ok(_) => {
-            log::info!("Initiated opening a channel with node {}", node_pubkey);
-            Ok(())
-        },
-        Err(e) => {
-            return MmError::err(OpenChannelError::FailureToOpenChannel(
-                node_pubkey.to_string(),
-                format!("{:?}", e),
-            ));
-        },
-    }
+    channel_manager
+        .create_channel(node_pubkey, amount_in_sat, 0, events_id, Some(user_config))
+        .map_to_mm(|e| OpenChannelError::FailureToOpenChannel(node_pubkey.to_string(), format!("{:?}", e)))
 }
 
 // Generates the raw funding transaction with one output equal to the channel value.

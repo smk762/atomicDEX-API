@@ -189,7 +189,6 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
         }
     }
 
-    // Todo: check the cases when you can open a channel with a node with only the pubkey / and how to use save_node_data_to_file with it
     let (node_pubkey, node_addr) = parse_node_info(req.node_id.clone())?;
 
     let connect_to_node_res = {
@@ -208,7 +207,7 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
         ConnectToNodeRes::AlreadyConnected(_, _) => (),
     }
 
-    {
+    let temporary_channel_id = {
         let channel_managers = lightning_ctx.channel_managers.lock().await;
         let channel_manager = channel_managers
             .get(&req.coin)
@@ -221,9 +220,12 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
             req.request_id,
             req.announce_channel,
             channel_manager.clone(),
-        )?;
-    }
+        )?
+    };
 
     // TODO: What about if the funding transaction failed? Maybe I can use wait for log here for now?? or maybe use a mpsc::channel??
-    Ok("success".into())
+    Ok(format!(
+        "Initiated opening channel with temporary ID {:?} with node {}",
+        temporary_channel_id, req.node_id
+    ))
 }
