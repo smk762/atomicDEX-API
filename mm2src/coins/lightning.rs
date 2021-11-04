@@ -117,8 +117,6 @@ pub async fn enable_lightning(ctx: MmArc, req: EnableLightningRequest) -> Enable
 pub struct ConnectToNodeRequest {
     pub coin: String,
     pub node_id: String,
-    #[serde(default)]
-    pub reconnect_on_restart: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -142,10 +140,6 @@ pub async fn connect_to_lightning_node(ctx: MmArc, req: ConnectToNodeRequest) ->
     }
 
     let (node_pubkey, node_addr) = parse_node_info(req.node_id.clone())?;
-
-    if req.reconnect_on_restart {
-        save_node_data_to_file(&nodes_data_path(&ctx), &req.node_id)?
-    }
 
     let peer_managers = lightning_ctx.peer_managers.lock().await;
     let peer_manager = peer_managers
@@ -201,9 +195,6 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
 
     match connect_to_node_res {
         ConnectToNodeRes::ConnectedSuccessfully(_, _) => save_node_data_to_file(&nodes_data_path(&ctx), &req.node_id)?,
-        // Todo: for save_node_data_to_file should have a file for each node to check if it was saved before or not
-        // for the case of if a node is already connected through "connect_to_lightning_node" RPC with reconnect_on_restart as true
-        // this should be better than keeping track of saved nodes for restart in memory
         ConnectToNodeRes::AlreadyConnected(_, _) => (),
     }
 

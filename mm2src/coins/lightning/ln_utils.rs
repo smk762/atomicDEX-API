@@ -540,7 +540,6 @@ async fn process_txs_confirmations(
     current_height: u64,
 ) {
     // Retrieve transaction IDs to check the chain for un-confirmations
-    // TODO: The following code needs to be run with every new block also
     let channel_manager_relevant_txids = channel_manager.get_relevant_txids();
     let chain_monitor_relevant_txids = chain_monitor.get_relevant_txids();
 
@@ -552,7 +551,7 @@ async fn process_txs_confirmations(
             .get_transaction_bytes(txid.as_hash().into_inner().into())
             .compat()
             .await
-            .is_ok()
+            .is_err()
         {
             channel_manager.transaction_unconfirmed(&txid);
         }
@@ -566,7 +565,7 @@ async fn process_txs_confirmations(
             .get_transaction_bytes(txid.as_hash().into_inner().into())
             .compat()
             .await
-            .is_ok()
+            .is_err()
         {
             chain_monitor.transaction_unconfirmed(&txid);
         }
@@ -599,7 +598,6 @@ async fn process_txs_confirmations(
                                 tx_data.push((index, &transaction));
                             }
                         }
-                        // TODO: double check that tx_data needs the index of the output script not of the transaction in the block
                         channel_manager.transactions_confirmed(&header, &tx_data, tx_block_height as u32);
                         chain_monitor.transactions_confirmed(&header, &tx_data, tx_block_height as u32);
                         ln_registry.registered_txs.remove(&txid);
