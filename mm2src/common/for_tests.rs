@@ -10,11 +10,12 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::Mutex;
+use uuid::Uuid;
 
 use crate::executor::Timer;
 use crate::mm_ctx::MmArc;
 use crate::mm_metrics::{MetricType, MetricsJson};
-use crate::{now_float, slurp};
+use crate::{now_float, now_ms, slurp};
 
 cfg_wasm32! {
     use crate::log::LogLevel;
@@ -868,6 +869,32 @@ pub async fn check_my_swap_status(
     assert_eq!(expected_success_events, actual_events.as_slice());
 }
 
+pub async fn check_my_swap_status_amounts(
+    mm: &MarketMakerIt,
+    uuid: Uuid,
+    maker_amount: BigDecimal,
+    taker_amount: BigDecimal,
+) {
+    let response = mm
+        .rpc(json! ({
+            "userpass": mm.userpass,
+            "method": "my_swap_status",
+            "params": {
+                "uuid": uuid,
+            }
+        }))
+        .await
+        .unwrap();
+    assert!(response.0.is_success(), "!status of {}: {}", uuid, response.1);
+    let status_response: Json = json::from_str(&response.1).unwrap();
+
+    let events_array = status_response["result"]["events"].as_array().unwrap();
+    let actual_maker_amount = json::from_value(events_array[0]["event"]["data"]["maker_amount"].clone()).unwrap();
+    assert_eq!(maker_amount, actual_maker_amount);
+    let actual_taker_amount = json::from_value(events_array[0]["event"]["data"]["taker_amount"].clone()).unwrap();
+    assert_eq!(taker_amount, actual_taker_amount);
+}
+
 pub async fn check_stats_swap_status(
     mm: &MarketMakerIt,
     uuid: &str,
@@ -911,4 +938,36 @@ pub async fn check_recent_swaps(mm: &MarketMakerIt, expected_len: usize) {
     let swaps_response: Json = json::from_str(&response.1).unwrap();
     let swaps: &Vec<Json> = swaps_response["result"]["swaps"].as_array().unwrap();
     assert_eq!(expected_len, swaps.len());
+}
+
+pub async fn wait_till_history_has_records(mm: &MarketMakerIt, coin: &str, expected_len: usize) {
+    // give 2 second max to fetch a single transaction
+    let to_wait = expected_len as u64 * 2;
+    let wait_until = now_ms() + to_wait * 1000;
+    loop {
+        let tx_history = mm
+            .rpc(json!({
+                "userpass": mm.userpass,
+                "method": "my_tx_history",
+                "coin": coin,
+                "limit": 100,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            tx_history.0,
+            StatusCode::OK,
+            "RPC «my_tx_history» failed with status «{}», response «{}»",
+            tx_history.0,
+            tx_history.1
+        );
+        log!([tx_history.1]);
+        let tx_history_json: Json = json::from_str(&tx_history.1).unwrap();
+        if tx_history_json["result"]["transactions"].as_array().unwrap().len() >= expected_len {
+            break;
+        }
+
+        Timer::sleep(1.).await;
+        assert!(now_ms() <= wait_until, "wait_till_history_has_records timed out");
+    }
 }
