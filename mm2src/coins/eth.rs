@@ -1315,12 +1315,12 @@ async fn sign_and_send_transaction_impl(
     status.status(tags!(), "get_gas_price…");
     let gas_price = try_s!(coin.get_gas_price().compat().await);
     let estimate_gas_req = CallRequest {
-        value: Some(value),
-        data: Some(data.clone().into()),
+        value: None,
+        data: None,
         from: Some(coin.my_address),
         to: coin.swap_contract_address,
         gas: None,
-        gas_price: Some(gas_price),
+        gas_price: None,
     };
     info!("estimate_gas_req: {:?}", estimate_gas_req);
     let gas_limit = try_s!(coin.estimate_gas(estimate_gas_req).compat().await);
