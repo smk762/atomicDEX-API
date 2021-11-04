@@ -396,7 +396,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
     // Initialize the NetGraphMsgHandler. This is used for providing routes to send payments over
     let genesis = genesis_block(network).header.block_hash();
     let router = Arc::new(NetGraphMsgHandler::new(
-        NetworkGraph::new(genesis),
+        Arc::new(NetworkGraph::new(genesis)),
         None::<Arc<dyn Access + Send + Sync>>,
         logger.0.clone(),
     ));
