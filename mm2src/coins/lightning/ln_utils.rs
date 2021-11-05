@@ -9,7 +9,7 @@ use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::script::Script;
 use bitcoin::blockdata::transaction::{Transaction, TxOut};
 use bitcoin::consensus::encode::deserialize;
-use bitcoin::hash_types::{BlockHash, TxMerkleNode};
+use bitcoin::hash_types::{BlockHash, TxMerkleNode, Txid};
 use bitcoin::network::constants::Network;
 use bitcoin_hashes::{sha256d, Hash};
 use common::executor::{spawn, Timer};
@@ -532,6 +532,26 @@ async fn ln_p2p_loop(ctx: MmArc, peer_manager: Arc<PeerManager>, listener: TcpLi
     }
 }
 
+struct ConfirmedTransactionInfo {
+    txid: Txid,
+    header: BlockHeader,
+    index: usize,
+    transaction: Transaction,
+    height: u32,
+}
+
+impl ConfirmedTransactionInfo {
+    fn new(txid: Txid, header: BlockHeader, index: usize, transaction: Transaction, height: u32) -> Self {
+        ConfirmedTransactionInfo {
+            txid,
+            header,
+            index,
+            transaction,
+            height,
+        }
+    }
+}
+
 async fn process_txs_confirmations(
     filter: Arc<UtxoStandardCoin>,
     client: ElectrumClient,
@@ -567,6 +587,9 @@ async fn process_txs_confirmations(
             .await
             .is_err()
         {
+            // If it's a connection error this will try to broadcast an already successfully broadcasted transaction
+            // which will be rejected, causing no problems and the transaction will be confirmed at with  transactions_confirmed
+            // later anyways
             chain_monitor.transaction_unconfirmed(&txid);
         }
     }
@@ -575,6 +598,7 @@ async fn process_txs_confirmations(
     // TODO: Get the results in a vec then call transactions_confirmed for each header tx_list
     // also order results to call transactions_confirmed by headers/other required order
     // TODO: loop through ln_registry.registered_outputs also
+    let mut transactions_to_confirm = Vec::new();
     for (txid, scripts) in ln_registry.registered_txs.clone() {
         match filter
             .as_ref()
@@ -586,21 +610,29 @@ async fn process_txs_confirmations(
         {
             Ok(tx) => {
                 // TODO: find a better way to get the block height as there might be a new mined block after passing current_height and before calling get_verbose_transaction
+                // this will make transaction confirmed after 5 confirmations instead of 6 in LDK which should not be a big problem
+                // but might causes a problem with match client.blockchain_block_header(tx_block_height).compat().await
+                // this will happen only on restart also not while node is running
+                // check for new height here maybe as a solution?
                 let tx_block_height = current_height - tx.confirmations as u64 + 1;
                 match client.blockchain_block_header(tx_block_height).compat().await {
                     Ok(h) => {
                         let header = deserialize(&h).expect("Can't deserialize block header");
                         let transaction: Transaction =
                             deserialize(&tx.hex.clone().into_vec()).expect("Can't deserialize transaction");
-                        let mut tx_data = Vec::new();
                         for (index, vout) in transaction.output.iter().enumerate() {
                             if scripts.contains(&vout.script_pubkey) {
-                                tx_data.push((index, &transaction));
+                                let confirmed_transaction_info = ConfirmedTransactionInfo::new(
+                                    txid,
+                                    header,
+                                    index,
+                                    transaction.clone(),
+                                    tx_block_height as u32,
+                                );
+                                transactions_to_confirm.push(confirmed_transaction_info);
+                                ln_registry.registered_txs.remove(&txid);
                             }
                         }
-                        channel_manager.transactions_confirmed(&header, &tx_data, tx_block_height as u32);
-                        chain_monitor.transactions_confirmed(&header, &tx_data, tx_block_height as u32);
-                        ln_registry.registered_txs.remove(&txid);
                     },
                     Err(_) => continue,
                 }
@@ -613,12 +645,38 @@ async fn process_txs_confirmations(
     }
 
     for output in ln_registry.registered_outputs.clone() {
+        // TODO: add another struct for this in ln_rpc
         let result = ln_rpc::find_watched_output_spend_with_header(&filter.as_ref(), output.0.clone()).await;
         if let Some((header, index, tx, height)) = result {
-            channel_manager.transactions_confirmed(&header, &[(index, &tx)], height as u32);
-            chain_monitor.transactions_confirmed(&header, &[(index, &tx)], height as u32);
-            ln_registry.registered_outputs.remove(&output);
+            if !transactions_to_confirm.iter().any(|info| info.txid == tx.txid()) {
+                let confirmed_transaction_info =
+                    ConfirmedTransactionInfo::new(tx.txid(), header, index, tx.clone(), height as u32);
+                transactions_to_confirm.push(confirmed_transaction_info);
+                ln_registry.registered_outputs.remove(&output);
+            }
         }
+    }
+
+    // TODO: sort also for if a transaction on a block spends an output of a transaction on the same block
+    transactions_to_confirm.sort_by(|a, b| a.height.cmp(&b.height));
+
+    for confirmed_transaction_info in transactions_to_confirm {
+        channel_manager.transactions_confirmed(
+            &confirmed_transaction_info.header,
+            &[(
+                confirmed_transaction_info.index,
+                &confirmed_transaction_info.transaction,
+            )],
+            confirmed_transaction_info.height,
+        );
+        chain_monitor.transactions_confirmed(
+            &confirmed_transaction_info.header,
+            &[(
+                confirmed_transaction_info.index,
+                &confirmed_transaction_info.transaction,
+            )],
+            confirmed_transaction_info.height,
+        );
     }
 }
 
@@ -737,7 +795,10 @@ async fn ln_node_announcement_loop(
             // and other nodes will not be able to open a channel with it. But it can open channels with other nodes.
             // TODO: Fetch external ip on reconnection only
             match fetch_external_ip().await {
-                Ok(ip) => netaddress_from_ipaddr(ip, port),
+                Ok(ip) => {
+                    log::info!("Fetch real IP successfully: {}:{}", ip, port);
+                    netaddress_from_ipaddr(ip, port)
+                },
                 Err(e) => {
                     log::error!("Error while fetching external ip for node announcement: {}", e);
                     Timer::sleep(BROADCAST_NODE_ANNOUNCEMENT_INTERVAL as f64).await;
@@ -788,15 +849,15 @@ pub fn parse_node_info(node_pubkey_and_ip_addr: String) -> ConnectToNodeResult<(
     Ok((pubkey, node_addr))
 }
 
-fn read_nodes_data_from_file(path: &Path) -> EnableLightningResult<HashMap<PublicKey, SocketAddr>> {
+pub fn read_nodes_data_from_file(path: &Path) -> ConnectToNodeResult<HashMap<PublicKey, SocketAddr>> {
     if !path.exists() {
         return Ok(HashMap::new());
     }
     let mut nodes_data = HashMap::new();
-    let file = File::open(path).map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
+    let file = File::open(path).map_to_mm(|e| ConnectToNodeError::IOError(e.to_string()))?;
     let reader = BufReader::new(file);
     for line in reader.lines() {
-        let line = line.map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
+        let line = line.map_to_mm(|e| ConnectToNodeError::IOError(e.to_string()))?;
         let (pubkey, socket_addr) = parse_node_info(line)?;
         nodes_data.insert(pubkey, socket_addr);
     }

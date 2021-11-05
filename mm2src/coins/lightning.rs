@@ -8,7 +8,7 @@ use ln_errors::{ConnectToNodeError, ConnectToNodeResult, EnableLightningError, E
                 OpenChannelError, OpenChannelResult};
 #[cfg(not(target_arch = "wasm32"))]
 use ln_utils::{connect_to_node, network_from_string, nodes_data_path, open_ln_channel, parse_node_info,
-               save_node_data_to_file, start_lightning, ConnectToNodeRes, LightningConf, LightningContext};
+               read_nodes_data_from_file, save_node_data_to_file, start_lightning, LightningConf, LightningContext};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::{lp_coinfind_or_err, MmCoinEnum};
@@ -185,17 +185,17 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
 
     let (node_pubkey, node_addr) = parse_node_info(req.node_id.clone())?;
 
-    let connect_to_node_res = {
+    {
         let peer_managers = lightning_ctx.peer_managers.lock().await;
         let peer_manager = peer_managers
             .get(&req.coin)
             .ok_or_else(|| ConnectToNodeError::LightningNotEnabled(req.coin.clone()))?;
-        connect_to_node(node_pubkey, node_addr, peer_manager.clone()).await?
-    };
+        connect_to_node(node_pubkey, node_addr, peer_manager.clone()).await?;
+    }
 
-    match connect_to_node_res {
-        ConnectToNodeRes::ConnectedSuccessfully(_, _) => save_node_data_to_file(&nodes_data_path(&ctx), &req.node_id)?,
-        ConnectToNodeRes::AlreadyConnected(_, _) => (),
+    let nodes_data = read_nodes_data_from_file(&nodes_data_path(&ctx))?;
+    if !nodes_data.contains_key(&node_pubkey) {
+        save_node_data_to_file(&nodes_data_path(&ctx), &req.node_id)?;
     }
 
     let temporary_channel_id = {
