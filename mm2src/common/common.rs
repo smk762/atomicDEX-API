@@ -96,6 +96,7 @@ pub mod iguana_utils;
 pub mod mm_ctx;
 #[path = "mm_error/mm_error.rs"] pub mod mm_error;
 pub mod mm_number;
+pub mod mm_rpc_protocol;
 pub mod privkey;
 pub mod rpc_task;
 pub mod seri;
@@ -857,6 +858,17 @@ impl SerializationError {
     pub fn from_error<E: serde::ser::Error>(e: E) -> SerializationError {
         SerializationError::InternalError(e.to_string())
     }
+}
+
+#[derive(Serialize)]
+pub struct SuccessResponse(&'static str);
+
+impl SuccessResponse {
+    pub fn new() -> SuccessResponse { SuccessResponse("success") }
+}
+
+impl Default for SuccessResponse {
+    fn default() -> Self { SuccessResponse::new() }
 }
 
 #[derive(Serialize)]

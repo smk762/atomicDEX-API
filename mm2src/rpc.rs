@@ -21,6 +21,7 @@
 use common::log::{error, info};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
+use common::mm_rpc_protocol::{MmRpcBuilder, MmRpcResponse, MmRpcVersion};
 use common::{err_to_rpc_json_string, err_tp_rpc_json, HttpStatusCode};
 use derive_more::Display;
 use futures::future::{join_all, FutureExt};
@@ -33,15 +34,11 @@ use serde::Serialize;
 use serde_json::{self as json, Value as Json};
 use std::net::SocketAddr;
 
+#[path = "rpc/dispatcher/dispatcher.rs"] mod dispatcher;
 #[path = "rpc/dispatcher/dispatcher_legacy.rs"]
 mod dispatcher_legacy;
-
-#[path = "rpc/dispatcher/dispatcher_v2.rs"] mod dispatcher_v2;
-
 #[path = "rpc/get_public_key.rs"] mod get_public_key;
 #[path = "rpc/lp_commands.rs"] pub mod lp_commands;
-#[path = "rpc/lp_protocol.rs"] mod lp_protocol;
-use self::lp_protocol::{MmRpcBuilder, MmRpcResponse, MmRpcVersion};
 
 /// Lists the RPC method not requiring the "userpass" authentication.  
 /// None is also public to skip auth and display proper error in case of method is missing
@@ -184,7 +181,7 @@ async fn process_single_request(ctx: MmArc, req: Json, client: SocketAddr) -> Re
         },
     };
 
-    match dispatcher_v2::process_single_request(ctx, req, client, local_only).await {
+    match dispatcher::process_single_request(ctx, req, client, local_only).await {
         Ok(response) => Ok(response),
         Err(e) => {
             // return always serialized response

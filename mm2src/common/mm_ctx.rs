@@ -1,6 +1,6 @@
 use crate::log::{self, LogState};
 use crate::mm_metrics::{MetricsArc, MetricsOps};
-use crate::rpc_task::RpcTaskManager;
+use crate::rpc_task::{RpcTaskManager, TaskId};
 use crate::{bits256, small_rng};
 use gstuff::Constructible;
 use keys::KeyPair;
@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 cfg_wasm32! {
     use crate::wasm_rpc::WasmRpcSender;
@@ -27,7 +27,6 @@ cfg_native! {
     use lightning_background_processor::BackgroundProcessor;
     use rusqlite::Connection;
     use std::net::{IpAddr, SocketAddr};
-    use std::sync::MutexGuard;
 }
 
 /// Default interval to export and record metrics to log.
@@ -83,6 +82,7 @@ pub struct MmCtx {
     pub peer_id: Constructible<String>,
     /// The context belonging to the `coins` crate: `CoinsContext`.
     pub coins_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
+    pub crypto_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
     /// RIPEMD160(SHA256(x)) where x is secp256k1 pubkey derived from passphrase.
     pub rmd160: Constructible<H160>,
     /// secp256k1 key pair derived from passphrase.
@@ -106,6 +106,7 @@ pub struct MmCtx {
     #[cfg(target_arch = "wasm32")]
     pub db_namespace: DbNamespaceId,
     pub rpc_task_manager: Mutex<RpcTaskManager>,
+    pub mm_init_task_id: Constructible<TaskId>,
 }
 
 impl MmCtx {
@@ -124,6 +125,7 @@ impl MmCtx {
             p2p_ctx: Mutex::new(None),
             peer_id: Constructible::default(),
             coins_ctx: Mutex::new(None),
+            crypto_ctx: Mutex::new(None),
             rmd160: Constructible::default(),
             secp256k1_key_pair: Constructible::default(),
             coins_needed_for_kick_start: Mutex::new(HashSet::new()),
@@ -139,6 +141,7 @@ impl MmCtx {
             #[cfg(target_arch = "wasm32")]
             db_namespace: DbNamespaceId::Main,
             rpc_task_manager: Mutex::new(RpcTaskManager::default()),
+            mm_init_task_id: Constructible::default(),
         }
     }
 

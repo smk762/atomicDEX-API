@@ -1,5 +1,5 @@
-use common::mm_error::prelude::*;
-use common::{HttpStatusCode, SerializationError};
+use crate::mm_error::prelude::*;
+use crate::{HttpStatusCode, SerializationError};
 use http::{Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{self as json, Value as Json};
@@ -9,8 +9,9 @@ use serde_json::{self as json, Value as Json};
 pub enum MmRpcVersion {
     #[serde(rename = "2.0")]
     V2,
-    #[serde(rename = "3.0")]
-    V3,
+    /// Whether the protocol supports long-running tasks that support user interaction and status polling.
+    #[serde(rename = "2.0h")]
+    V2h,
 }
 
 #[derive(Deserialize)]
@@ -19,6 +20,7 @@ pub struct MmRpcRequest {
     pub mmrpc: MmRpcVersion,
     pub userpass: Option<String>,
     pub method: String,
+    #[serde(default)]
     pub params: Json,
     pub id: Option<usize>,
 }
@@ -72,7 +74,7 @@ impl<T: Serialize, E: SerMmErrorType> MmRpcBuilder<T, E> {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum MmRpcResult<T: Serialize, E: SerMmErrorType> {
     Ok { result: T },
@@ -90,6 +92,13 @@ where
             MmRpcResult::Err(e) => e.status_code(),
         }
     }
+}
+
+impl<T: Serialize, E: SerMmErrorType> MmRpcResult<T, E> {
+    pub fn ok(result: T) -> MmRpcResult<T, E> { MmRpcResult::Ok { result } }
+
+    #[track_caller]
+    pub fn mm_err(error: E) -> MmRpcResult<T, E> { MmRpcResult::Err(MmError::new(error)) }
 }
 
 #[derive(Serialize)]
@@ -143,6 +152,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use derive_more::Display;
     use serde::Serializer;
 
     #[derive(Display, Serialize, SerializeErrorType)]
@@ -179,8 +189,8 @@ mod tests {
         let expected = json!({
             "mmrpc": "2.0",
             "error": "Not sufficient balance. Top up your balance by 123",
-            "error_path": "lp_protocol",
-            "error_trace": format!("lp_protocol:{}]", err_line),
+            "error_path": "mm_rpc_protocol",
+            "error_trace": format!("mm_rpc_protocol:{}]", err_line),
             "error_type": "NotSufficientBalance",
             "error_data": {
                 "missing": 123,

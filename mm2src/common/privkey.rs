@@ -26,12 +26,12 @@ use rustc_hex::FromHexError;
 
 pub type PrivKeyResult<T> = Result<T, MmError<PrivKeyError>>;
 
-#[derive(Debug, Display)]
+#[derive(Debug, Display, Serialize)]
 pub enum PrivKeyError {
     #[display(fmt = "Provided WIF passphrase has invalid checksum!")]
     WifPassphraseInvalidChecksum,
     #[display(fmt = "Error parsing passphrase: {}", _0)]
-    ErrorParsingPassphrase(FromHexError),
+    ErrorParsingPassphrase(String),
     #[display(fmt = "Invalid private key: {}", _0)]
     InvalidPrivKey(KeysError),
     #[display(fmt = "We only support compressed keys at the moment")]
@@ -39,7 +39,7 @@ pub enum PrivKeyError {
 }
 
 impl From<FromHexError> for PrivKeyError {
-    fn from(e: FromHexError) -> Self { PrivKeyError::ErrorParsingPassphrase(e) }
+    fn from(e: FromHexError) -> Self { PrivKeyError::ErrorParsingPassphrase(e.to_string()) }
 }
 
 impl From<KeysError> for PrivKeyError {

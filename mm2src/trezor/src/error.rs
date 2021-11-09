@@ -1,6 +1,6 @@
 use crate::proto::messages::MessageType;
 use crate::proto::messages_common::{Failure, Failure_FailureType};
-use crate::response::InteractionType;
+use crate::user_interaction::TrezorUserInteraction;
 use common::mm_error::prelude::*;
 use derive_more::Display;
 use protobuf::error::ProtobufError;
@@ -30,7 +30,7 @@ pub enum TrezorError {
     UnexpectedMessageType(MessageType),
     Failure(OperationFailure),
     #[display(fmt = "Unexpected interaction request: {:?}", _0)]
-    UnexpectedInteractionRequest(InteractionType),
+    UnexpectedInteractionRequest(TrezorUserInteraction),
     Internal(String),
 }
 

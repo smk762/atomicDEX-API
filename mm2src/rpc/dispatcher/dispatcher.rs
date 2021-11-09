@@ -1,5 +1,5 @@
-use super::lp_protocol::{MmRpcBuilder, MmRpcRequest};
 use super::{DispatcherError, DispatcherResult, PUBLIC_METHODS};
+use crate::mm2::lp_native_dex::rpc_command::{mm_init_status, mm_init_user_action};
 use crate::mm2::lp_ordermatch::{start_simple_market_maker_bot, stop_simple_market_maker_bot};
 use crate::{mm2::lp_stats::{add_node_to_version_stat, remove_node_from_version_stat, start_version_stat_collection,
                             stop_version_stat_collection, update_version_stat_collection},
@@ -10,6 +10,7 @@ use coins::{add_delegation, get_staking_infos, remove_delegation, withdraw};
 use common::log::{error, warn};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
+use common::mm_rpc_protocol::{MmRpcBuilder, MmRpcRequest, MmRpcVersion};
 use common::HttpStatusCode;
 use futures::Future as Future03;
 use http::Response;
@@ -32,7 +33,10 @@ pub async fn process_single_request(
     }
 
     auth(&request, &ctx)?;
-    dispatcher(request, ctx).await
+    match request.mmrpc {
+        MmRpcVersion::V2 => dispatcher_v2(request, ctx).await,
+        MmRpcVersion::V2h => dispatcher_v2_h(request, ctx).await,
+    }
 }
 
 /// # Examples
@@ -86,7 +90,7 @@ fn auth(request: &MmRpcRequest, ctx: &MmArc) -> DispatcherResult<()> {
     }
 }
 
-async fn dispatcher(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Response<Vec<u8>>> {
+async fn dispatcher_v2(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Response<Vec<u8>>> {
     match request.method.as_str() {
         "add_delegation" => handle_mmrpc(ctx, request, add_delegation).await,
         "add_node_to_version_stat" => handle_mmrpc(ctx, request, add_node_to_version_stat).await,
@@ -102,6 +106,15 @@ async fn dispatcher(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Respo
         "update_version_stat_collection" => handle_mmrpc(ctx, request, update_version_stat_collection).await,
         "trade_preimage" => handle_mmrpc(ctx, request, trade_preimage_rpc).await,
         "withdraw" => handle_mmrpc(ctx, request, withdraw).await,
+        _ => MmError::err(DispatcherError::NoSuchMethod { method: request.method }),
+    }
+}
+
+async fn dispatcher_v2_h(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Response<Vec<u8>>> {
+    match request.method.as_str() {
+        "mm_init_status" => handle_mmrpc(ctx, request, mm_init_status).await,
+        "mm_init_user_action" => handle_mmrpc(ctx, request, mm_init_user_action).await,
+        // "withdraw" => handle_mmrpc(ctx, request, withdraw).await,
         _ => MmError::err(DispatcherError::NoSuchMethod { method: request.method }),
     }
 }

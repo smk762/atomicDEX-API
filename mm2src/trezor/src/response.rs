@@ -1,6 +1,7 @@
 use crate::client::{ResultHandler, TrezorClient};
 use crate::proto::messages_common as proto_common;
 use crate::proto::TrezorMessage;
+use crate::user_interaction::TrezorUserInteraction;
 use crate::{TrezorError, TrezorResult};
 use common::mm_error::prelude::*;
 use futures::FutureExt;
@@ -39,12 +40,12 @@ impl<T: 'static> TrezorResponse<T> {
     pub fn ok(self) -> TrezorResult<T> {
         match self {
             TrezorResponse::Ok(m) => Ok(m),
-            TrezorResponse::ButtonRequest(_) => {
-                MmError::err(TrezorError::UnexpectedInteractionRequest(InteractionType::Button))
-            },
-            TrezorResponse::PinMatrixRequest(_) => {
-                MmError::err(TrezorError::UnexpectedInteractionRequest(InteractionType::PinMatrix))
-            },
+            TrezorResponse::ButtonRequest(_) => MmError::err(TrezorError::UnexpectedInteractionRequest(
+                TrezorUserInteraction::ButtonRequest,
+            )),
+            TrezorResponse::PinMatrixRequest(_) => MmError::err(TrezorError::UnexpectedInteractionRequest(
+                TrezorUserInteraction::PinMatrix3x3,
+            )),
         }
     }
 
@@ -62,7 +63,7 @@ impl<T: 'static> TrezorResponse<T> {
                 },
                 Self::ButtonRequest(req) => req.ack().await?,
                 Self::PinMatrixRequest(_) => {
-                    return MmError::err(TrezorError::UnexpectedInteractionRequest(InteractionType::PinMatrix));
+                    return MmError::err(TrezorError::UnexpectedInteractionRequest(TrezorUserInteraction::PinMatrix3x3));
                 },
             };
         }
@@ -123,6 +124,9 @@ impl<T: 'static> ButtonRequest<T> {
 
     /// Ack the request and get the next message from the device.
     pub async fn ack(self) -> TrezorResult<TrezorResponse<T>> { self.button_handler.await }
+
+    /// TODO add an optional `timeout` param.
+    pub async fn ack_all(self) -> TrezorResult<T> { self.button_handler.await?.ack_all().await }
 
     async fn button_handler<R: TrezorMessage>(
         client: TrezorClient,

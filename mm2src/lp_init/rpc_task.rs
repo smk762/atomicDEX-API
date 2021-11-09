@@ -1,0 +1,107 @@
+use crate::mm2::lp_native_dex::{lp_init_continue, MmInitError};
+use async_trait::async_trait;
+use common::mm_ctx::MmArc;
+use common::mm_error::prelude::*;
+use common::rpc_task::{RpcTask, RpcTaskHandle};
+use common::SuccessResponse;
+use crypto::hw_task::{HwInteractWithUser, HwInteractionError, HwUserAction};
+use crypto::trezor::TrezorPinMatrix3x3Response;
+use crypto::{CryptoCtx, CryptoResponse, HwClient, HwWalletType};
+use serde_json as json;
+use std::convert::TryFrom;
+use std::time::Duration;
+
+const MM_INIT_TREZOR_PIN_TIMEOUT: Duration = Duration::from_secs(600);
+
+#[derive(Deserialize, Serialize)]
+pub enum MmInitInProgressStatus {
+    /// TODO replace with more specific statuses.
+    Initializing,
+    InitializingCryptoCtx,
+    ReadPublicKeyFromTrezor,
+}
+
+#[derive(Deserialize, Serialize)]
+pub enum MmInitAwaitingStatus {
+    WaitForTrezorPin,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "action_type")]
+pub enum MmInitUserAction {
+    TrezorPin(TrezorPinMatrix3x3Response),
+}
+
+impl TryFrom<MmInitUserAction> for HwUserAction {
+    type Error = HwInteractionError;
+
+    fn try_from(value: MmInitUserAction) -> Result<Self, Self::Error> {
+        match value {
+            MmInitUserAction::TrezorPin(pin) => Ok(HwUserAction::TrezorPin(pin)),
+        }
+    }
+}
+
+pub struct MmInitTask {
+    ctx: MmArc,
+}
+
+#[async_trait]
+impl RpcTask for MmInitTask {
+    type Item = SuccessResponse;
+    type Error = MmInitError;
+    type InProgressStatus = MmInitInProgressStatus;
+    type AwaitingStatus = MmInitAwaitingStatus;
+    type UserAction = MmInitUserAction;
+
+    fn initial_status(&self) -> Self::InProgressStatus { MmInitInProgressStatus::InitializingCryptoCtx }
+
+    #[allow(clippy::type_complexity)]
+    async fn run(
+        self,
+        task_handle: &RpcTaskHandle<
+            Self::Item,
+            Self::Error,
+            Self::InProgressStatus,
+            Self::AwaitingStatus,
+            Self::UserAction,
+        >,
+    ) -> Result<Self::Item, MmError<Self::Error>> {
+        if self.ctx.conf["hw_wallet"].is_null() {
+            return MmError::err(MmInitError::FieldNotFoundInConfig {
+                field: "hw_wallet".to_owned(),
+            });
+        }
+        let hw_wallet: HwWalletType = json::from_value(self.ctx.conf["hw_wallet"].clone()).map_to_mm(|e| {
+            MmInitError::ErrorDeserializingConfig {
+                field: "hw_wallet".to_owned(),
+                error: e.to_string(),
+            }
+        })?;
+        let hw_client = match hw_wallet {
+            HwWalletType::Trezor => HwClient::trezor().await?,
+        };
+        let xpub = match CryptoCtx::request_mm2_internal_pubkey(&hw_client).await? {
+            CryptoResponse::Ok(xpub) => xpub,
+            CryptoResponse::HwDelayed(delayed) => {
+                delayed
+                    .interact_with_user_if_required(
+                        MM_INIT_TREZOR_PIN_TIMEOUT,
+                        task_handle,
+                        MmInitInProgressStatus::ReadPublicKeyFromTrezor,
+                        MmInitAwaitingStatus::WaitForTrezorPin,
+                    )
+                    .await?
+            },
+        };
+        // Initialize [`MmCtx::crypto_ctx`].
+        CryptoCtx::init_with_hw_wallet(self.ctx.clone(), hw_client, &xpub)?;
+
+        task_handle.update_in_progress_status(MmInitInProgressStatus::Initializing)?;
+        lp_init_continue(self.ctx.clone()).await.map(|_| SuccessResponse::new())
+    }
+}
+
+impl MmInitTask {
+    pub fn new(ctx: MmArc) -> MmInitTask { MmInitTask { ctx } }
+}

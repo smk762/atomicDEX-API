@@ -1,10 +1,11 @@
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "interaction")]
+use derive_more::Display;
+
+#[derive(Debug, Deserialize, Display, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrezorUserInteraction {
     ButtonRequest,
     PinMatrix3x3,
-    PlugInDevice,
+    Other(String),
 }
 
 /// Use the numeric keypad to describe number positions.
@@ -14,5 +15,5 @@ pub enum TrezorUserInteraction {
 /// 1 2 3
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TrezorPinMatrix3x3Response {
-    pub sequence: String,
+    pub pin: String,
 }
