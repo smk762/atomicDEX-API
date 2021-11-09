@@ -820,7 +820,7 @@ impl NativeClientImpl {
     /// It is recommended to set n_blocks as low as possible.
     /// However, in some cases, n_blocks = 1 leads to an unreasonably high fee estimation.
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/656#issuecomment-743759659
-    fn estimate_fee(&self, n_blocks: u32) -> RpcRes<f64> { rpc_func!(self, "estimatefee", n_blocks) }
+    pub fn estimate_fee(&self, n_blocks: u32) -> RpcRes<f64> { rpc_func!(self, "estimatefee", n_blocks) }
 
     /// https://developer.bitcoin.org/reference/rpc/estimatesmartfee.html
     /// It is recommended to set n_blocks as low as possible.
@@ -1556,7 +1556,7 @@ impl ElectrumClient {
     /// It is recommended to set n_blocks as low as possible.
     /// However, in some cases, n_blocks = 1 leads to an unreasonably high fee estimation.
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/656#issuecomment-743759659
-    fn estimate_fee(&self, mode: &Option<EstimateFeeMode>, n_blocks: u32) -> RpcRes<f64> {
+    pub fn estimate_fee(&self, mode: &Option<EstimateFeeMode>, n_blocks: u32) -> RpcRes<f64> {
         match mode {
             Some(m) => rpc_func!(self, "blockchain.estimatefee", n_blocks, m),
             None => rpc_func!(self, "blockchain.estimatefee", n_blocks),

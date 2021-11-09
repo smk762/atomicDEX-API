@@ -1,4 +1,4 @@
-use crate::CoinFindError;
+use crate::{BalanceError, CoinFindError};
 use common::mm_error::prelude::*;
 use common::HttpStatusCode;
 use derive_more::Display;
@@ -82,11 +82,10 @@ pub enum ConnectToNodeError {
 impl HttpStatusCode for ConnectToNodeError {
     fn status_code(&self) -> StatusCode {
         match self {
-            ConnectToNodeError::UnsupportedMode(_, _) | ConnectToNodeError::LightningNotEnabled(_) => {
-                StatusCode::METHOD_NOT_ALLOWED
-            },
+            ConnectToNodeError::UnsupportedMode(_, _) => StatusCode::METHOD_NOT_ALLOWED,
             ConnectToNodeError::ParseError(_) | ConnectToNodeError::IOError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ConnectToNodeError::ConnectionError(_) => StatusCode::REQUEST_TIMEOUT,
+            ConnectToNodeError::LightningNotEnabled(_) => StatusCode::PRECONDITION_REQUIRED,
         }
     }
 }
@@ -107,21 +106,38 @@ pub enum OpenChannelError {
     #[display(fmt = "Failure to open channel with node {}: {}", _0, _1)]
     FailureToOpenChannel(String, String),
     ConnectToNodeError(String),
+    #[display(fmt = "No such coin {}", _0)]
+    NoSuchCoin(String),
+    #[display(fmt = "Balance Error {}", _0)]
+    BalanceError(String),
 }
 
 impl HttpStatusCode for OpenChannelError {
     fn status_code(&self) -> StatusCode {
         match self {
-            OpenChannelError::UnsupportedMode(_, _) | OpenChannelError::LightningNotEnabled(_) => {
-                StatusCode::METHOD_NOT_ALLOWED
-            },
+            OpenChannelError::UnsupportedMode(_, _) => StatusCode::METHOD_NOT_ALLOWED,
             OpenChannelError::FailureToOpenChannel(_, _) | OpenChannelError::ConnectToNodeError(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             },
+            OpenChannelError::LightningNotEnabled(_)
+            | OpenChannelError::NoSuchCoin(_)
+            | OpenChannelError::BalanceError(_) => StatusCode::PRECONDITION_REQUIRED,
         }
     }
 }
 
 impl From<ConnectToNodeError> for OpenChannelError {
     fn from(err: ConnectToNodeError) -> OpenChannelError { OpenChannelError::ConnectToNodeError(err.to_string()) }
+}
+
+impl From<CoinFindError> for OpenChannelError {
+    fn from(e: CoinFindError) -> Self {
+        match e {
+            CoinFindError::NoSuchCoin { coin } => OpenChannelError::NoSuchCoin(coin),
+        }
+    }
+}
+
+impl From<BalanceError> for OpenChannelError {
+    fn from(e: BalanceError) -> Self { OpenChannelError::BalanceError(e.to_string()) }
 }

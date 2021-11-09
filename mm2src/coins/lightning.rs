@@ -1,14 +1,23 @@
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 #[cfg(not(target_arch = "wasm32"))]
+use crate::utxo::utxo_common::big_decimal_from_sat;
+use crate::WithdrawFee;
+#[cfg(not(target_arch = "wasm32"))]
 use common::ip_addr::myipaddr;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
+use futures::compat::Future01CompatExt;
 use ln_errors::{ConnectToNodeError, ConnectToNodeResult, EnableLightningError, EnableLightningResult,
                 OpenChannelError, OpenChannelResult};
 #[cfg(not(target_arch = "wasm32"))]
 use ln_utils::{connect_to_node, network_from_string, nodes_data_path, open_ln_channel, parse_node_info,
                read_nodes_data_from_file, save_node_data_to_file, start_lightning, LightningConf, LightningContext};
+use std::sync::atomic::AtomicU64;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::{lp_coinfind_or_err, MmCoinEnum};
@@ -16,6 +25,10 @@ use super::{lp_coinfind_or_err, MmCoinEnum};
 mod ln_errors;
 mod ln_rpc;
 #[cfg(not(target_arch = "wasm32"))] mod ln_utils;
+
+lazy_static! {
+    static ref REQUEST_IDX: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+}
 
 #[derive(Deserialize)]
 pub struct EnableLightningRequest {
@@ -108,7 +121,7 @@ pub async fn enable_lightning(ctx: MmArc, req: EnableLightningRequest) -> Enable
     let port = req.port.unwrap_or(9735);
 
     let conf = LightningConf::new(client.clone(), network, listen_addr, port, node_name, node_color);
-    start_lightning(&ctx, utxo_coin, conf).await?;
+    start_lightning(ctx, utxo_coin, conf).await?;
 
     Ok("success".into())
 }
@@ -152,13 +165,16 @@ pub async fn connect_to_lightning_node(ctx: MmArc, req: ConnectToNodeRequest) ->
 
 fn get_true() -> bool { true }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct OpenChannelRequest {
     pub coin: String,
     pub node_id: String,
+    #[serde(default)]
     pub amount_in_sat: u64,
-    // Helps in tracking which FundingGenerationReady events corresponds to which open_channel call
-    pub request_id: u64,
+    #[serde(default)]
+    max: bool,
+    fee: Option<WithdrawFee>,
     #[serde(default = "get_true")]
     pub announce_channel: bool,
 }
@@ -174,6 +190,16 @@ pub async fn open_channel(_ctx: MmArc, _req: OpenChannelRequest) -> OpenChannelR
 /// Opens a channel on the lightning network.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelResult<String> {
+    let coin = lp_coinfind_or_err(&ctx, &req.coin).await?;
+
+    let balance = coin.my_spendable_balance().compat().await?;
+    if balance < big_decimal_from_sat(req.amount_in_sat as i64, coin.decimals()) {
+        return MmError::err(OpenChannelError::BalanceError(format!(
+            "Not enough balance to open channel, Current balance: {}",
+            balance
+        )));
+    }
+
     let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
 
     {
@@ -198,25 +224,30 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
         save_node_data_to_file(&nodes_data_path(&ctx), &req.node_id)?;
     }
 
+    // Helps in tracking which FundingGenerationReady events corresponds to which open_channel call
+    let request_id = REQUEST_IDX.fetch_add(1, Ordering::Relaxed);
+
+    {
+        let mut funding_tx_params = lightning_ctx.funding_tx_params.lock().await;
+        funding_tx_params.insert(request_id, (req.fee, req.max));
+    }
+
     let temporary_channel_id = {
         let channel_managers = lightning_ctx.channel_managers.lock().await;
         let channel_manager = channel_managers
             .get(&req.coin)
             .ok_or(ConnectToNodeError::LightningNotEnabled(req.coin))?;
-        // TODO: Check if there is enough balance to open a channel. Here a check for if the balance > amount_in_sat is enough
-        // and when generating the actual funding transaction a check for fees should be done. ()
         open_ln_channel(
             node_pubkey,
             req.amount_in_sat,
-            req.request_id,
+            request_id,
             req.announce_channel,
             channel_manager.clone(),
         )?
     };
 
-    // TODO: What about if the funding transaction failed? Maybe I can use wait for log here for now?? or maybe use a mpsc::channel??
     Ok(format!(
-        "Initiated opening channel with temporary ID {:?} with node {}",
-        temporary_channel_id, req.node_id
+        "Initiated opening channel with temporary ID {:?} with node {} and request id {}",
+        temporary_channel_id, req.node_id, request_id
     ))
 }

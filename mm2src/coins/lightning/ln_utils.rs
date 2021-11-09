@@ -1,9 +1,9 @@
 use super::*;
 use crate::utxo::rpc_clients::{BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient, ElectrumNonce,
                                UtxoRpcClientOps};
-use crate::utxo::utxo_common::{big_decimal_from_sat, withdraw};
+use crate::utxo::utxo_common::big_decimal_from_sat;
 use crate::utxo::utxo_standard::UtxoStandardCoin;
-use crate::{MarketCoinOps, WithdrawError, WithdrawRequest};
+use crate::{MarketCoinOps, MmCoin, WithdrawError, WithdrawFee, WithdrawRequest};
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::script::Script;
@@ -37,6 +37,7 @@ use lightning_persister::FilesystemPersister;
 use primitives::hash::H256;
 use rand::RngCore;
 use secp256k1::PublicKey;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
@@ -56,7 +57,7 @@ type ChainMonitor = chainmonitor::ChainMonitor<
     InMemorySigner,
     Arc<UtxoStandardCoin>,
     Arc<ElectrumClient>,
-    Arc<ElectrumClient>,
+    Arc<UtxoStandardCoin>,
     Arc<LogState>,
     Arc<FilesystemPersister>,
 >;
@@ -66,7 +67,7 @@ type ChannelManager = channelmanager::ChannelManager<
     Arc<ChainMonitor>,
     Arc<ElectrumClient>,
     Arc<KeysManager>,
-    Arc<ElectrumClient>,
+    Arc<UtxoStandardCoin>,
     Arc<LogState>,
 >;
 
@@ -74,12 +75,12 @@ type PeerManager = SimpleArcPeerManager<
     SocketDescriptor,
     ChainMonitor,
     ElectrumClient,
-    ElectrumClient,
+    UtxoStandardCoin,
     dyn Access + Send + Sync,
     LogState,
 >;
 
-type SimpleChannelManager = SimpleArcChannelManager<ChainMonitor, ElectrumClient, ElectrumClient, LogState>;
+type SimpleChannelManager = SimpleArcChannelManager<ChainMonitor, ElectrumClient, UtxoStandardCoin, LogState>;
 
 #[derive(Default)]
 pub struct LightningContext {
@@ -90,6 +91,8 @@ pub struct LightningContext {
     /// The lightning nodes channel managers which keep track of the number of open channels and sends messages to the appropriate
     /// channel, also tracks HTLC preimages and forwards onion packets appropriately.
     pub channel_managers: AsyncMutex<HashMap<String, Arc<ChannelManager>>>,
+    /// Keeps Track of the withdraw fee and if to withdraw the maximum amount for the funding transaction.
+    pub funding_tx_params: AsyncMutex<HashMap<u64, (Option<WithdrawFee>, bool)>>,
 }
 
 impl LightningContext {
@@ -171,9 +174,9 @@ pub fn nodes_data_path(ctx: &MmArc) -> PathBuf { my_ln_data_dir(ctx).join("chann
 
 // TODO: Implement all the cases
 async fn handle_ln_events(
+    ctx: MmArc,
     event: &Event,
     channel_manager: Arc<ChannelManager>,
-    network: Network,
     coin: Arc<UtxoStandardCoin>,
 ) {
     match event.clone() {
@@ -184,11 +187,10 @@ async fn handle_ln_events(
             user_channel_id,
         } => {
             let funding_tx = match generate_funding_transaction(
-                temporary_channel_id,
+                ctx,
                 channel_value_satoshis,
                 output_script.clone(),
                 user_channel_id,
-                network,
                 coin.clone(),
             )
             .await
@@ -200,9 +202,7 @@ async fn handle_ln_events(
                         temporary_channel_id,
                         e.to_string()
                     );
-                    // TODO: When the task management feature is merged maybe I can return a failed status with the transaction hex to be broadcasted when
-                    // the reason for failure is resolved (e.g. not enough balance due to other withdraws before broadcasting the funding transaction,
-                    // the transaction can be broadcasted again when the balance is enough)
+                    // If the transaction fails, it will be unconfirmed in process_txs_confirmations and LDK will try to broadcast it again
                     return;
                 },
             };
@@ -243,7 +243,7 @@ async fn handle_ln_events(
     }
 }
 
-pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: LightningConf) -> EnableLightningResult<()> {
+pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: LightningConf) -> EnableLightningResult<()> {
     let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
     let ticker = coin.ticker().to_string();
 
@@ -255,7 +255,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
     }
 
     // Initialize the FeeEstimator. rpc_client implements the FeeEstimator trait, so it'll act as our fee estimator.
-    let fee_estimator = Arc::new(conf.rpc_client.clone());
+    let fee_estimator = Arc::new(coin.clone());
 
     // Initialize the Logger
     let logger = ctx.log.clone();
@@ -265,7 +265,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
     let broadcaster = Arc::new(conf.rpc_client.clone());
 
     // Initialize Persist
-    let ln_data_dir = my_ln_data_dir(ctx)
+    let ln_data_dir = my_ln_data_dir(&ctx)
         .as_path()
         .to_str()
         .ok_or("Data dir is a non-UTF-8 string")
@@ -328,7 +328,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
 
     let mut restarting_node = true;
     let network = conf.network;
-    // TODO: use channel_manager_blockhash to know where to start looking for outputs from
+    // TODO: channel_manager_blockhash will be used when implementing lightning for Native Client
     let (_channel_manager_blockhash, channel_manager) = {
         if let Ok(mut f) = File::open(format!("{}/manager", ln_data_dir.clone())) {
             let mut channel_monitor_mut_references = Vec::new();
@@ -438,11 +438,12 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
     // TODO: Implement EventHandler trait instead of this
     let handle = tokio::runtime::Handle::current();
     let channel_manager_event_listener = channel_manager.clone();
+    let event_handler_ctx = ctx.clone();
     let event_handler = move |event: &Event| {
         handle.block_on(handle_ln_events(
+            event_handler_ctx.clone(),
             event,
             channel_manager_event_listener.clone(),
-            network,
             filter.clone().unwrap(),
         ))
     };
@@ -470,7 +471,7 @@ pub async fn start_lightning(ctx: &MmArc, coin: UtxoStandardCoin, conf: Lightnin
 
     // If node is restarting read other nodes data from disk and reconnect to channel nodes/peers if possible.
     if restarting_node {
-        let mut nodes_data = read_nodes_data_from_file(&nodes_data_path(ctx))?;
+        let mut nodes_data = read_nodes_data_from_file(&nodes_data_path(&ctx))?;
         for (pubkey, node_addr) in nodes_data.drain() {
             for chan_info in channel_manager.list_channels() {
                 if pubkey == chan_info.counterparty.node_id {
@@ -552,6 +553,16 @@ impl ConfirmedTransactionInfo {
     }
 }
 
+// Used to order 2 transactions if one spends the other by the spent transaction first
+fn cmp_txs_for_spending(spent_tx: &Transaction, spending_tx: &Transaction) -> Ordering {
+    for tx_in in &spending_tx.input {
+        if spent_tx.txid() == tx_in.previous_output.txid {
+            return Ordering::Less;
+        }
+    }
+    Ordering::Equal
+}
+
 async fn process_txs_confirmations(
     filter: Arc<UtxoStandardCoin>,
     client: ElectrumClient,
@@ -588,16 +599,13 @@ async fn process_txs_confirmations(
             .is_err()
         {
             // If it's a connection error this will try to broadcast an already successfully broadcasted transaction
-            // which will be rejected, causing no problems and the transaction will be confirmed at with  transactions_confirmed
+            // which will be rejected, causing no problems and the transaction will be confirmed with transactions_confirmed
             // later anyways
             chain_monitor.transaction_unconfirmed(&txid);
         }
     }
 
     let mut ln_registry = filter.as_ref().as_ref().ln_registry.lock().await;
-    // TODO: Get the results in a vec then call transactions_confirmed for each header tx_list
-    // also order results to call transactions_confirmed by headers/other required order
-    // TODO: loop through ln_registry.registered_outputs also
     let mut transactions_to_confirm = Vec::new();
     for (txid, scripts) in ln_registry.registered_txs.clone() {
         match filter
@@ -657,8 +665,9 @@ async fn process_txs_confirmations(
         }
     }
 
-    // TODO: sort also for if a transaction on a block spends an output of a transaction on the same block
     transactions_to_confirm.sort_by(|a, b| a.height.cmp(&b.height));
+    // If a transaction spends another in the same block, the spent transaction should be confirmed first
+    transactions_to_confirm.sort_by(|a, b| cmp_txs_for_spending(&a.transaction, &b.transaction));
 
     for confirmed_transaction_info in transactions_to_confirm {
         channel_manager.transactions_confirmed(
@@ -971,7 +980,6 @@ pub fn open_ln_channel(
     user_config.channel_options.announced_channel = announce_channel;
 
     // TODO: push_msat parameter
-    // TODO: check balance before opening channel and also prevent withdraws until transaction is broadcasted
     channel_manager
         .create_channel(node_pubkey, amount_in_sat, 0, events_id, Some(user_config))
         .map_to_mm(|e| OpenChannelError::FailureToOpenChannel(node_pubkey.to_string(), format!("{:?}", e)))
@@ -979,11 +987,10 @@ pub fn open_ln_channel(
 
 // Generates the raw funding transaction with one output equal to the channel value.
 async fn generate_funding_transaction(
-    _temporary_channel_id: [u8; 32],
+    ctx: MmArc,
     channel_value_satoshis: u64,
     output_script: Script,
-    _user_channel_id: u64,
-    _network: Network,
+    user_channel_id: u64,
     coin: Arc<UtxoStandardCoin>,
 ) -> Result<Transaction, WithdrawError> {
     let utxo_coin = coin.as_ref().as_ref();
@@ -996,11 +1003,16 @@ async fn generate_funding_transaction(
             .expect("Coin should have a bech32_hrp"),
     )
     .to_string();
-    // TODO: find a way to use max in the withdraw request
-    // TODO: add WithdrawFee to the open_channel request to use with new_with_amount (will need to be passed in the context)
     let amount = big_decimal_from_sat(channel_value_satoshis as i64, utxo_coin.decimals);
-    let withdraw_req = WithdrawRequest::new_with_amount(utxo_coin.conf.ticker.clone(), addr, amount);
-    let transaction_details = match withdraw(coin.as_ref().clone(), withdraw_req).await {
+
+    let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
+    let (fee, max) = {
+        let mut funding_tx_params = lightning_ctx.funding_tx_params.lock().await;
+        funding_tx_params.remove(&user_channel_id).unwrap_or((None, false))
+    };
+
+    let withdraw_req = WithdrawRequest::new(utxo_coin.conf.ticker.clone(), addr, amount, max, fee);
+    let transaction_details = match coin.withdraw(withdraw_req).compat().await {
         Ok(tx) => tx,
         Err(e) => return Err(e.into_inner()),
     };

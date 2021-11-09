@@ -437,13 +437,13 @@ pub struct WithdrawRequest {
 }
 
 impl WithdrawRequest {
-    pub fn new_with_amount(coin: String, to: String, amount: BigDecimal) -> WithdrawRequest {
+    pub fn new(coin: String, to: String, amount: BigDecimal, max: bool, fee: Option<WithdrawFee>) -> WithdrawRequest {
         WithdrawRequest {
             coin,
             to,
             amount,
-            max: false,
-            fee: None,
+            max,
+            fee,
         }
     }
 

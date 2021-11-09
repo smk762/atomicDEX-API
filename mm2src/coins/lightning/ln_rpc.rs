@@ -1,6 +1,8 @@
-use crate::utxo::rpc_clients::{electrum_script_hash, ElectrumClient, UtxoRpcClientEnum, UtxoRpcClientOps};
+use crate::utxo::rpc_clients::{electrum_script_hash, ElectrumClient, EstimateFeeMethod, UtxoRpcClientEnum,
+                               UtxoRpcClientOps};
 use crate::utxo::utxo_common;
 use crate::utxo::utxo_standard::UtxoStandardCoin;
+use crate::MmCoin;
 #[cfg(not(target_arch = "wasm32"))]
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::script::Script;
@@ -15,18 +17,41 @@ use lightning::chain::{chaininterface::{BroadcasterInterface, ConfirmationTarget
                        Filter, WatchedOutput};
 use rpc::v1::types::Bytes as BytesJson;
 
-impl FeeEstimator for ElectrumClient {
+impl FeeEstimator for UtxoStandardCoin {
     // Gets estimated satoshis of fee required per 1000 Weight-Units.
-    // TODO: use fn estimate_fee instead of fixed number when starting work on opening channels
     fn get_est_sat_per_1000_weight(&self, confirmation_target: ConfirmationTarget) -> u32 {
-        match confirmation_target {
+        let conf = &self.as_ref().conf;
+        // TODO: Maybe default_fee and confirmation targets can be set in coin configs or lightning configs (would require to move lightning config to coin config) instead
+        let default_fee = match confirmation_target {
             // fetch background feerate
             ConfirmationTarget::Background => 253,
             // fetch normal feerate (~6 blocks)
             ConfirmationTarget::Normal => 2000,
             // fetch high priority feerate
             ConfirmationTarget::HighPriority => 5000,
-        }
+        } * 4;
+
+        let n_blocks = match confirmation_target {
+            // fetch background feerate
+            ConfirmationTarget::Background => 12,
+            // fetch normal feerate (~6 blocks)
+            ConfirmationTarget::Normal => 6,
+            // fetch high priority feerate
+            ConfirmationTarget::HighPriority => 1,
+        };
+        let fee_per_kb = block_on(
+            self.as_ref()
+                .rpc_client
+                .estimate_fee_sat(
+                    self.decimals(),
+                    &EstimateFeeMethod::SmartFee,
+                    &conf.estimate_fee_mode,
+                    n_blocks,
+                )
+                .compat(),
+        )
+        .unwrap_or(default_fee);
+        (fee_per_kb as f64 / 4.0).ceil() as u32
     }
 }
 
