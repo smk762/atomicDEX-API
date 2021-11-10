@@ -1,6 +1,6 @@
 //! This file is inspired by https://github.com/tezedge/tezedge-client/blob/master/trezor_api/src/client.rs
 
-use crate::coins::TrezorCoin;
+use crate::constants::TrezorCoin;
 use crate::error::OperationFailure;
 use crate::proto::messages::MessageType;
 use crate::proto::messages_bitcoin as proto_bitcoin;
@@ -9,19 +9,12 @@ use crate::proto::messages_management as proto_management;
 use crate::proto::{ProtoMessage, TrezorMessage};
 use crate::response::TrezorResponse;
 use crate::transport::Transport;
-use crate::{TrezorError, TrezorResult};
+use crate::{ecdsa_curve_to_string, serialize_derivation_path, TrezorError, TrezorResult};
 use common::mm_error::prelude::*;
 use futures::lock::Mutex as AsyncMutex;
 use hw_common::primitives::{DerivationPath, EcdsaCurve};
 use std::ops::Deref;
 use std::sync::Arc;
-
-fn serialize_derivation_path(path: &DerivationPath) -> Vec<u32> { path.iter().map(|index| index.0).collect() }
-fn ecdsa_curve_to_string(curve: EcdsaCurve) -> String {
-    match curve {
-        EcdsaCurve::Secp256k1 => "secp256k1".to_owned(),
-    }
-}
 
 /// Function to be passed to the [`TrezorClient::call`] method
 /// to process the Trezor response message into a general-purpose type.

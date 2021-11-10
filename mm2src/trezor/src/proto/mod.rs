@@ -83,3 +83,12 @@ trezor_message_impl!(GetAddress, MessageType_GetAddress);
 trezor_message_impl!(Address, MessageType_Address);
 trezor_message_impl!(GetPublicKey, MessageType_GetPublicKey);
 trezor_message_impl!(PublicKey, MessageType_PublicKey);
+trezor_message_impl!(SignTx, MessageType_SignTx);
+trezor_message_impl!(TxRequest, MessageType_TxRequest);
+
+// Bitcoin (compatible)
+trezor_message_impl!(TxAckOutput, MessageType_TxAck);
+trezor_message_impl!(TxAckInput, MessageType_TxAck);
+trezor_message_impl!(TxAckPrevMeta, MessageType_TxAck);
+trezor_message_impl!(TxAckPrevInput, MessageType_TxAck);
+trezor_message_impl!(TxAckPrevOutput, MessageType_TxAck);

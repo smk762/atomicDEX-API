@@ -3,7 +3,7 @@ use derive_more::Display;
 use trezor::{ButtonRequest, PinMatrixRequest, TrezorClient, TrezorError, TrezorResponse};
 
 pub use hw_common::primitives::{DerivationPath, EcdsaCurve};
-use trezor::coins::TrezorCoin;
+use trezor::constants::TrezorCoin;
 pub use trezor::TrezorUserInteraction;
 
 pub type HwResult<T> = Result<T, MmError<HwError>>;
@@ -68,6 +68,23 @@ impl<T> From<TrezorResponse<T>> for HwResponse<T> {
     }
 }
 
+impl<T: 'static> HwResponse<T> {
+    /// Agrees to wait for all `HW button press` requests and returns final `Result`.
+    ///
+    /// # Error
+    ///
+    /// Will error if it receives requests, which require input like: `PinMatrixRequest`.
+    pub async fn ack_all(self) -> HwResult<T> {
+        match self {
+            HwResponse::Ok(t) => Ok(t),
+            HwResponse::Delayed(HwDelayedResponse::TrezorButtonRequest(button)) => Ok(button.ack_all().await?),
+            HwResponse::Delayed(HwDelayedResponse::TrezorPinMatrixRequest(_pin)) => MmError::err(
+                HwError::UnexpectedUserInteractionRequest(TrezorUserInteraction::PinMatrix3x3),
+            ),
+        }
+    }
+}
+
 /// TODO remove it on the next iteration.
 /// I'm planning to remove the `HwClient` abstraction since different devices may have different API and coins.
 #[derive(Debug)]
@@ -85,6 +102,7 @@ impl From<HwCoin> for TrezorCoin {
     }
 }
 
+#[derive(Clone)]
 pub enum HwClient {
     Trezor(TrezorClient),
 }
@@ -117,6 +135,15 @@ impl HwClient {
         let transport = device.connect()?;
         let trezor = TrezorClient::init(transport).await?;
         Ok(HwClient::Trezor(trezor))
+    }
+
+    pub async fn get_utxo_address(&self, path: &DerivationPath, coin: HwCoin) -> HwResult<HwResponse<String>> {
+        match self {
+            HwClient::Trezor(trezor) => {
+                let response = trezor.get_utxo_address(path, TrezorCoin::from(coin)).await?;
+                Ok(HwResponse::from(response))
+            },
+        }
     }
 
     pub async fn get_public_key(
