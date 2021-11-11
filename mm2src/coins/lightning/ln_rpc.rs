@@ -1,8 +1,7 @@
-use crate::utxo::rpc_clients::{electrum_script_hash, ElectrumClient, EstimateFeeMethod, UtxoRpcClientEnum,
-                               UtxoRpcClientOps};
+use crate::utxo::rpc_clients::{electrum_script_hash, EstimateFeeMethod, UtxoRpcClientEnum, UtxoRpcClientOps};
 use crate::utxo::utxo_common;
 use crate::utxo::utxo_standard::UtxoStandardCoin;
-use crate::MmCoin;
+use crate::{MarketCoinOps, MmCoin};
 #[cfg(not(target_arch = "wasm32"))]
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::script::Script;
@@ -12,10 +11,8 @@ use bitcoin::hash_types::Txid;
 use common::executor::spawn;
 use common::{block_on, log};
 use futures::compat::Future01CompatExt;
-use hex::FromHex;
 use lightning::chain::{chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator},
                        Filter, WatchedOutput};
-use rpc::v1::types::Bytes as BytesJson;
 
 impl FeeEstimator for UtxoStandardCoin {
     // Gets estimated satoshis of fee required per 1000 Weight-Units.
@@ -55,14 +52,12 @@ impl FeeEstimator for UtxoStandardCoin {
     }
 }
 
-impl BroadcasterInterface for ElectrumClient {
+impl BroadcasterInterface for UtxoStandardCoin {
     fn broadcast_transaction(&self, tx: &Transaction) {
         let tx_hex = encode::serialize_hex(tx);
-        let tx_bytes =
-            BytesJson::new(Vec::from_hex(tx_hex.clone()).expect("Transaction serialization should not fail!"));
         log::debug!("Trying to broadcast transaction: {}", tx_hex);
         let tx_id = tx.txid();
-        let fut = self.blockchain_transaction_broadcast(tx_bytes);
+        let fut = self.send_raw_tx(&tx_hex);
         spawn(async move {
             match fut.compat().await {
                 Ok(id) => log::info!("Transaction broadcasted successfully: {:?} ", id),

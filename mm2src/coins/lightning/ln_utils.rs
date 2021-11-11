@@ -1,6 +1,6 @@
 use super::*;
-use crate::utxo::rpc_clients::{BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient, ElectrumNonce,
-                               UtxoRpcClientOps};
+use crate::utxo::rpc_clients::{electrum_script_hash, BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient,
+                               ElectrumNonce};
 use crate::utxo::utxo_common::big_decimal_from_sat;
 use crate::utxo::utxo_standard::UtxoStandardCoin;
 use crate::{MarketCoinOps, MmCoin, WithdrawError, WithdrawFee, WithdrawRequest};
@@ -34,8 +34,8 @@ use lightning::util::ser::ReadableArgs;
 use lightning_background_processor::BackgroundProcessor;
 use lightning_net_tokio::SocketDescriptor;
 use lightning_persister::FilesystemPersister;
-use primitives::hash::H256;
 use rand::RngCore;
+use rpc::v1::types::H256;
 use secp256k1::PublicKey;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -56,31 +56,22 @@ const TRY_RECONNECTING_TO_NODE_INTERVAL: u64 = 60;
 type ChainMonitor = chainmonitor::ChainMonitor<
     InMemorySigner,
     Arc<UtxoStandardCoin>,
-    Arc<ElectrumClient>,
+    Arc<UtxoStandardCoin>,
     Arc<UtxoStandardCoin>,
     Arc<LogState>,
     Arc<FilesystemPersister>,
 >;
 
-type ChannelManager = channelmanager::ChannelManager<
-    InMemorySigner,
-    Arc<ChainMonitor>,
-    Arc<ElectrumClient>,
-    Arc<KeysManager>,
-    Arc<UtxoStandardCoin>,
-    Arc<LogState>,
->;
+type ChannelManager = SimpleArcChannelManager<ChainMonitor, UtxoStandardCoin, UtxoStandardCoin, LogState>;
 
 type PeerManager = SimpleArcPeerManager<
     SocketDescriptor,
     ChainMonitor,
-    ElectrumClient,
+    UtxoStandardCoin,
     UtxoStandardCoin,
     dyn Access + Send + Sync,
     LogState,
 >;
-
-type SimpleChannelManager = SimpleArcChannelManager<ChainMonitor, ElectrumClient, UtxoStandardCoin, LogState>;
 
 #[derive(Default)]
 pub struct LightningContext {
@@ -107,6 +98,8 @@ impl LightningContext {
 #[derive(Debug)]
 pub struct LightningConf {
     /// RPC client (Using only electrum for now as part of the PoC)
+    /// This will be removed when Lightning is implemented for NativeClient and UtxoStandardCoin will be used instead
+    /// Any code that uses conf.rpc_client will have a different implementation for NativeClient in the future
     pub rpc_client: ElectrumClient,
     // Mainnet/Testnet/Signet/RegTest
     pub network: Network,
@@ -202,7 +195,8 @@ async fn handle_ln_events(
                         temporary_channel_id,
                         e.to_string()
                     );
-                    // If the transaction fails, it will be unconfirmed in process_txs_confirmations and LDK will try to broadcast it again
+                    // TODO: use issue_channel_close_events here when implementing channel closure this will push a Event::DiscardFunding
+                    // event for the other peer
                     return;
                 },
             };
@@ -229,6 +223,7 @@ async fn handle_ln_events(
                         script_pubkey: output_script,
                     });
                 },
+                // When transaction is unconfirmed by process_txs_confirmations LDK will try to rebroadcast the tx
                 Err(e) => log::error!("{:?}", e),
             }
         },
@@ -254,15 +249,15 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
         }
     }
 
-    // Initialize the FeeEstimator. rpc_client implements the FeeEstimator trait, so it'll act as our fee estimator.
+    // Initialize the FeeEstimator. UtxoStandardCoin implements the FeeEstimator trait, so it'll act as our fee estimator.
     let fee_estimator = Arc::new(coin.clone());
 
     // Initialize the Logger
     let logger = ctx.log.clone();
 
-    // Initialize the BroadcasterInterface. rpc_client implements the BroadcasterInterface trait, so it'll act as our transaction
+    // Initialize the BroadcasterInterface. UtxoStandardCoin implements the BroadcasterInterface trait, so it'll act as our transaction
     // broadcaster.
-    let broadcaster = Arc::new(conf.rpc_client.clone());
+    let broadcaster = Arc::new(coin.clone());
 
     // Initialize Persist
     let ln_data_dir = my_ln_data_dir(&ctx)
@@ -273,7 +268,7 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
         .to_string();
     let persister = Arc::new(FilesystemPersister::new(ln_data_dir.clone()));
 
-    // Initialize the Filter. rpc_client implements the Filter trait, so it'll act as our filter.
+    // Initialize the Filter. UtxoStandardCoin implements the Filter trait, so it'll act as our filter.
     let filter = Some(Arc::new(coin.clone()));
 
     // Initialize the ChainMonitor
@@ -312,13 +307,6 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
         }
     }
 
-    let best_block = conf
-        .rpc_client
-        .get_best_block()
-        .compat()
-        .await
-        .mm_err(|e| EnableLightningError::RpcError(e.to_string()))?;
-
     let mut user_config = UserConfig::default();
     // When set to false an incoming channel doesn't have to match our announced channel preference which allows public channels
     // TODO: Add user config to LightningConf maybe get it from coin config / also add to lightning context
@@ -328,8 +316,12 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
 
     let mut restarting_node = true;
     let network = conf.network;
-    // TODO: channel_manager_blockhash will be used when implementing lightning for Native Client
-    let (_channel_manager_blockhash, channel_manager) = {
+    let best_header = get_best_header(conf.rpc_client.clone()).await?;
+    let best_block = RpcBestBlock::from(best_header.clone());
+    let best_block_hash = BlockHash::from_hash(
+        sha256d::Hash::from_slice(&best_block.hash.0).map_to_mm(|e| EnableLightningError::HashError(e.to_string()))?,
+    );
+    let (channel_manager_blockhash, channel_manager) = {
         if let Ok(mut f) = File::open(format!("{}/manager", ln_data_dir.clone())) {
             let mut channel_monitor_mut_references = Vec::new();
             for (_, channel_monitor) in channelmonitors.iter_mut() {
@@ -345,16 +337,14 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
                 user_config,
                 channel_monitor_mut_references,
             );
-            <(BlockHash, SimpleChannelManager)>::read(&mut f, read_args)
+            <(BlockHash, ChannelManager)>::read(&mut f, read_args)
                 .map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?
         } else {
             // Initialize the ChannelManager to starting a new node without history
             restarting_node = false;
-            let best_block_hash = sha256d::Hash::from_slice(&best_block.hash.0)
-                .map_to_mm(|e| EnableLightningError::HashError(e.to_string()))?;
             let chain_params = ChainParameters {
                 network,
-                best_block: BestBlock::new(BlockHash::from_hash(best_block_hash), best_block.height as u32),
+                best_block: BestBlock::new(best_block_hash, best_block.height as u32),
             };
             let new_channel_manager = channelmanager::ChannelManager::new(
                 fee_estimator.clone(),
@@ -365,23 +355,22 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
                 user_config,
                 chain_params,
             );
-            (BlockHash::from_hash(best_block_hash), new_channel_manager)
+            (best_block_hash, new_channel_manager)
         }
     };
 
     let channel_manager: Arc<ChannelManager> = Arc::new(channel_manager);
 
     // Sync ChannelMonitors and ChannelManager to chain tip if the node is restarting and has open channels
-    if restarting_node {
+    if restarting_node && channel_manager_blockhash != best_block_hash {
         process_txs_confirmations(
             filter.clone().unwrap().clone(),
             conf.rpc_client.clone(),
             chain_monitor.clone(),
             channel_manager.clone(),
-            best_block.height,
+            best_header.block_height(),
         )
         .await;
-        let best_header = get_best_header(conf.rpc_client.clone()).await?;
         update_best_block(chain_monitor.clone(), channel_manager.clone(), best_header).await;
     }
 
@@ -450,8 +439,11 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
 
     // Persist ChannelManager
     // Note: if the ChannelManager is not persisted properly to disk, there is risk of channels force closing the next time LN starts up
+    // TODO: for some reason the persister doesn't persist the current best block when best_block_updated is called although it does
+    // persist the channel_manager which should have the current best block in it, when other operations that requires persisting occurs
+    // The current best block get persisted
     let persist_channel_manager_callback =
-        move |node: &SimpleChannelManager| FilesystemPersister::persist_manager(ln_data_dir.clone(), &*node);
+        move |node: &ChannelManager| FilesystemPersister::persist_manager(ln_data_dir.clone(), &*node);
 
     // Start Background Processing. Runs tasks periodically in the background to keep LN node operational
     let background_processor = BackgroundProcessor::start(
@@ -579,11 +571,14 @@ async fn process_txs_confirmations(
             .as_ref()
             .as_ref()
             .rpc_client
-            .get_transaction_bytes(txid.as_hash().into_inner().into())
+            .get_transaction_bytes(H256::from(txid.as_hash().into_inner()).reversed())
             .compat()
             .await
             .is_err()
         {
+            // If it's a connection error this will try to broadcast an already successfully broadcasted transaction
+            // which will be rejected, causing no problems and the transaction will be confirmed with transactions_confirmed
+            // later anyways
             channel_manager.transaction_unconfirmed(&txid);
         }
     }
@@ -593,14 +588,11 @@ async fn process_txs_confirmations(
             .as_ref()
             .as_ref()
             .rpc_client
-            .get_transaction_bytes(txid.as_hash().into_inner().into())
+            .get_transaction_bytes(H256::from(txid.as_hash().into_inner()).reversed())
             .compat()
             .await
             .is_err()
         {
-            // If it's a connection error this will try to broadcast an already successfully broadcasted transaction
-            // which will be rejected, causing no problems and the transaction will be confirmed with transactions_confirmed
-            // later anyways
             chain_monitor.transaction_unconfirmed(&txid);
         }
     }
@@ -612,37 +604,47 @@ async fn process_txs_confirmations(
             .as_ref()
             .as_ref()
             .rpc_client
-            .get_verbose_transaction(&H256::from(txid.as_hash().into_inner()).reversed().into())
+            .get_transaction_bytes(H256::from(txid.as_hash().into_inner()).reversed())
             .compat()
             .await
         {
-            Ok(tx) => {
-                // TODO: find a better way to get the block height as there might be a new mined block after passing current_height and before calling get_verbose_transaction
-                // this will make transaction confirmed after 5 confirmations instead of 6 in LDK which should not be a big problem
-                // but might causes a problem with match client.blockchain_block_header(tx_block_height).compat().await
-                // this will happen only on restart also not while node is running
-                // check for new height here maybe as a solution?
-                let tx_block_height = current_height - tx.confirmations as u64 + 1;
-                match client.blockchain_block_header(tx_block_height).compat().await {
-                    Ok(h) => {
-                        let header = deserialize(&h).expect("Can't deserialize block header");
-                        let transaction: Transaction =
-                            deserialize(&tx.hex.clone().into_vec()).expect("Can't deserialize transaction");
-                        for (index, vout) in transaction.output.iter().enumerate() {
-                            if scripts.contains(&vout.script_pubkey) {
-                                let confirmed_transaction_info = ConfirmedTransactionInfo::new(
-                                    txid,
-                                    header,
-                                    index,
-                                    transaction.clone(),
-                                    tx_block_height as u32,
-                                );
-                                transactions_to_confirm.push(confirmed_transaction_info);
-                                ln_registry.registered_txs.remove(&txid);
+            Ok(bytes) => {
+                let transaction: Transaction = deserialize(&bytes.into_vec()).expect("Can't deserialize transaction");
+                for (index, vout) in transaction.output.iter().enumerate() {
+                    if scripts.contains(&vout.script_pubkey) {
+                        let script_hash = hex::encode(electrum_script_hash(vout.script_pubkey.as_ref()));
+                        let history = client
+                            .scripthash_get_history(&script_hash)
+                            .compat()
+                            .await
+                            .unwrap_or_default();
+                        for item in history {
+                            if item.tx_hash == H256::from(txid.as_hash().into_inner()).reversed() {
+                                // If a new block mined the transaction while running process_txs_confirmations it will be confirmed later in ln_best_block_update_loop
+                                if item.height > 0 && item.height <= current_height as i64 {
+                                    let header = match client
+                                        .blockchain_block_header(
+                                            item.height.try_into().expect("Convertion to u64 should not fail"),
+                                        )
+                                        .compat()
+                                        .await
+                                    {
+                                        Ok(h) => deserialize(&h).expect("Can't deserialize block header"),
+                                        Err(_) => continue,
+                                    };
+                                    let confirmed_transaction_info = ConfirmedTransactionInfo::new(
+                                        txid,
+                                        header,
+                                        index,
+                                        transaction.clone(),
+                                        item.height.try_into().expect("Convertion to u32 should not fail"),
+                                    );
+                                    transactions_to_confirm.push(confirmed_transaction_info);
+                                    ln_registry.registered_txs.remove(&txid);
+                                }
                             }
                         }
-                    },
-                    Err(_) => continue,
+                    }
                 }
             },
             Err(e) => {
@@ -653,7 +655,6 @@ async fn process_txs_confirmations(
     }
 
     for output in ln_registry.registered_outputs.clone() {
-        // TODO: add another struct for this in ln_rpc
         let result = ln_rpc::find_watched_output_spend_with_header(&filter.as_ref(), output.0.clone()).await;
         if let Some((header, index, tx, height)) = result {
             if !transactions_to_confirm.iter().any(|info| info.txid == tx.txid()) {

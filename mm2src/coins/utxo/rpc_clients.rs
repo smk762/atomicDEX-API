@@ -243,8 +243,6 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
 
     fn get_block_count(&self) -> UtxoRpcFut<u64>;
 
-    fn get_best_block(&self) -> UtxoRpcFut<BestBlock>;
-
     fn display_balance(&self, address: Address, decimals: u8) -> RpcRes<BigDecimal>;
 
     /// returns fee estimation per KByte in satoshis
@@ -627,8 +625,6 @@ impl UtxoRpcClientOps for NativeClient {
     fn get_block_count(&self) -> UtxoRpcFut<u64> {
         Box::new(self.0.get_block_count().map_to_mm_fut(UtxoRpcError::from))
     }
-
-    fn get_best_block(&self) -> UtxoRpcFut<BestBlock> { unimplemented!() }
 
     fn display_balance(&self, address: Address, _decimals: u8) -> RpcRes<BigDecimal> {
         Box::new(
@@ -1635,14 +1631,6 @@ impl UtxoRpcClientOps for ElectrumClient {
         Box::new(
             self.blockchain_headers_subscribe()
                 .map(|r| r.block_height())
-                .map_to_mm_fut(UtxoRpcError::from),
-        )
-    }
-
-    fn get_best_block(&self) -> UtxoRpcFut<BestBlock> {
-        Box::new(
-            self.blockchain_headers_subscribe()
-                .map(BestBlock::from)
                 .map_to_mm_fut(UtxoRpcError::from),
         )
     }
