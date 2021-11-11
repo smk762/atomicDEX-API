@@ -1,6 +1,6 @@
 use super::*;
-use crate::{CanRefundHtlc, CoinBalance, NegotiateSwapContractAddrErr, SwapOps, TradePreimageValue,
-            ValidateAddressResult, WithdrawFut};
+use crate::{CanRefundHtlc, CoinBalance, CoinBalancesWithTokens, NegotiateSwapContractAddrErr, SwapOps,
+            TradePreimageValue, ValidateAddressResult, WithdrawFut};
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
 use futures::{FutureExt, TryFutureExt};
@@ -78,7 +78,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
     }
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<Address>, String> {
-        utxo_common::addresses_from_script(&self.utxo_arc, script)
+        utxo_common::addresses_from_script(self, script)
     }
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo_arc, satoshi) }
@@ -170,6 +170,10 @@ impl UtxoCommonOps for UtxoStandardCoin {
 
     async fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> Result<u32, MmError<UtxoRpcError>> {
         utxo_common::p2sh_tx_locktime(self, &self.utxo_arc.conf.ticker, htlc_locktime).await
+    }
+
+    fn addr_format_for_standard_scripts(&self) -> UtxoAddressFormat {
+        utxo_common::addr_format_for_standard_scripts(self)
     }
 }
 
@@ -393,6 +397,8 @@ impl MarketCoinOps for UtxoStandardCoin {
     fn my_address(&self) -> Result<String, String> { utxo_common::my_address(self) }
 
     fn my_balance(&self) -> BalanceFut<CoinBalance> { utxo_common::my_balance(&self.utxo_arc) }
+
+    fn get_balances_with_tokens(&self) -> BalanceFut<CoinBalancesWithTokens> { unimplemented!() }
 
     fn base_coin_balance(&self) -> BalanceFut<BigDecimal> { utxo_common::base_coin_balance(self) }
 

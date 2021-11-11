@@ -54,6 +54,7 @@ bytes = "0.4"
 chain = { path = "mm2src/mm2_bitcoin/chain" }
 cfg-if = "1.0"
 coins = { path = "mm2src/coins" }
+coins_activation = { path = "mm2src/coins_activation" }
 common = { path = "mm2src/common" }
 crc = "1.8"
 crc32fast = { version = "1.2", features = ["std", "nightly"] }
@@ -121,6 +122,7 @@ web-sys = { version = "0.3.4", features = ["console"] }
 dirs = { version = "1" }
 hyper = { version = "0.14.11", features = ["client", "http2", "server", "tcp"] }
 tokio = { version = "1.7", features = ["io-util", "rt-multi-thread", "net"] }
+futures-rustls = { version = "0.21.1" }
 
 [dev-dependencies]
 mocktopus = "0.7.0"
@@ -137,6 +139,7 @@ regex = "1"
 [workspace]
 members = [
     "mm2src/coins",
+    "mm2src/coins_activation",
     "mm2src/floodsub",
     "mm2src/mm2_bitcoin/crypto",
     "mm2src/mm2_bitcoin/chain",

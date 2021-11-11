@@ -37,6 +37,7 @@ pub use signature::{CompactSignature, Signature};
 use hash::{H160, H256};
 use lazy_static::lazy_static;
 use secp256k1::{Secp256k1, SignOnly, VerifyOnly};
+use std::fmt;
 
 /// 32 bytes long secret key
 pub type Secret = H256;
@@ -73,6 +74,15 @@ impl AddressHashEnum {
     pub fn is_address_hash(&self) -> bool { matches!(*self, AddressHashEnum::AddressHash(_)) }
 
     pub fn is_witness_script_hash(&self) -> bool { matches!(*self, AddressHashEnum::WitnessScriptHash(_)) }
+}
+
+impl fmt::Display for AddressHashEnum {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AddressHashEnum::AddressHash(h) => f.write_str(&h.to_string()),
+            AddressHashEnum::WitnessScriptHash(s) => f.write_str(&s.to_string()),
+        }
+    }
 }
 
 impl From<H160> for AddressHashEnum {
