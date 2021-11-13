@@ -9,9 +9,6 @@ use serde_json::{self as json, Value as Json};
 pub enum MmRpcVersion {
     #[serde(rename = "2.0")]
     V2,
-    /// Whether the protocol supports long-running tasks that support user interaction and status polling.
-    #[serde(rename = "2.0h")]
-    V2h,
 }
 
 #[derive(Deserialize)]

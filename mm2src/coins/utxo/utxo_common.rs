@@ -2,7 +2,7 @@ use super::*;
 use bigdecimal::{BigDecimal, Zero};
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
 use chain::constants::SEQUENCE_FINAL;
-use chain::{OutPoint, TransactionInput, TransactionOutput};
+use chain::{OutPoint, TransactionOutput};
 use common::executor::Timer;
 use common::jsonrpc_client::{JsonRpcError, JsonRpcErrorType};
 use common::log::{error, info, warn};
@@ -15,8 +15,7 @@ use futures::compat::Future01CompatExt;
 use futures::future::{FutureExt, TryFutureExt};
 use futures01::future::Either;
 use keys::bytes::Bytes;
-use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHash, KeyPair, Public, SegwitAddress,
-           Type as ScriptType};
+use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHash, Public, SegwitAddress, Type as ScriptType};
 use primitives::hash::H512;
 use rpc::v1::types::{Bytes as BytesJson, TransactionInputEnum, H256 as H256Json};
 use script::{Builder, Opcode, Script, ScriptAddress, SignatureVersion, TransactionInputSigner,
@@ -28,6 +27,7 @@ use std::cmp::Ordering;
 use std::collections::hash_map::{Entry, HashMap};
 use std::str::FromStr;
 use std::sync::atomic::Ordering as AtomicOrdering;
+use utxo_signer::with_key_pair::{p2sh_spend, sign_tx};
 
 pub use chain::Transaction as UtxoTx;
 
@@ -1533,8 +1533,7 @@ where
         prev_script,
         signature_version,
         coin.as_ref().conf.fork_id,
-    )
-    .map_to_mm(WithdrawError::InternalError)?;
+    )?;
 
     let fee_amount = data.fee_amount + data.unused_change.unwrap_or_default();
     let fee_details = UtxoFeeDetails {
@@ -2869,42 +2868,6 @@ pub fn dex_fee_script(uuid: [u8; 16], time_lock: u32, watcher_pub: &Public, send
         .push_opcode(Opcode::OP_CHECKSIG)
         .push_opcode(Opcode::OP_ENDIF)
         .into_script()
-}
-
-/// Creates signed input spending hash time locked p2sh output
-pub fn p2sh_spend(
-    signer: &TransactionInputSigner,
-    input_index: usize,
-    key_pair: &KeyPair,
-    script_data: Script,
-    redeem_script: Script,
-    signature_version: SignatureVersion,
-    fork_id: u32,
-) -> Result<TransactionInput, String> {
-    let sighash = signer.signature_hash(
-        input_index,
-        signer.inputs[input_index].amount,
-        &redeem_script,
-        signature_version,
-        1 | fork_id,
-    );
-
-    let sig = try_s!(script_sig(&sighash, key_pair, fork_id));
-
-    let mut resulting_script = Builder::default().push_data(&sig).into_bytes();
-    if !script_data.is_empty() {
-        resulting_script.extend_from_slice(&script_data);
-    }
-
-    let redeem_part = Builder::default().push_data(&redeem_script).into_bytes();
-    resulting_script.extend_from_slice(&redeem_part);
-
-    Ok(TransactionInput {
-        script_sig: resulting_script,
-        sequence: signer.inputs[input_index].sequence,
-        script_witness: vec![],
-        previous_output: signer.inputs[input_index].previous_output.clone(),
-    })
 }
 
 #[allow(clippy::needless_lifetimes)]

@@ -7,7 +7,7 @@ use crate::utxo::qtum::{contract_addr_from_utxo_addr, QtumBasedCoin, QtumCoin, Q
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use crate::utxo::utxo_common::{big_decimal_from_sat_unsigned, UtxoTxBuilder};
 use crate::utxo::UTXO_LOCK;
-use crate::utxo::{qtum, sign_tx, utxo_common, Address, UtxoCommonOps};
+use crate::utxo::{qtum, utxo_common, Address, UtxoCommonOps};
 use crate::{DelegationError, DelegationFut, DelegationResult, MarketCoinOps, StakingInfos, StakingInfosError,
             StakingInfosFut, StakingInfosResult, TransactionDetails, TransactionType};
 use bigdecimal::Zero;
@@ -25,6 +25,7 @@ use keys::{AddressHash, Signature};
 use script::Builder as ScriptBuilder;
 use serialization::serialize;
 use std::str::FromStr;
+use utxo_signer::with_key_pair::sign_tx;
 
 pub const QTUM_DELEGATION_STANDARD_FEE: u64 = 10;
 pub const QTUM_LOWER_BOUND_DELEGATION_AMOUNT: f64 = 100.0;
@@ -279,8 +280,7 @@ impl QtumCoin {
             prev_script,
             utxo.conf.signature_version,
             utxo.conf.fork_id,
-        )
-        .map_to_mm(DelegationError::InternalError)?;
+        )?;
 
         let miner_fee = data.fee_amount + data.unused_change.unwrap_or_default();
         let generated_tx = GenerateQrc20TxResult {

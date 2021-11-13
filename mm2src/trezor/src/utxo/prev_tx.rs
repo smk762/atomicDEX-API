@@ -62,7 +62,6 @@ impl PrevTxOutput {
 /// * expiry - only for Decred and Zcash
 /// * optional uint32 version_group_id = 12;  // only for Zcash, nVersionGroupId
 /// * timestamp - only for Peercoin
-/// * branch_id - only for Zcash, BRANCH_ID
 pub struct PrevTx {
     /// Transaction inputs.
     pub inputs: Vec<PrevTxInput>,
@@ -72,6 +71,12 @@ pub struct PrevTx {
     pub version: u32,
     /// Transaction lock_time.
     pub lock_time: u32,
+    /// only for Zcash, nVersionGroupId.
+    pub version_group_id: Option<u32>,
+    /// only for Zcash, BRANCH_ID.
+    pub branch_id: Option<u32>,
+    /// only for Zcash, BRANCH_ID.
+    pub extra_data: Vec<u8>,
 }
 
 impl PrevTx {
@@ -81,6 +86,13 @@ impl PrevTx {
         prev.set_lock_time(self.lock_time);
         prev.set_inputs_count(self.inputs.len() as u32);
         prev.set_outputs_count(self.outputs.len() as u32);
+        if let Some(version_group_id) = self.version_group_id {
+            prev.set_version_group_id(version_group_id);
+        }
+        if let Some(branch_id) = self.branch_id {
+            prev.set_branch_id(branch_id);
+        }
+        prev.set_extra_data_len(self.extra_data.len() as u32);
 
         let mut ack_prev_meta = proto_bitcoin::TxAckPrevMeta::default();
         ack_prev_meta.set_tx(prev);
@@ -113,5 +125,29 @@ impl PrevTx {
                 MmError::err(TrezorError::ProtocolError(error))
             },
         }
+    }
+
+    pub(crate) fn extra_data_message(
+        &self,
+        offset: usize,
+        len: usize,
+    ) -> TrezorResult<proto_bitcoin::TxAckPrevExtraData> {
+        if self.extra_data.len() < offset + len {
+            let error = format!(
+                "Unexpected extra-data request: actual len '{}', offset '{}', requested len '{}'",
+                self.extra_data.len(),
+                offset,
+                len
+            );
+            return MmError::err(TrezorError::ProtocolError(error));
+        }
+        let extra_data_chunk = self.extra_data[offset..offset + len].to_vec();
+
+        let mut wrapper = proto_bitcoin::TxAckPrevExtraData_TxAckPrevExtraDataWrapper::new();
+        wrapper.set_extra_data_chunk(extra_data_chunk);
+
+        let mut ack_extra_data = proto_bitcoin::TxAckPrevExtraData::new();
+        ack_extra_data.set_tx(wrapper);
+        Ok(ack_extra_data)
     }
 }

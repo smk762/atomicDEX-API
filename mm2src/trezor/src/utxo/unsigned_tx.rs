@@ -61,29 +61,32 @@ impl From<TrezorOutputScriptType> for proto_bitcoin::OutputScriptType {
 /// * decred_staking_spend - if not None this holds the type of stake spend: revocation or stake generation
 pub struct UnsignedTxInput {
     /// BIP-32 path to derive the key from master node.
-    address_derivation_path: DerivationPath,
+    /// TODO I guess this field shouldn't be set if the input script type is Multisig, for example.
+    pub address_derivation_path: Option<DerivationPath>,
     /// Info of previous transaction.
-    prev_tx: PrevTx,
+    pub prev_tx: PrevTx,
     /// Hash of previous transaction output to spend by this input.
-    prev_hash: Vec<u8>,
+    pub prev_hash: Vec<u8>,
     /// Index of previous output to spend.
-    prev_index: u32,
+    pub prev_index: u32,
     /// Sequence.
-    sequence: u32,
+    pub sequence: u32,
     /// Defines template of input script.
-    input_script_type: TrezorInputScriptType,
+    pub input_script_type: TrezorInputScriptType,
     /// Amount of previous transaction output.
-    amount: u64,
+    pub amount: u64,
 }
 
 impl UnsignedTxInput {
     fn to_proto(&self) -> proto_bitcoin::TxAckInput {
         let mut input = proto_bitcoin::TxInput::default();
-        input.set_address_n(serialize_derivation_path(&self.address_derivation_path));
+        if let Some(ref address_derivation_path) = self.address_derivation_path {
+            input.set_address_n(serialize_derivation_path(address_derivation_path));
+        }
         input.set_prev_hash(self.prev_hash.clone());
         input.set_prev_index(self.prev_index);
         input.set_sequence(self.sequence);
-        input.set_script_type(proto_bitcoin::InputScriptType::from(self.input_script_type));
+        input.set_script_type(self.input_script_type.into());
         input.set_amount(self.amount);
 
         let mut input_ack_wrapper = proto_bitcoin::TxAckInput_TxAckInputWrapper::default();
@@ -103,11 +106,11 @@ impl UnsignedTxInput {
 /// * orig_index - index of the output in the original transaction (used when creating a replacement transaction)
 pub struct TxOutput {
     /// Destination address in Base58 encoding; script_type must be PAYTOADDRESS.
-    address: String,
+    pub address: String,
     /// Amount to spend in satoshis.
-    amount: u64,
+    pub amount: u64,
     /// Output script type.
-    script_type: TrezorOutputScriptType,
+    pub script_type: TrezorOutputScriptType,
 }
 
 impl TxOutput {
@@ -131,8 +134,6 @@ impl TxOutput {
 /// * overwintered - deprecated in 2.3.2, the field is not needed as it can be derived from `version`.
 ///                  The main reason why it's ignored is that this can be requested asa extra data:
 ///                  https://docs.trezor.io/trezor-firmware/common/communication/bitcoin-signing.html#extra-data
-/// * version_group_id - only for Zcash, nVersionGroupId
-/// * branch_id - Only for Zcash, BRANCH_ID
 pub struct UnsignedUtxoTx {
     pub coin: TrezorCoin,
     /// Transaction inputs.
@@ -143,6 +144,10 @@ pub struct UnsignedUtxoTx {
     pub version: u32,
     /// Transaction lock_time.
     pub lock_time: u32,
+    /// only for Zcash, nVersionGroupId.
+    pub version_group_id: Option<u32>,
+    /// only for Zcash, BRANCH_ID.
+    pub branch_id: Option<u32>,
 }
 
 impl UnsignedUtxoTx {
@@ -153,6 +158,12 @@ impl UnsignedUtxoTx {
         input.set_outputs_count(self.outputs.len() as u32);
         input.set_version(self.version);
         input.set_lock_time(self.lock_time);
+        if let Some(version_group_id) = self.version_group_id {
+            input.set_version_group_id(version_group_id);
+        }
+        if let Some(branch_id) = self.branch_id {
+            input.set_branch_id(branch_id);
+        }
         input
     }
 

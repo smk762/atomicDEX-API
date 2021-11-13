@@ -786,6 +786,7 @@ dependencies = [
  "async-trait",
  "base64 0.10.1",
  "bigdecimal",
+ "bip32",
  "bitcoin",
  "bitcoin_hashes",
  "bitcrypto",
@@ -794,6 +795,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "chain",
  "common",
+ "crypto",
  "derive_more",
  "dirs",
  "ethabi",
@@ -842,6 +844,7 @@ dependencies = [
  "sha3",
  "tokio",
  "tokio-rustls",
+ "utxo_signer",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
@@ -5988,6 +5991,22 @@ dependencies = [
  "idna 0.2.0",
  "matches",
  "percent-encoding 2.1.0",
+]
+
+[[package]]
+name = "utxo_signer"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chain",
+ "common",
+ "crypto",
+ "derive_more",
+ "keys",
+ "primitives",
+ "rpc",
+ "script",
+ "serialization",
 ]
 
 [[package]]

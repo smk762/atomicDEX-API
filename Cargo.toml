@@ -142,6 +142,7 @@ regex = "1"
 [workspace]
 members = [
     "mm2src/coins",
+    "mm2src/coins/utxo_signer",
     "mm2src/crypto",
     "mm2src/derives/ser_error",
     "mm2src/derives/ser_error_derive",

@@ -36,7 +36,7 @@ pub mod utxo_standard;
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
-use chain::{OutPoint, TransactionInput, TransactionOutput, TxHashAlgo};
+use chain::{OutPoint, TransactionOutput, TxHashAlgo};
 use common::executor::{spawn, Timer};
 #[cfg(not(target_arch = "wasm32"))]
 use common::first_char_to_upper;
@@ -56,7 +56,7 @@ use keys::bytes::Bytes;
 pub use keys::{Address, AddressFormat as UtxoAddressFormat, KeyPair, Private, Public, Secret, Type as ScriptType};
 #[cfg(test)] use mocktopus::macros::*;
 use num_traits::ToPrimitive;
-use primitives::hash::{H256, H264, H512};
+use primitives::hash::{H256, H264};
 use rand::seq::SliceRandom;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
 use script::{Builder, Script, SignatureVersion, TransactionInputSigner};
@@ -72,6 +72,8 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, Weak};
 use utxo_common::{big_decimal_from_sat, UtxoMergeParams, UtxoTxBuilder};
+use utxo_signer::with_key_pair::sign_tx;
+use utxo_signer::{TxProvider, UtxoSignTxError, UtxoSignTxResult};
 
 pub use chain::Transaction as UtxoTx;
 
@@ -179,6 +181,25 @@ impl From<UtxoRpcError> for TradePreimageError {
             UtxoRpcError::InvalidResponse(resp) => TradePreimageError::Transport(resp),
             UtxoRpcError::Internal(internal) => TradePreimageError::InternalError(internal),
         }
+    }
+}
+
+impl From<UtxoRpcError> for UtxoSignTxError {
+    fn from(rpc: UtxoRpcError) -> Self {
+        let error = rpc.to_string();
+        match rpc {
+            UtxoRpcError::Transport(_) | UtxoRpcError::ResponseParseError(_) | UtxoRpcError::InvalidResponse(_) => {
+                UtxoSignTxError::Transport(error)
+            },
+            UtxoRpcError::Internal(internal) => UtxoSignTxError::Internal(internal),
+        }
+    }
+}
+
+#[async_trait]
+impl TxProvider for UtxoRpcClientEnum {
+    async fn get_rpc_transaction(&self, tx_hash: &H256Json) -> UtxoSignTxResult<RpcTransaction> {
+        Ok(self.get_verbose_transaction(tx_hash).compat().await?)
     }
 }
 
@@ -1904,63 +1925,6 @@ pub fn sat_from_big_decimal(amount: &BigDecimal, decimals: u8) -> NumConversResu
         })
 }
 
-pub(crate) fn sign_tx(
-    unsigned: TransactionInputSigner,
-    key_pair: &KeyPair,
-    prev_script: Script,
-    signature_version: SignatureVersion,
-    fork_id: u32,
-) -> Result<UtxoTx, String> {
-    let mut signed_inputs = vec![];
-    match signature_version {
-        SignatureVersion::WitnessV0 => {
-            for (i, _) in unsigned.inputs.iter().enumerate() {
-                signed_inputs.push(try_s!(p2wpkh_spend(
-                    &unsigned,
-                    i,
-                    key_pair,
-                    &prev_script,
-                    signature_version,
-                    fork_id
-                )));
-            }
-        },
-        _ => {
-            for (i, _) in unsigned.inputs.iter().enumerate() {
-                signed_inputs.push(try_s!(p2pkh_spend(
-                    &unsigned,
-                    i,
-                    key_pair,
-                    &prev_script,
-                    signature_version,
-                    fork_id
-                )));
-            }
-        },
-    }
-
-    Ok(UtxoTx {
-        inputs: signed_inputs,
-        n_time: unsigned.n_time,
-        outputs: unsigned.outputs.clone(),
-        version: unsigned.version,
-        overwintered: unsigned.overwintered,
-        lock_time: unsigned.lock_time,
-        expiry_height: unsigned.expiry_height,
-        join_splits: vec![],
-        shielded_spends: vec![],
-        shielded_outputs: vec![],
-        value_balance: 0,
-        version_group_id: unsigned.version_group_id,
-        binding_sig: H512::default(),
-        join_split_sig: H512::default(),
-        join_split_pubkey: H256::default(),
-        zcash: unsigned.zcash,
-        str_d_zeel: unsigned.str_d_zeel,
-        tx_hash_algo: unsigned.hash_algo.into(),
-    })
-}
-
 async fn send_outputs_from_my_address_impl<T>(coin: T, outputs: Vec<TransactionOutput>) -> Result<UtxoTx, String>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
@@ -2019,129 +1983,6 @@ where
     recently_spent.add_spent(spent_unspents, signed.hash(), signed.outputs.clone());
 
     Ok(signed)
-}
-
-/// Creates signed input spending p2pkh output
-pub fn p2pkh_spend(
-    signer: &TransactionInputSigner,
-    input_index: usize,
-    key_pair: &KeyPair,
-    prev_script: &Script,
-    signature_version: SignatureVersion,
-    fork_id: u32,
-) -> Result<TransactionInput, String> {
-    let script = Builder::build_p2pkh(&key_pair.public().address_hash());
-    if script != *prev_script {
-        return ERR!(
-            "p2pkh script {} built from input key pair doesn't match expected prev script {}",
-            script,
-            prev_script
-        );
-    }
-    let sighash_type = 1 | fork_id;
-    let sighash = signer.signature_hash(
-        input_index,
-        signer.inputs[input_index].amount,
-        &script,
-        signature_version,
-        sighash_type,
-    );
-
-    let script_sig = try_s!(script_sig_with_pub(&sighash, key_pair, fork_id));
-
-    Ok(TransactionInput {
-        script_sig,
-        sequence: signer.inputs[input_index].sequence,
-        script_witness: vec![],
-        previous_output: signer.inputs[input_index].previous_output.clone(),
-    })
-}
-
-/// Creates signed input spending p2pkh output
-pub fn p2pk_spend(
-    signer: &TransactionInputSigner,
-    input_index: usize,
-    key_pair: &KeyPair,
-    signature_version: SignatureVersion,
-    fork_id: u32,
-) -> Result<TransactionInput, String> {
-    let script = Builder::build_p2pk(key_pair.public());
-    let sighash_type = 1 | fork_id;
-    let sighash = signer.signature_hash(
-        input_index,
-        signer.inputs[input_index].amount,
-        &script,
-        signature_version,
-        sighash_type,
-    );
-
-    let script_sig = try_s!(script_sig(&sighash, key_pair, fork_id));
-
-    Ok(TransactionInput {
-        script_sig: Builder::default().push_bytes(&script_sig).into_bytes(),
-        sequence: signer.inputs[input_index].sequence,
-        script_witness: vec![],
-        previous_output: signer.inputs[input_index].previous_output.clone(),
-    })
-}
-
-/// Creates signed input spending p2wpkh output
-fn p2wpkh_spend(
-    signer: &TransactionInputSigner,
-    input_index: usize,
-    key_pair: &KeyPair,
-    prev_script: &Script,
-    signature_version: SignatureVersion,
-    fork_id: u32,
-) -> Result<TransactionInput, String> {
-    let script = Builder::build_p2pkh(&key_pair.public().address_hash());
-
-    if script != *prev_script {
-        return ERR!(
-            "p2pkh script {} built from input key pair doesn't match expected prev script {}",
-            script,
-            prev_script
-        );
-    }
-    let sighash_type = 1 | fork_id;
-    let sighash = signer.signature_hash(
-        input_index,
-        signer.inputs[input_index].amount,
-        &script,
-        signature_version,
-        sighash_type,
-    );
-
-    let sig_script = try_s!(script_sig(&sighash, key_pair, fork_id));
-
-    Ok(TransactionInput {
-        previous_output: signer.inputs[input_index].previous_output.clone(),
-        script_sig: Bytes::from(Vec::new()),
-        sequence: signer.inputs[input_index].sequence,
-        script_witness: vec![sig_script, Bytes::from(key_pair.public().deref())],
-    })
-}
-
-fn script_sig_with_pub(message: &H256, key_pair: &KeyPair, fork_id: u32) -> Result<Bytes, String> {
-    let sig_script = try_s!(script_sig(message, key_pair, fork_id));
-
-    let builder = Builder::default();
-
-    Ok(builder
-        .push_data(&sig_script)
-        .push_data(&key_pair.public().to_vec())
-        .into_bytes())
-}
-
-fn script_sig(message: &H256, key_pair: &KeyPair, fork_id: u32) -> Result<Bytes, String> {
-    let signature = try_s!(key_pair.private().sign(message));
-
-    let mut sig_script = Bytes::default();
-    sig_script.append(&mut Bytes::from((*signature).to_vec()));
-    // Using SIGHASH_ALL only for now
-    sig_script.append(&mut Bytes::from(vec![1 | fork_id as u8]));
-
-    Ok(sig_script)
 }
 
 pub fn output_script(address: &Address, script_type: ScriptType) -> Script {

@@ -2,13 +2,11 @@
 /// It's a custom token format mostly used on the Bitcoin Cash blockchain.
 /// Tracking issue: https://github.com/KomodoPlatform/atomicDEX-API/issues/701
 /// More info about the protocol and implementation guides can be found at https://slp.dev/
-use super::p2pkh_spend;
-
 use crate::utxo::bch::BchCoin;
 use crate::utxo::bchd_grpc::{check_slp_transaction, validate_slp_utxos, ValidateSlpUtxosErr};
 use crate::utxo::rpc_clients::{UnspentInfo, UtxoRpcClientEnum, UtxoRpcError, UtxoRpcResult};
-use crate::utxo::utxo_common::{self, big_decimal_from_sat_unsigned, p2sh_spend, payment_script, UtxoTxBuilder};
-use crate::utxo::{generate_and_send_tx, sat_from_big_decimal, sign_tx, ActualTxFee, AdditionalTxData, BroadcastTxErr,
+use crate::utxo::utxo_common::{self, big_decimal_from_sat_unsigned, payment_script, UtxoTxBuilder};
+use crate::utxo::{generate_and_send_tx, sat_from_big_decimal, ActualTxFee, AdditionalTxData, BroadcastTxErr,
                   FeePolicy, GenerateTxError, RecentlySpentOutPoints, UtxoCoinConf, UtxoCoinFields, UtxoCommonOps,
                   UtxoTx, UtxoTxBroadcastOps, UtxoTxGenerationOps};
 use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
@@ -44,6 +42,7 @@ use serialization_derive::Deserializable;
 use std::convert::TryInto;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
+use utxo_signer::with_key_pair::{p2pkh_spend, p2sh_spend, sign_tx, UtxoSignWithKeyPairError};
 
 const SLP_SWAP_VOUT: usize = 1;
 const SLP_FEE_VOUT: usize = 1;
@@ -135,6 +134,7 @@ impl From<ParseSlpScriptError> for ValidateDexFeeError {
 pub enum SpendP2SHError {
     GenerateTxErr(GenerateTxError),
     Rpc(UtxoRpcError),
+    SignTxErr(UtxoSignWithKeyPairError),
     String(String),
 }
 
@@ -144,6 +144,10 @@ impl From<GenerateTxError> for SpendP2SHError {
 
 impl From<UtxoRpcError> for SpendP2SHError {
     fn from(err: UtxoRpcError) -> SpendP2SHError { SpendP2SHError::Rpc(err) }
+}
+
+impl From<UtxoSignWithKeyPairError> for SpendP2SHError {
+    fn from(sign: UtxoSignWithKeyPairError) -> SpendP2SHError { SpendP2SHError::SignTxErr(sign) }
 }
 
 impl From<String> for SpendP2SHError {
@@ -603,7 +607,7 @@ impl SlpToken {
                     &unsigned,
                     i,
                     &self.platform_coin.as_ref().key_pair,
-                    &my_script_pubkey,
+                    my_script_pubkey.clone(),
                     self.platform_coin.as_ref().conf.signature_version,
                     self.platform_coin.as_ref().conf.fork_id,
                 )
@@ -1447,8 +1451,7 @@ impl MmCoin for SlpToken {
                 prev_script,
                 coin.platform_conf().signature_version,
                 coin.platform_conf().fork_id,
-            )
-            .map_to_mm(WithdrawError::InternalError)?;
+            )?;
             let fee_details = SlpFeeDetails {
                 amount: big_decimal_from_sat_unsigned(tx_data.fee_amount, coin.platform_decimals()),
                 coin: coin.platform_coin.ticker().into(),

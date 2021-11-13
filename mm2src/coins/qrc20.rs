@@ -5,9 +5,9 @@ use crate::utxo::qtum::QtumBasedCoin;
 use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps,
                                UtxoRpcError, UtxoRpcFut, UtxoRpcResult};
 use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_inputs_signed_by_pub, UtxoTxBuilder};
-use crate::utxo::{qtum, sign_tx, ActualTxFee, AdditionalTxData, BroadcastTxErr, FeePolicy, GenerateTxError,
-                  HistoryUtxoTx, HistoryUtxoTxMap, RecentlySpentOutPoints, UtxoActivationParams, UtxoAddressFormat,
-                  UtxoCoinBuilder, UtxoCoinFields, UtxoCommonOps, UtxoFromLegacyReqErr, UtxoTx, UtxoTxBroadcastOps,
+use crate::utxo::{qtum, ActualTxFee, AdditionalTxData, BroadcastTxErr, FeePolicy, GenerateTxError, HistoryUtxoTx,
+                  HistoryUtxoTxMap, RecentlySpentOutPoints, UtxoActivationParams, UtxoAddressFormat, UtxoCoinBuilder,
+                  UtxoCoinFields, UtxoCommonOps, UtxoFromLegacyReqErr, UtxoTx, UtxoTxBroadcastOps,
                   UtxoTxGenerationOps, VerboseTransactionFrom, UTXO_LOCK};
 use crate::{BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps,
             MmCoin, NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageError, TradePreimageFut,
@@ -45,6 +45,7 @@ use std::ops::{Deref, Neg};
 #[cfg(not(target_arch = "wasm32"))] use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use utxo_signer::with_key_pair::sign_tx;
 
 mod history;
 #[cfg(test)] mod qrc20_tests;
@@ -434,7 +435,8 @@ impl Qrc20Coin {
             self.utxo.conf.signature_version,
             self.utxo.conf.fork_id,
         )
-        .map_to_mm(GenerateTxError::Internal)?;
+        // TODO I'd not like to add `SignTxError` to `GenerateTxError`. So I'm planning to add a new error type `Qrc20GenerateTxError`.
+        .mm_err(|sign_err| GenerateTxError::Internal(sign_err.to_string()))?;
 
         let miner_fee = data.fee_amount + data.unused_change.unwrap_or_default();
         Ok(GenerateQrc20TxResult {

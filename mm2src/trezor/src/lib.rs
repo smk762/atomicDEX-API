@@ -10,6 +10,7 @@ pub mod user_interaction;
 pub mod utxo;
 
 pub use client::TrezorClient;
+pub use constants::TrezorCoin;
 pub use error::{OperationFailure, TrezorError, TrezorResult};
 pub use hw_common::primitives::{DerivationPath, EcdsaCurve};
 pub use response::{ButtonRequest, PinMatrixRequest, TrezorResponse};

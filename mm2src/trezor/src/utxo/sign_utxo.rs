@@ -3,6 +3,7 @@ use crate::utxo::unsigned_tx::UnsignedUtxoTx;
 use crate::utxo::Signature;
 use crate::{TrezorClient, TrezorError, TrezorResponse, TrezorResult};
 use common::mm_error::prelude::*;
+use log::{debug, info};
 
 pub struct TxSignResult {
     pub signatures: Vec<Signature>,
@@ -20,6 +21,7 @@ impl TxSignResult {
 
 impl TrezorClient {
     /// https://docs.trezor.io/trezor-firmware/common/communication/bitcoin-signing.html#pseudo-code
+    /// TODO add a `timeout` param.
     ///
     /// # Fail
     ///
@@ -30,6 +32,14 @@ impl TrezorClient {
         let mut result = TxSignResult::new_with_inputs_count(unsigned.inputs.len());
         // Please note `tx_request` is changed within the following loop.
         let mut tx_request = self.sign_tx(unsigned.sign_tx_message()).await?.ack_all().await?;
+
+        info!(
+            "Start transaction signing: COIN={} INPUTS_COUNT={} OUTPUTS_COUNT={} OVERWINTERED={}",
+            unsigned.coin,
+            unsigned.inputs.len(),
+            unsigned.outputs.len(),
+            unsigned.version_group_id.is_some() || unsigned.branch_id.is_some()
+        );
 
         loop {
             extract_serialized_data(&tx_request, &mut result)?;
@@ -42,12 +52,17 @@ impl TrezorClient {
             let tx_request_details = tx_request.get_details();
             let is_prev = tx_request_details.has_tx_hash();
 
+            debug!("TxRequest: REQUEST_TYPE={:?} PREV={}", request_type, is_prev);
+
             tx_request = match request_type {
                 ProtoTxRequestType::TXINPUT if is_prev => self.send_prev_input(&unsigned, tx_request_details).await?,
                 ProtoTxRequestType::TXINPUT => self.send_input(&unsigned, tx_request_details).await?,
                 ProtoTxRequestType::TXOUTPUT if is_prev => self.send_prev_output(&unsigned, tx_request_details).await?,
                 ProtoTxRequestType::TXOUTPUT => self.send_output(&unsigned, tx_request_details).await?,
                 ProtoTxRequestType::TXMETA if is_prev => self.send_prev_tx_meta(&unsigned, tx_request_details).await?,
+                ProtoTxRequestType::TXEXTRADATA if is_prev => {
+                    self.send_extra_data(&unsigned, tx_request_details).await?
+                },
                 _ => {
                     let error = format!("Unexpected tx request: {:?}, is_prev: {}", request_type, is_prev);
                     return MmError::err(TrezorError::ProtocolError(error));
@@ -118,6 +133,22 @@ impl TrezorClient {
     ) -> TrezorResult<proto_bitcoin::TxRequest> {
         let output_index = request_details.get_request_index() as usize;
         let req = unsigned.output_message(output_index)?;
+
+        let result_handler = Box::new(Ok);
+        self.call(req, result_handler).await?.ack_all().await
+    }
+
+    async fn send_extra_data(
+        &self,
+        unsigned: &UnsignedUtxoTx,
+        request_details: &proto_bitcoin::TxRequest_TxRequestDetailsType,
+    ) -> TrezorResult<proto_bitcoin::TxRequest> {
+        let offset = request_details.get_extra_data_offset() as usize;
+        let len = request_details.get_extra_data_len() as usize;
+        let prev_tx_hash = request_details.get_tx_hash();
+
+        let prev_tx = unsigned.prev_tx(prev_tx_hash)?;
+        let req = prev_tx.extra_data_message(offset, len)?;
 
         let result_handler = Box::new(Ok);
         self.call(req, result_handler).await?.ack_all().await

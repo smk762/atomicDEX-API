@@ -91,6 +91,7 @@ impl<T: 'static> HwResponse<T> {
 pub enum HwCoin {
     Bitcoin,
     Komodo,
+    Qtum,
 }
 
 impl From<HwCoin> for TrezorCoin {
@@ -98,6 +99,7 @@ impl From<HwCoin> for TrezorCoin {
         match coin {
             HwCoin::Bitcoin => TrezorCoin::Bitcoin,
             HwCoin::Komodo => TrezorCoin::Komodo,
+            HwCoin::Qtum => TrezorCoin::Qtum,
         }
     }
 }

@@ -55,6 +55,7 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use utxo_signer::with_key_pair::UtxoSignWithKeyPairError;
 #[cfg(feature = "zhtlc")]
 use zcash_primitives::transaction::Transaction as ZTransaction;
 
@@ -85,6 +86,8 @@ pub mod enable_v2;
 
 pub mod eth;
 use eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
+
+pub mod init_withdraw;
 
 pub mod utxo;
 use utxo::qtum::{self, qtum_coin_from_conf_and_params, QtumCoin};
@@ -910,6 +913,13 @@ impl From<BalanceError> for DelegationError {
     }
 }
 
+impl From<UtxoSignWithKeyPairError> for DelegationError {
+    fn from(e: UtxoSignWithKeyPairError) -> Self {
+        let error = format!("Error signing: {}", e);
+        DelegationError::InternalError(error)
+    }
+}
+
 impl HttpStatusCode for DelegationError {
     fn status_code(&self) -> StatusCode {
         match self {
@@ -1029,6 +1039,13 @@ impl From<CoinFindError> for WithdrawError {
 
 impl From<UnsupportedAddr> for WithdrawError {
     fn from(e: UnsupportedAddr) -> Self { WithdrawError::InvalidAddress(e.to_string()) }
+}
+
+impl From<UtxoSignWithKeyPairError> for WithdrawError {
+    fn from(e: UtxoSignWithKeyPairError) -> Self {
+        let error = format!("Error signing: {}", e);
+        WithdrawError::InternalError(error)
+    }
 }
 
 impl WithdrawError {

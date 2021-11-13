@@ -92,3 +92,4 @@ trezor_message_impl!(TxAckInput, MessageType_TxAck);
 trezor_message_impl!(TxAckPrevMeta, MessageType_TxAck);
 trezor_message_impl!(TxAckPrevInput, MessageType_TxAck);
 trezor_message_impl!(TxAckPrevOutput, MessageType_TxAck);
+trezor_message_impl!(TxAckPrevExtraData, MessageType_TxAck);
