@@ -4,16 +4,16 @@ use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::rpc_task::{RpcTask, RpcTaskHandle};
 use common::SuccessResponse;
-use crypto::hw_task::{HwInteractWithUser, HwInteractionError, HwUserAction};
+use crypto::trezor::trezor_rpc_task::{TrezorInteractWithUser, TrezorInteractionError};
 use crypto::trezor::TrezorPinMatrix3x3Response;
-use crypto::{CryptoCtx, CryptoResponse, HwClient, HwWalletType};
+use crypto::{CryptoCtx, HwWalletType};
 use serde_json as json;
 use std::convert::TryFrom;
 use std::time::Duration;
 
 const MM_INIT_TREZOR_PIN_TIMEOUT: Duration = Duration::from_secs(600);
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub enum MmInitInProgressStatus {
     /// TODO replace with more specific statuses.
     Initializing,
@@ -21,7 +21,7 @@ pub enum MmInitInProgressStatus {
     ReadPublicKeyFromTrezor,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub enum MmInitAwaitingStatus {
     WaitForTrezorPin,
 }
@@ -32,12 +32,12 @@ pub enum MmInitUserAction {
     TrezorPin(TrezorPinMatrix3x3Response),
 }
 
-impl TryFrom<MmInitUserAction> for HwUserAction {
-    type Error = HwInteractionError;
+impl TryFrom<MmInitUserAction> for TrezorPinMatrix3x3Response {
+    type Error = TrezorInteractionError;
 
     fn try_from(value: MmInitUserAction) -> Result<Self, Self::Error> {
         match value {
-            MmInitUserAction::TrezorPin(pin) => Ok(HwUserAction::TrezorPin(pin)),
+            MmInitUserAction::TrezorPin(pin) => Ok(pin),
         }
     }
 }
@@ -78,24 +78,19 @@ impl RpcTask for MmInitTask {
                 error: e.to_string(),
             }
         })?;
-        let hw_client = match hw_wallet {
-            HwWalletType::Trezor => HwClient::trezor().await?,
-        };
-        let xpub = match CryptoCtx::request_mm2_internal_pubkey(&hw_client).await? {
-            CryptoResponse::Ok(xpub) => xpub,
-            CryptoResponse::HwDelayed(delayed) => {
-                delayed
+        match hw_wallet {
+            HwWalletType::Trezor => {
+                CryptoCtx::init_with_trezor(self.ctx.clone())
+                    .await
                     .interact_with_user_if_required(
                         MM_INIT_TREZOR_PIN_TIMEOUT,
                         task_handle,
                         MmInitInProgressStatus::ReadPublicKeyFromTrezor,
                         MmInitAwaitingStatus::WaitForTrezorPin,
                     )
-                    .await?
+                    .await??;
             },
-        };
-        // Initialize [`MmCtx::crypto_ctx`].
-        CryptoCtx::init_with_hw_wallet(self.ctx.clone(), hw_client, &xpub)?;
+        }
 
         task_handle.update_in_progress_status(MmInitInProgressStatus::Initializing)?;
         lp_init_continue(self.ctx.clone()).await.map(|_| SuccessResponse::new())

@@ -1,6 +1,6 @@
 use crate::custom_futures::{FutureTimerExt, TimeoutError};
 use crate::executor::spawn;
-use crate::log::{debug, info, warn, LogOnError};
+use crate::log::{debug, warn, LogOnError};
 use crate::mm_ctx::{MmArc, MmWeak};
 use crate::mm_error::prelude::*;
 use crate::mm_rpc_protocol::MmRpcResult;
@@ -94,7 +94,7 @@ where
     };
 
     let fut = async move {
-        info!("Spawn RPC task '{}'", task_id);
+        debug!("Spawn RPC task '{}'", task_id);
         let task_fut = task.run(&task_handle);
         let task_result = match select(task_fut, task_abort_handler).await {
             // The task has finished.
@@ -106,7 +106,7 @@ where
         // `task.run(&task_handle)`.
         match task_result {
             Some(task_result) => {
-                info!("RPC task '{}' has been finished", task_id);
+                debug!("RPC task '{}' has been finished", task_id);
                 task_handle.finish(task_result);
             },
             None => {

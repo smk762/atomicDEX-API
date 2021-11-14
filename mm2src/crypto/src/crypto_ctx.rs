@@ -1,19 +1,21 @@
-use crate::hw_client::{EcdsaCurve, HwClient, HwCoin, HwDelayedResponse, HwError, HwResponse};
-use bip32::{Error as Bip32Error, ExtendedPublicKey};
+use crate::hw_client::{HwClient, HwError};
+use crate::hw_ctx::HardwareWalletCtx;
+use crate::HwWalletType;
+use bip32::Error as Bip32Error;
 use bitcrypto::dhash160;
-use common::mm_ctx::MmArc;
+use common::mm_ctx::{MmArc, MmWeak};
 use common::mm_error::prelude::*;
 use common::privkey::{key_pair_from_seed, PrivKeyError};
 use derive_more::Display;
-use hw_common::primitives::DerivationPath;
-use keys::KeyPair;
-use primitives::hash::{H160, H264};
+use hw_common::primitives::EcdsaCurve;
+use keys::{KeyPair, Public as PublicKey};
+use primitives::hash::H264;
 use std::ops::Deref;
-use std::str::FromStr;
 use std::sync::Arc;
+use trezor::response_channel::TrezorResponseReceiver;
+use trezor::TrezorError;
 
 pub type CryptoInitResult<T> = Result<T, MmError<CryptoInitError>>;
-pub type CryptoResult<T> = Result<T, MmError<CryptoError>>;
 
 /// The derivation path generally consists of:
 /// `m/purpose'/coin_type'/account'/change/address_index`.
@@ -22,12 +24,12 @@ pub type CryptoResult<T> = Result<T, MmError<CryptoError>>;
 /// * `account = (2 ^ 31 - 1) = 2147483647` - latest available account index.
 ///   This number is chosen so that it does not cross with real accounts;
 /// * `change = 0`, `address_index = 0` - nothing special.
-const MM2_INTERNAL_DERIVATION_PATH: &str = "m/44'/141'/2147483647/0/0";
-const MM2_INTERNAL_COIN: HwCoin = HwCoin::Komodo;
-const MM2_INTERNAL_ECDSA_CURVE: EcdsaCurve = EcdsaCurve::Secp256k1;
+pub(crate) const MM2_INTERNAL_DERIVATION_PATH: &str = "m/44'/141'/2147483647/0/0";
+pub(crate) const MM2_INTERNAL_ECDSA_CURVE: EcdsaCurve = EcdsaCurve::Secp256k1;
 
-#[derive(Display)]
+#[derive(Debug, Display)]
 pub enum CryptoInitError {
+    NotInitialized,
     InitializedAlready,
     #[display(fmt = "jeezy says we cant use the nullstring as passphrase and I agree")]
     NullStringPassphrase,
@@ -39,75 +41,55 @@ pub enum CryptoInitError {
     Internal(String),
 }
 
-#[derive(Debug, Display)]
-pub enum CryptoError {
-    NotInitialized,
-    Internal(String),
-}
-
 impl From<PrivKeyError> for CryptoInitError {
     fn from(e: PrivKeyError) -> Self { CryptoInitError::InvalidPassphrase(e) }
 }
 
+impl From<Bip32Error> for CryptoInitError {
+    fn from(e: Bip32Error) -> Self { CryptoInitError::InvalidXpub(e) }
+}
+
 impl From<HwError> for CryptoInitError {
-    fn from(e: HwError) -> Self {
-        match e {
-            HwError::Internal(internal) => CryptoInitError::Internal(internal),
-            hw => CryptoInitError::HardwareWalletError(hw),
-        }
-    }
+    fn from(hw: HwError) -> Self { CryptoInitError::HardwareWalletError(hw) }
 }
 
-impl From<bip32::Error> for CryptoInitError {
-    fn from(e: bip32::Error) -> Self { CryptoInitError::InvalidXpub(e) }
-}
-
-pub enum CryptoResponse<T> {
-    Ok(T),
-    HwDelayed(HwDelayedResponse<T>),
-}
-
-impl<T> From<HwResponse<T>> for CryptoResponse<T> {
-    fn from(e: HwResponse<T>) -> Self {
-        match e {
-            HwResponse::Ok(t) => CryptoResponse::Ok(t),
-            HwResponse::Delayed(delayed) => CryptoResponse::HwDelayed(delayed),
-        }
-    }
+impl From<TrezorError> for CryptoInitError {
+    fn from(trezor: TrezorError) -> Self { CryptoInitError::HardwareWalletError(HwError::from(trezor)) }
 }
 
 pub enum CryptoCtx {
     KeyPair {
-        /// RIPEMD160(SHA256(x)) where x is secp256k1 pubkey derived from passphrase.
-        rmd160: H160,
         /// secp256k1 key pair derived from passphrase.
         /// cf. `key_pair_from_seed`.
         secp256k1_key_pair: KeyPair,
     },
-    HardwareWallet {
-        /// The pubkey derived from `MM2_INTERNAL_DERIVATION_PATH`.
-        mm2_internal_pubkey: H264,
-        /// RIPEMD160(SHA256(x)) where x is secp256k1 pubkey derived from `mm2_master_pubkey`.
-        rmd160: H160,
-        client: HwClient,
-    },
+    HardwareWallet(HardwareWalletCtx),
 }
 
 impl CryptoCtx {
-    pub fn from_ctx(ctx: &MmArc) -> CryptoResult<Arc<CryptoCtx>> {
+    pub fn from_ctx(ctx: &MmArc) -> CryptoInitResult<Arc<CryptoCtx>> {
         let ctx_field = ctx
             .crypto_ctx
             .lock()
             // `PoisonError` doesn't implement `NotMmError`, so we can't use [`MapToMmResult::map_to_mm`].
-            .map_err(|poison| MmError::new(CryptoError::Internal(poison.to_string())))?;
+            .map_err(|poison| MmError::new(CryptoInitError::Internal(poison.to_string())))?;
         let ctx = match ctx_field.deref() {
             Some(ctx) => ctx,
-            None => return MmError::err(CryptoError::NotInitialized),
+            None => return MmError::err(CryptoInitError::NotInitialized),
         };
         ctx.clone()
             .downcast()
-            .map_err(|_| MmError::new(CryptoError::Internal("Error casting the context field".to_owned())))
+            .map_err(|_| MmError::new(CryptoInitError::Internal("Error casting the context field".to_owned())))
     }
+
+    pub fn secp256k1_pubkey(&self) -> PublicKey {
+        match self {
+            CryptoCtx::KeyPair { ref secp256k1_key_pair } => *secp256k1_key_pair.public(),
+            CryptoCtx::HardwareWallet(hw_ctx) => hw_ctx.secp256k1_pubkey(),
+        }
+    }
+
+    pub fn secp256k1_pubkey_hex(&self) -> String { hex::encode(&*self.secp256k1_pubkey()) }
 
     pub fn init_with_passphrase(ctx: MmArc, passphrase: &str) -> CryptoInitResult<()> {
         let mut ctx_field = ctx
@@ -128,30 +110,45 @@ impl CryptoCtx {
         let secp256k1_key_pair_for_legacy = key_pair_from_seed(&passphrase)?;
 
         let rmd160 = secp256k1_key_pair.public().address_hash();
-        let crypto_ctx = CryptoCtx::KeyPair {
-            secp256k1_key_pair,
-            rmd160,
-        };
+        let crypto_ctx = CryptoCtx::KeyPair { secp256k1_key_pair };
         *ctx_field = Some(Arc::new(crypto_ctx));
 
         // TODO remove initializing legacy fields when lp_swap and lp_ordermatch support CryptoCtx.
-        let key_pair = ctx
-            .secp256k1_key_pair
+        ctx.secp256k1_key_pair
             .pin(secp256k1_key_pair_for_legacy)
             .map_to_mm(CryptoInitError::Internal)?;
-        ctx.rmd160
-            .pin(key_pair.public().address_hash())
-            .map_to_mm(CryptoInitError::Internal)?;
+        ctx.rmd160.pin(rmd160).map_to_mm(CryptoInitError::Internal)?;
 
         Ok(())
     }
 
-    // TODO replace this function somehow with the following:
-    // pub async fn init_with_trezor(ctx: MmArc) -> CryptoInitResult<CryptoResponse<()>>
-    // It means, we should replace initialization logic from `lp_native_dex.rs` into this function.
-    pub fn init_with_hw_wallet(ctx: MmArc, client: HwClient, mm2_internal_xpub: &str) -> CryptoInitResult<()> {
-        let extended_pubkey = ExtendedPublicKey::<secp256k1::PublicKey>::from_str(mm2_internal_xpub)?;
-        let mm2_internal_pubkey = H264::from(extended_pubkey.public_key().serialize());
+    pub async fn init_with_trezor(ctx: MmArc) -> TrezorResponseReceiver<CryptoInitResult<()>> {
+        let ctx_weak = ctx.weak();
+        let trezor = match HwClient::trezor().await {
+            Ok(trezor) => trezor,
+            Err(e) => {
+                let (hw_error, trace) = e.split();
+                let init_error = CryptoInitError::from(hw_error);
+                return TrezorResponseReceiver::ready(MmError::err_with_trace(init_error, trace));
+            },
+        };
+
+        HardwareWalletCtx::trezor_mm_internal_pubkey(&trezor).and_then(move |mm_internal_pubkey| {
+            CryptoCtx::init_with_hw_wallet_internal_xpub(ctx_weak.clone(), HwWalletType::Trezor, mm_internal_pubkey)
+        })
+    }
+
+    fn init_with_hw_wallet_internal_xpub(
+        ctx_weak: MmWeak,
+        hw_wallet_type: HwWalletType,
+        mm2_internal_pubkey: H264,
+    ) -> CryptoInitResult<()> {
+        // const DEFAULT_SECP
+
+        let ctx = match MmArc::from_weak(&ctx_weak) {
+            Some(ctx) => ctx,
+            None => return MmError::err(CryptoInitError::Internal("MmArc is dropped".to_owned())),
+        };
 
         let mut ctx_field = ctx
             .crypto_ctx
@@ -162,22 +159,15 @@ impl CryptoCtx {
             return MmError::err(CryptoInitError::InitializedAlready);
         }
 
-        let crypto_ctx = CryptoCtx::HardwareWallet {
+        // TODO remove initializing legacy fields when lp_swap and lp_ordermatch support CryptoCtx.
+        let rmd160 = dhash160(mm2_internal_pubkey.as_slice());
+        ctx.rmd160.pin(rmd160).map_to_mm(CryptoInitError::Internal)?;
+
+        let crypto_ctx = CryptoCtx::HardwareWallet(HardwareWalletCtx {
             mm2_internal_pubkey,
-            rmd160: dhash160(mm2_internal_pubkey.as_slice()),
-            client,
-        };
+            hw_wallet_type,
+        });
         *ctx_field = Some(Arc::new(crypto_ctx));
         Ok(())
-    }
-
-    // TODO remove this function when `CryptoCtx::init_with_hw_wallet` is refactored.
-    pub async fn request_mm2_internal_pubkey(client: &HwClient) -> CryptoInitResult<CryptoResponse<String>> {
-        let path = DerivationPath::from_str(MM2_INTERNAL_DERIVATION_PATH)
-            .expect("'MM2_INTERNAL_DERIVATION_PATH' is expected to be valid derivation path");
-        let response = client
-            .get_public_key(&path, MM2_INTERNAL_COIN, MM2_INTERNAL_ECDSA_CURVE)
-            .await?;
-        Ok(CryptoResponse::from(response))
     }
 }

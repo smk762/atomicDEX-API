@@ -5,7 +5,9 @@ pub mod constants;
 pub mod error;
 mod proto;
 pub mod response;
+pub mod response_channel;
 pub mod transport;
+pub mod trezor_rpc_task;
 pub mod user_interaction;
 pub mod utxo;
 
@@ -14,6 +16,7 @@ pub use constants::TrezorCoin;
 pub use error::{OperationFailure, TrezorError, TrezorResult};
 pub use hw_common::primitives::{DerivationPath, EcdsaCurve};
 pub use response::{ButtonRequest, PinMatrixRequest, TrezorResponse};
+pub use response_channel::{TrezorEvent, TrezorResponseReceiver};
 pub use user_interaction::{TrezorPinMatrix3x3Response, TrezorUserInteraction};
 
 pub(crate) fn serialize_derivation_path(path: &DerivationPath) -> Vec<u32> {
@@ -57,12 +60,11 @@ pub mod for_tests {
 
         let der_path = DerivationPath::from_str("m/44'/141'/0'/0/0").expect("!DerivationPath::from_str");
         let addr = client
-            .get_utxo_address(&der_path, TrezorCoin::Komodo)
-            .await
-            .expect("!get_komodo_address")
+            .get_utxo_address(der_path, TrezorCoin::Komodo)
             .ack_all()
             .await
-            .expect("!get_komodo_address::ack_all");
+            .expect("!get_komodo_address::ack_all")
+            .expect("!get_komodo_address");
         info!("Got KMD '{}' address", addr);
 
         info!("Success");

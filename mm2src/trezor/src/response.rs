@@ -11,6 +11,7 @@ use std::future::Future;
 pub use crate::proto::messages_common::ButtonRequest_ButtonRequestType as ButtonRequestType;
 pub use crate::proto::messages_common::PinMatrixRequest_PinMatrixRequestType as PinMatrixRequestType;
 
+type CancelHandlerFuture = dyn Future<Output = ()> + Unpin + Send;
 type ButtonHandlerFuture<T> = dyn Future<Output = TrezorResult<TrezorResponse<T>>> + Unpin + Send;
 type PinHandlerFuture<T> = dyn Future<Output = TrezorResult<TrezorResponse<T>>> + Unpin + Send;
 type PinHandlerFn<T> = dyn FnOnce(String) -> Box<PinHandlerFuture<T>> + Send;
@@ -63,7 +64,9 @@ impl<T: 'static> TrezorResponse<T> {
                 },
                 Self::ButtonRequest(req) => req.ack().await?,
                 Self::PinMatrixRequest(_) => {
-                    return MmError::err(TrezorError::UnexpectedInteractionRequest(TrezorUserInteraction::PinMatrix3x3));
+                    return MmError::err(TrezorError::UnexpectedInteractionRequest(
+                        TrezorUserInteraction::PinMatrix3x3,
+                    ));
                 },
             };
         }
@@ -76,7 +79,8 @@ impl<T: 'static> TrezorResponse<T> {
     ) -> Self {
         TrezorResponse::ButtonRequest(ButtonRequest {
             message,
-            button_handler: ButtonRequest::button_handler_wrapped(client, result_handler),
+            button_handler: ButtonRequest::button_handler_wrapped(client.clone(), result_handler),
+            cancel_handler: cancel_handler(client),
         })
     }
 
@@ -87,7 +91,8 @@ impl<T: 'static> TrezorResponse<T> {
     ) -> Self {
         TrezorResponse::PinMatrixRequest(PinMatrixRequest {
             message,
-            pin_handler: PinMatrixRequest::pin_handler_wrapped(client, result_handler),
+            pin_handler: PinMatrixRequest::pin_handler_wrapped(client.clone(), result_handler),
+            cancel_handler: cancel_handler(client),
         })
     }
 }
@@ -99,6 +104,8 @@ pub struct ButtonRequest<T> {
     /// like `client` and `result_handler`.
     /// This trick allows us to avoid having a `R: TrezorMessage` type parameter for `ButtonRequest` structure.
     button_handler: Box<ButtonHandlerFuture<T>>,
+    /// This future is `cancel_handler` that already captured the required parameters like `client`.
+    cancel_handler: Box<CancelHandlerFuture>,
 }
 
 impl<T> fmt::Debug for ButtonRequest<T> {
@@ -112,6 +119,8 @@ pub struct PinMatrixRequest<T> {
     /// like `client` and `result_handler`.
     /// This trick allows us to avoid having a `R: TrezorMessage` type parameter for `PinMatrixRequest` structure.
     pin_handler: Box<PinHandlerFn<T>>,
+    /// This future is `cancel_handler` that already captured the required parameters like `client`.
+    cancel_handler: Box<CancelHandlerFuture>,
 }
 
 impl<T> fmt::Debug for PinMatrixRequest<T> {
@@ -127,6 +136,8 @@ impl<T: 'static> ButtonRequest<T> {
 
     /// TODO add an optional `timeout` param.
     pub async fn ack_all(self) -> TrezorResult<T> { self.button_handler.await?.ack_all().await }
+
+    pub async fn cancel(self) { self.cancel_handler.await }
 
     async fn button_handler<R: TrezorMessage>(
         client: TrezorClient,
@@ -151,6 +162,8 @@ impl<T: 'static> PinMatrixRequest<T> {
     /// Ack the request with a PIN and get the next message from the device.
     pub async fn ack_pin(self, pin: String) -> TrezorResult<TrezorResponse<T>> { (self.pin_handler)(pin).await }
 
+    pub async fn cancel(self) { self.cancel_handler.await }
+
     async fn pin_handler<R: TrezorMessage>(
         client: TrezorClient,
         result_handler: ResultHandler<T, R>,
@@ -172,4 +185,9 @@ impl<T: 'static> PinMatrixRequest<T> {
         };
         Box::new(pin_handler)
     }
+}
+
+fn cancel_handler(client: TrezorClient) -> Box<CancelHandlerFuture> {
+    let fut = async move { client.cancel_last_op().await };
+    Box::new(fut.boxed())
 }

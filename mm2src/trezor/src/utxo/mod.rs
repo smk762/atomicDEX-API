@@ -1,6 +1,7 @@
 mod prev_tx;
 mod sign_utxo;
 mod unsigned_tx;
+mod utxo_command;
 
 pub use prev_tx::{PrevTx, PrevTxInput, PrevTxOutput};
 pub use sign_utxo::TxSignResult;

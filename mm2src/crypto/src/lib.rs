@@ -2,11 +2,10 @@
 
 mod crypto_ctx;
 mod hw_client;
-pub mod hw_task;
+mod hw_ctx;
 
-pub use crypto_ctx::{CryptoCtx, CryptoInitError, CryptoInitResult, CryptoResponse};
-pub use hw_client::{HwClient, HwCoin, HwDelayedResponse, HwError, HwResponse, HwResult, HwUserInteraction,
-                    HwWalletType};
+pub use crypto_ctx::{CryptoCtx, CryptoInitError, CryptoInitResult};
+pub use hw_client::{HwClient, HwError, HwResult, HwWalletType};
 pub use hw_common::primitives::{DerivationPath, EcdsaCurve};
 pub use trezor;
 

@@ -32,6 +32,7 @@ use common::mm_error::prelude::*;
 use common::mm_number::{Fraction, MmNumber};
 use common::time_cache::TimeCache;
 use common::{bits256, log, new_uuid, now_ms};
+use crypto::CryptoCtx;
 use derive_more::Display;
 use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex, TryFutureExt};
 use hash256_std_hasher::Hash256StdHasher;
@@ -2070,7 +2071,10 @@ impl From<MakerConnected> for new_protocol::OrdermatchMessage {
 }
 
 pub async fn broadcast_maker_orders_keep_alive_loop(ctx: MmArc) {
-    let my_pubsecp = hex::encode(&**ctx.secp256k1_key_pair().public());
+    let my_pubsecp = CryptoCtx::from_ctx(&ctx)
+        .expect("CryptoCtx not available")
+        .secp256k1_pubkey_hex();
+
     while !ctx.is_stopping() {
         Timer::sleep(MIN_ORDER_KEEP_ALIVE_INTERVAL as f64).await;
         let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).expect("from_ctx failed");
@@ -2776,7 +2780,10 @@ fn lp_connected_alice(ctx: MmArc, taker_order: TakerOrder, taker_match: TakerMat
 }
 
 pub async fn lp_ordermatch_loop(ctx: MmArc) {
-    let my_pubsecp = hex::encode(&**ctx.secp256k1_key_pair().public());
+    let my_pubsecp = CryptoCtx::from_ctx(&ctx)
+        .expect("CryptoCtx not available")
+        .secp256k1_pubkey_hex();
+
     let maker_order_timeout = ctx.conf["maker_order_timeout"].as_u64().unwrap_or(MAKER_ORDER_TIMEOUT);
     loop {
         if ctx.is_stopping() {

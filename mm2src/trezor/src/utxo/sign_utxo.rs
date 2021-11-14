@@ -3,7 +3,7 @@ use crate::utxo::unsigned_tx::UnsignedUtxoTx;
 use crate::utxo::Signature;
 use crate::{TrezorClient, TrezorError, TrezorResponse, TrezorResult};
 use common::mm_error::prelude::*;
-use log::{debug, info};
+use common::log::{debug, info};
 
 pub struct TxSignResult {
     pub signatures: Vec<Signature>,

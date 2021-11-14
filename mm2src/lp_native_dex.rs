@@ -25,7 +25,7 @@ use common::mm_ctx::{MmArc, MmCtx};
 use common::mm_error::prelude::*;
 use common::privkey::PrivKeyError;
 use common::rpc_task::{spawn_rpc_task, RpcTaskError};
-use crypto::hw_task::HwInteractionError;
+use crypto::trezor::trezor_rpc_task::TrezorInteractionError;
 use crypto::{CryptoCtx, CryptoInitError, HwError};
 use derive_more::Display;
 use mm2_libp2p::{spawn_gossipsub, AdexBehaviourError, NodeType, RelayAddress, RelayAddressError, WssCerts};
@@ -144,8 +144,10 @@ pub enum MmInitError {
     InvalidPassphrase(PrivKeyError),
     #[display(fmt = "Invalid Hardware Wallet device response: {}", _0)]
     InvalidHardwareDeviceResponse(String),
+    #[display(fmt = "No Trezor device available")]
+    NoTrezorDeviceAvailable,
     #[display(fmt = "Hardware Wallet error: {}", _0)]
-    HardwareWalletError(HwError),
+    HardwareWalletError(String),
     #[display(fmt = "Unexpected user action. Expected '{}'", expected)]
     UnexpectedUserAction {
         expected: String,
@@ -194,13 +196,15 @@ impl From<OrdermatchInitError> for MmInitError {
 impl From<CryptoInitError> for MmInitError {
     fn from(e: CryptoInitError) -> Self {
         match e {
-            e @ CryptoInitError::InitializedAlready => MmInitError::Internal(e.to_string()),
+            e @ CryptoInitError::InitializedAlready | e @ CryptoInitError::NotInitialized => {
+                MmInitError::Internal(e.to_string())
+            },
             CryptoInitError::NullStringPassphrase => MmInitError::NullStringPassphrase,
             CryptoInitError::InvalidPassphrase(pass) => MmInitError::InvalidPassphrase(pass),
             CryptoInitError::InvalidXpub(bip32_err) => {
                 MmInitError::InvalidHardwareDeviceResponse(bip32_err.to_string())
             },
-            CryptoInitError::HardwareWalletError(hw) => MmInitError::HardwareWalletError(hw),
+            CryptoInitError::HardwareWalletError(hw) => MmInitError::from(hw),
             CryptoInitError::Internal(internal) => MmInitError::Internal(internal),
         }
     }
@@ -209,8 +213,9 @@ impl From<CryptoInitError> for MmInitError {
 impl From<HwError> for MmInitError {
     fn from(e: HwError) -> Self {
         match e {
+            HwError::NoTrezorDeviceAvailable => MmInitError::NoTrezorDeviceAvailable,
             HwError::Internal(internal) => MmInitError::Internal(internal),
-            hw => MmInitError::HardwareWalletError(hw),
+            hw => MmInitError::HardwareWalletError(hw.to_string()),
         }
     }
 }
@@ -230,12 +235,13 @@ impl From<RpcTaskError> for MmInitError {
     }
 }
 
-impl From<HwInteractionError> for MmInitError {
-    fn from(e: HwInteractionError) -> Self {
+impl From<TrezorInteractionError> for MmInitError {
+    fn from(e: TrezorInteractionError) -> Self {
         match e {
-            HwInteractionError::HwError(hw) => MmInitError::from(hw),
-            HwInteractionError::RpcTaskError(rpc) => MmInitError::from(rpc),
-            HwInteractionError::UnexpectedUserAction { expected } => MmInitError::UnexpectedUserAction { expected },
+            TrezorInteractionError::TrezorError(trezor) => MmInitError::from(HwError::from(trezor)),
+            TrezorInteractionError::RpcTaskError(rpc) => MmInitError::from(rpc),
+            TrezorInteractionError::UnexpectedUserAction { expected } => MmInitError::UnexpectedUserAction { expected },
+            TrezorInteractionError::Internal(internal) => MmInitError::Internal(internal),
         }
     }
 }

@@ -1,18 +1,15 @@
 //! This file is inspired by https://github.com/tezedge/tezedge-client/blob/master/trezor_api/src/client.rs
 
-use crate::constants::TrezorCoin;
 use crate::error::OperationFailure;
 use crate::proto::messages::MessageType;
-use crate::proto::messages_bitcoin as proto_bitcoin;
 use crate::proto::messages_common as proto_common;
 use crate::proto::messages_management as proto_management;
 use crate::proto::{ProtoMessage, TrezorMessage};
 use crate::response::TrezorResponse;
 use crate::transport::Transport;
-use crate::{ecdsa_curve_to_string, serialize_derivation_path, TrezorError, TrezorResult};
+use crate::{TrezorError, TrezorResult};
 use common::mm_error::prelude::*;
 use futures::lock::Mutex as AsyncMutex;
-use hw_common::primitives::{DerivationPath, EcdsaCurve};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -31,37 +28,6 @@ impl Deref for TrezorClient {
     type Target = TrezorClientImpl;
 
     fn deref(&self) -> &Self::Target { &self.0 }
-}
-
-// Bitcoin(UTXO) operations.
-impl TrezorClient {
-    pub async fn get_utxo_address(
-        &self,
-        path: &DerivationPath,
-        coin: TrezorCoin,
-    ) -> TrezorResult<TrezorResponse<String>> {
-        let mut req = proto_bitcoin::GetAddress::default();
-        req.set_address_n(serialize_derivation_path(path));
-        req.set_coin_name(coin.to_string());
-
-        let result_handler = Box::new(|m: proto_bitcoin::Address| Ok(m.get_address().to_string()));
-        self.call(req, result_handler).await
-    }
-
-    pub async fn get_public_key(
-        &self,
-        path: &DerivationPath,
-        coin: TrezorCoin,
-        ecdsa_curve: EcdsaCurve,
-    ) -> TrezorResult<TrezorResponse<String>> {
-        let mut req = proto_bitcoin::GetPublicKey::default();
-        req.set_address_n(serialize_derivation_path(path));
-        req.set_coin_name(coin.to_string());
-        req.set_ecdsa_curve_name(ecdsa_curve_to_string(ecdsa_curve));
-
-        let result_handler = Box::new(|m: proto_bitcoin::PublicKey| Ok(m.get_xpub().to_string()));
-        self.call(req, result_handler).await
-    }
 }
 
 impl TrezorClient {
@@ -138,5 +104,12 @@ impl TrezorClient {
 
         let result_handler = Box::new(Ok);
         self.call(req, result_handler).await?.ok()
+    }
+
+    pub(crate) async fn cancel_last_op(&self) {
+        let req = proto_management::Cancel::new();
+        let result_handler = Box::new(|_m: proto_common::Failure| Ok(()));
+        // Ignore result.
+        self.call(req, result_handler).await.ok();
     }
 }
