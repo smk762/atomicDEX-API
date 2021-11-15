@@ -3,12 +3,13 @@ use crate::{TransactionDetails, WithdrawRequest};
 use async_trait::async_trait;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
-use common::rpc_task::{spawn_rpc_task, RpcTask, RpcTaskHandle, RpcTaskStatus, TaskId};
-use common::HttpStatusCode;
+use common::rpc_task::{spawn_rpc_task, RpcTask, RpcTaskError, RpcTaskHandle, RpcTaskStatus, TaskId};
+use common::{HttpStatusCode, SuccessResponse};
 use crypto::trezor::trezor_rpc_task::TrezorInteractionError;
 use crypto::trezor::TrezorPinMatrix3x3Response;
 use derive_more::Display;
 use http::StatusCode;
+use serde_json as json;
 use std::convert::TryFrom;
 
 pub type WithdrawTaskHandle = RpcTaskHandle<
@@ -28,6 +29,27 @@ pub enum WithdrawStatusError {
 
 impl HttpStatusCode for WithdrawStatusError {
     fn status_code(&self) -> StatusCode { StatusCode::NOT_FOUND }
+}
+
+#[derive(Display, Serialize, SerializeErrorType)]
+#[serde(tag = "error_type", content = "error_data")]
+pub enum WithdrawUserActionError {
+    NoSuchTask(TaskId),
+    // UnexpectedUserAction,
+    Internal(String),
+}
+
+impl From<RpcTaskError> for WithdrawUserActionError {
+    fn from(e: RpcTaskError) -> Self {
+        match e {
+            RpcTaskError::NoSuchTask(task_id) => WithdrawUserActionError::NoSuchTask(task_id),
+            error => WithdrawUserActionError::Internal(error.to_string()),
+        }
+    }
+}
+
+impl HttpStatusCode for WithdrawUserActionError {
+    fn status_code(&self) -> StatusCode { StatusCode::INTERNAL_SERVER_ERROR }
 }
 
 #[async_trait]
@@ -105,6 +127,24 @@ impl TryFrom<WithdrawUserAction> for TrezorPinMatrix3x3Response {
             WithdrawUserAction::TrezorPin(pin) => Ok(pin),
         }
     }
+}
+
+#[derive(Deserialize)]
+pub struct WithdrawUserActionRequest {
+    task_id: TaskId,
+    user_action: WithdrawUserAction,
+}
+
+pub async fn withdraw_user_action(
+    ctx: MmArc,
+    req: WithdrawUserActionRequest,
+) -> Result<SuccessResponse, MmError<WithdrawUserActionError>> {
+    let mut rpc_manager = ctx.rpc_task_manager();
+    // TODO refactor it when `RpcTaskManager` is generic
+    let response_json =
+        json::to_value(req.user_action).map_to_mm(|e| WithdrawUserActionError::Internal(e.to_string()))?;
+    rpc_manager.on_user_action(req.task_id, response_json)?;
+    Ok(SuccessResponse::new())
 }
 
 #[async_trait]

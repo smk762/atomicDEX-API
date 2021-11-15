@@ -5,7 +5,7 @@ use crate::{mm2::lp_stats::{add_node_to_version_stat, remove_node_from_version_s
                             stop_version_stat_collection, update_version_stat_collection},
             mm2::lp_swap::trade_preimage_rpc,
             mm2::rpc::get_public_key::get_public_key};
-use coins::init_withdraw::{init_withdraw, withdraw_status};
+use coins::init_withdraw::{init_withdraw, withdraw_status, withdraw_user_action};
 use coins::lightning::enable_lightning;
 use coins::utxo::slp::SlpToken;
 use coins::{add_delegation, get_staking_infos, remove_delegation, withdraw};
@@ -114,6 +114,7 @@ async fn dispatcher_v2(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Re
         "trade_preimage" => handle_mmrpc(ctx, request, trade_preimage_rpc).await,
         "withdraw" => handle_mmrpc(ctx, request, withdraw).await,
         "withdraw_status" => handle_mmrpc(ctx, request, withdraw_status).await,
+        "withdraw_user_action" => handle_mmrpc(ctx, request, withdraw_user_action).await,
         _ => MmError::err(DispatcherError::NoSuchMethod { method: request.method }),
     }
 }
