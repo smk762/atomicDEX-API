@@ -34,6 +34,7 @@
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, ParseBigDecimalError, Zero};
 use common::executor::{spawn, Timer};
+use common::log::warn;
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsWeak;
@@ -56,6 +57,7 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use utxo_signer::with_key_pair::UtxoSignWithKeyPairError;
 #[cfg(feature = "zhtlc")]
 use zcash_primitives::transaction::Transaction as ZTransaction;
@@ -116,6 +118,7 @@ use crate::utxo::bch::{bch_coin_from_conf_and_params, BchActivationParams, BchCo
 use crate::utxo::rpc_clients::UtxoRpcError;
 use crate::utxo::slp::{slp_addr_from_pubkey_str, SlpFeeDetails};
 use crate::utxo::{UnsupportedAddr, UtxoActivationParams};
+use crypto::CryptoCtx;
 #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
 use z_coin::{z_coin_from_conf_and_params, ZCoin};
 
@@ -131,6 +134,12 @@ cfg_wasm32! {
 
     pub type TxHistoryDbLocked<'a> = DbLocked<'a, TxHistoryDb>;
 }
+
+/// TODO remove this as soon as possible.
+const DEFAULT_PRIV_KEY: [u8; 32] = [
+    3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72, 172,
+    110, 180, 13, 123, 179, 10, 49,
+];
 
 pub type BalanceResult<T> = Result<T, MmError<BalanceError>>;
 pub type BalanceFut<T> = Box<dyn Future<Item = T, Error = MmError<BalanceError>> + Send>;
@@ -440,10 +449,17 @@ pub enum WithdrawFee {
     },
 }
 
-#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub enum WithdrawFromAddress {
+    DerivationPath { derivation_path: String },
+    // Address { address: String },
+}
+
 #[derive(Deserialize)]
 pub struct WithdrawRequest {
     coin: String,
+    from: Option<WithdrawFromAddress>,
     to: String,
     #[serde(default)]
     amount: BigDecimal,
@@ -480,6 +496,7 @@ impl WithdrawRequest {
     pub fn new_max(coin: String, to: String) -> WithdrawRequest {
         WithdrawRequest {
             coin,
+            from: None,
             to,
             amount: 0.into(),
             max: true,
@@ -982,6 +999,25 @@ impl DelegationError {
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum WithdrawError {
+    /*                                              */
+    /*------------ Trezor device errors ------------*/
+    /*                                             */
+    #[display(fmt = "Trezor device disconnected")]
+    TrezorDisconnected,
+    #[display(fmt = "Trezor internal error: {}", _0)]
+    HardwareWalletInternal(String),
+    #[display(fmt = "No Trezor device available")]
+    NoTrezorDeviceAvailable,
+    #[display(fmt = "Unexpected Hardware Wallet device: {}", _0)]
+    FoundUnexpectedDevice(String),
+    /*                                         */
+    /*------------- WithdrawError -------------*/
+    /*                                         */
+    #[display(
+        fmt = "'{}' coin doesn't support 'init_withdraw' yet. Consider using 'withdraw' request instead",
+        coin
+    )]
+    CoinDoesntSupportInitWithdraw { coin: String },
     #[display(
         fmt = "Not enough {} to withdraw: available {}, required at least {}",
         coin,
@@ -1003,6 +1039,16 @@ pub enum WithdrawError {
     InvalidFeePolicy(String),
     #[display(fmt = "No such coin {}", coin)]
     NoSuchCoin { coin: String },
+    #[display(fmt = "Withdraw timed out {:?}", _0)]
+    Timeout(Duration),
+    #[display(fmt = "Unexpected user action. Expected '{}'", expected)]
+    UnexpectedUserAction { expected: String },
+    #[display(fmt = "Error deserializing user action: '{}'", _0)]
+    ErrorDeserializingUserAction(String),
+    #[display(fmt = "Request doesn't contain 'from' address")]
+    FromAddressIsNotSet,
+    #[display(fmt = "Error parsing 'from' address")]
+    ErrorParsingFromAddress(String),
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[display(fmt = "Internal error: {}", _0)]
@@ -1012,13 +1058,24 @@ pub enum WithdrawError {
 impl HttpStatusCode for WithdrawError {
     fn status_code(&self) -> StatusCode {
         match self {
-            WithdrawError::NotSufficientBalance { .. }
+            WithdrawError::NoSuchCoin { .. } => StatusCode::NOT_FOUND,
+            WithdrawError::Timeout(_) => StatusCode::REQUEST_TIMEOUT,
+            WithdrawError::CoinDoesntSupportInitWithdraw { .. }
+            | WithdrawError::UnexpectedUserAction { .. }
+            | WithdrawError::ErrorDeserializingUserAction(_)
+            | WithdrawError::NotSufficientBalance { .. }
             | WithdrawError::ZeroBalanceToWithdrawMax
             | WithdrawError::AmountTooLow { .. }
             | WithdrawError::InvalidAddress(_)
             | WithdrawError::InvalidFeePolicy(_)
-            | WithdrawError::NoSuchCoin { .. } => StatusCode::BAD_REQUEST,
-            WithdrawError::Transport(_) | WithdrawError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            | WithdrawError::FromAddressIsNotSet
+            | WithdrawError::ErrorParsingFromAddress(_) => StatusCode::BAD_REQUEST,
+            WithdrawError::NoTrezorDeviceAvailable
+            | WithdrawError::TrezorDisconnected
+            | WithdrawError::FoundUnexpectedDevice(_) => StatusCode::GONE,
+            WithdrawError::HardwareWalletInternal(_)
+            | WithdrawError::Transport(_)
+            | WithdrawError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
@@ -1549,7 +1606,20 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             "assuming that coin is not supported"
         ));
     }
-    let secret = &*ctx.secp256k1_key_pair().private().secret;
+    let secret = match *try_s!(CryptoCtx::from_ctx(ctx)) {
+        CryptoCtx::KeyPair { ref secp256k1_key_pair } => secp256k1_key_pair.private().secret.as_slice().to_vec(),
+        CryptoCtx::HardwareWallet(_) => {
+            warn!(
+                r#"'enable/electrum' RPC doesn't support coins activation with a Hardware Wallet yet.
+The '{}' coin will be activated with a default private key.
+It's possible to use the 'init_withdraw' RPC call ONLY.
+Please note this coin must not be used for any other purposes.
+"#,
+                ticker
+            );
+            DEFAULT_PRIV_KEY.to_vec()
+        },
+    };
 
     if coins_en["protocol"].is_null() {
         return ERR!(
@@ -1561,14 +1631,14 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
     let coin: MmCoinEnum = match &protocol {
         CoinProtocol::UTXO => {
             let params = try_s!(UtxoActivationParams::from_legacy_req(req));
-            try_s!(utxo_standard_coin_from_conf_and_params(ctx, ticker, &coins_en, params, secret).await).into()
+            try_s!(utxo_standard_coin_from_conf_and_params(ctx, ticker, &coins_en, params, &secret).await).into()
         },
         CoinProtocol::QTUM => {
             let params = try_s!(UtxoActivationParams::from_legacy_req(req));
-            try_s!(qtum_coin_from_conf_and_params(ctx, ticker, &coins_en, params, secret).await).into()
+            try_s!(qtum_coin_from_conf_and_params(ctx, ticker, &coins_en, params, &secret).await).into()
         },
         CoinProtocol::ETH | CoinProtocol::ERC20 { .. } => {
-            try_s!(eth_coin_from_conf_and_request(ctx, ticker, &coins_en, req, secret, protocol).await).into()
+            try_s!(eth_coin_from_conf_and_request(ctx, ticker, &coins_en, req, &secret, protocol).await).into()
         },
         CoinProtocol::QRC20 {
             platform,
@@ -1578,7 +1648,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             let contract_address = try_s!(qtum::contract_addr_from_str(contract_address));
 
             try_s!(
-                qrc20_coin_from_conf_and_params(ctx, ticker, platform, &coins_en, params, secret, contract_address)
+                qrc20_coin_from_conf_and_params(ctx, ticker, platform, &coins_en, params, &secret, contract_address)
                     .await
             )
             .into()
@@ -1587,7 +1657,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             let prefix = try_s!(CashAddrPrefix::from_str(&slp_prefix));
             let params = try_s!(BchActivationParams::from_legacy_req(req));
 
-            let bch = try_s!(bch_coin_from_conf_and_params(ctx, ticker, &coins_en, params, prefix, secret).await);
+            let bch = try_s!(bch_coin_from_conf_and_params(ctx, ticker, &coins_en, params, prefix, &secret).await);
             bch.into()
         },
         CoinProtocol::SLPTOKEN {
@@ -1611,7 +1681,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
         CoinProtocol::ZHTLC => {
             let dbdir = ctx.dbdir();
             let params = try_s!(UtxoActivationParams::from_legacy_req(req));
-            try_s!(z_coin_from_conf_and_params(ctx, ticker, &coins_en, params, secret, dbdir).await).into()
+            try_s!(z_coin_from_conf_and_params(ctx, ticker, &coins_en, params, &secret, dbdir).await).into()
         },
     };
 

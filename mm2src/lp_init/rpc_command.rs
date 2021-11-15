@@ -7,14 +7,7 @@ use derive_more::Display;
 use http::StatusCode;
 use serde_json as json;
 
-fn true_f() -> bool { true }
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MmInitStatusReq {
-    #[serde(default = "true_f")]
-    forget_if_finished: bool,
-}
+const FORGET_INIT_RESULT_IF_FINISHED: bool = false;
 
 #[derive(Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
@@ -26,14 +19,17 @@ impl HttpStatusCode for MmInitStatusError {
     fn status_code(&self) -> StatusCode { StatusCode::INTERNAL_SERVER_ERROR }
 }
 
-pub async fn mm_init_status(ctx: MmArc, req: MmInitStatusReq) -> Result<RpcTaskStatus, MmError<MmInitStatusError>> {
+#[derive(Deserialize)]
+pub struct MmInitStatusReq;
+
+pub async fn mm_init_status(ctx: MmArc, _req: MmInitStatusReq) -> Result<RpcTaskStatus, MmError<MmInitStatusError>> {
     let init_task_id = *ctx
         .mm_init_task_id
         .ok_or(MmInitStatusError::InitializationNotStartedYet)?;
 
     let mut rpc_manager = ctx.rpc_task_manager();
     rpc_manager
-        .task_status(init_task_id, req.forget_if_finished)
+        .task_status(init_task_id, FORGET_INIT_RESULT_IF_FINISHED)
         .or_mm_err(|| MmInitStatusError::InitializationNotStartedYet)
 }
 

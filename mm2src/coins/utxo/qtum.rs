@@ -1,13 +1,16 @@
 use super::*;
+use crate::init_withdraw::{InitWithdrawCoin, WithdrawTaskHandle};
 use crate::utxo::qtum::qtum_delegation::QtumStakingAbiError;
 use crate::{eth, CanRefundHtlc, CoinBalance, CoinBalancesWithTokens, DelegationFut, NegotiateSwapContractAddrErr,
             StakingInfosFut, SwapOps, TradePreimageValue, ValidateAddressResult, WithdrawFut};
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
+use crypto::trezor::TrezorCoin;
 use ethereum_types::H160;
 use futures::{FutureExt, TryFutureExt};
 use keys::AddressHash;
 use serialization::CoinVariant;
+use utxo_signer::UtxoSignerOps;
 
 pub const QTUM_STANDARD_DUST: u64 = 1000;
 
@@ -325,6 +328,18 @@ impl UtxoCommonOps for QtumCoin {
 
     fn addr_format_for_standard_scripts(&self) -> UtxoAddressFormat {
         utxo_common::addr_format_for_standard_scripts(self)
+    }
+
+    fn address_from_pubkey(&self, pubkey: &Public) -> Address {
+        let conf = &self.utxo_arc.conf;
+        utxo_common::address_from_pubkey(
+            pubkey,
+            conf.pub_addr_prefix,
+            conf.pub_t_addr_prefix,
+            conf.checksum_type,
+            conf.bech32_hrp.clone(),
+            self.utxo_arc.my_address.addr_format.clone(),
+        )
     }
 }
 
@@ -678,6 +693,37 @@ impl MmCoin for QtumCoin {
     fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
         utxo_common::is_coin_protocol_supported(&self.utxo_arc, info)
     }
+}
+
+#[async_trait]
+impl InitWithdrawCoin for QtumCoin {
+    async fn init_withdraw(
+        &self,
+        ctx: MmArc,
+        req: WithdrawRequest,
+        task_handle: &WithdrawTaskHandle,
+    ) -> Result<TransactionDetails, MmError<WithdrawError>> {
+        utxo_common::init_withdraw(ctx, self.clone(), req, task_handle).await
+    }
+}
+
+impl UtxoSignerOps for QtumCoin {
+    type TxGetter = UtxoRpcClientEnum;
+
+    fn trezor_coin(&self) -> UtxoSignTxResult<TrezorCoin> {
+        self.utxo_arc
+            .conf
+            .trezor_coin
+            .or_mm_err(|| UtxoSignTxError::CoinNotSupportedWithTrezor {
+                coin: self.utxo_arc.conf.ticker.clone(),
+            })
+    }
+
+    fn fork_id(&self) -> u32 { self.utxo_arc.conf.fork_id }
+
+    fn branch_id(&self) -> u32 { self.utxo_arc.conf.consensus_branch_id }
+
+    fn tx_provider(&self) -> Self::TxGetter { self.utxo_arc.rpc_client.clone() }
 }
 
 /// Parse contract address (H160) from string.

@@ -4,7 +4,7 @@ use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::rpc_task::{RpcTask, RpcTaskHandle};
 use common::SuccessResponse;
-use crypto::trezor::trezor_rpc_task::{TrezorInteractWithUser, TrezorInteractionError};
+use crypto::trezor::trezor_rpc_task::{TrezorInteractWithUser, TrezorInteractionError, TrezorInteractionStatuses};
 use crypto::trezor::TrezorPinMatrix3x3Response;
 use crypto::{CryptoCtx, HwWalletType};
 use serde_json as json;
@@ -85,14 +85,16 @@ impl RpcTask for MmInitTask {
                     .interact_with_user_if_required(
                         MM_INIT_TREZOR_PIN_TIMEOUT,
                         task_handle,
-                        MmInitInProgressStatus::ReadPublicKeyFromTrezor,
-                        MmInitAwaitingStatus::WaitForTrezorPin,
+                        TrezorInteractionStatuses {
+                            on_button_request: MmInitInProgressStatus::ReadPublicKeyFromTrezor,
+                            on_pin_request: MmInitAwaitingStatus::WaitForTrezorPin,
+                            on_ready: MmInitInProgressStatus::Initializing,
+                        },
                     )
                     .await??;
             },
         }
 
-        task_handle.update_in_progress_status(MmInitInProgressStatus::Initializing)?;
         lp_init_continue(self.ctx.clone()).await.map(|_| SuccessResponse::new())
     }
 }

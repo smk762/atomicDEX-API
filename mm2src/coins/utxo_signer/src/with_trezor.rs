@@ -2,6 +2,7 @@ use crate::sign_common::{complete_tx, p2pkh_spend_with_signature};
 use crate::sign_params::{SendingOutputInfo, SpendingInputInfo, UtxoSignTxParams};
 use crate::{TxProvider, UtxoSignTxError, UtxoSignTxResult};
 use chain::{Transaction as UtxoTx, TransactionOutput};
+use common::log::debug;
 use common::mm_error::prelude::*;
 use crypto::trezor::utxo::{PrevTx, PrevTxInput, PrevTxOutput, TrezorInputScriptType, TxOutput, TxSignResult,
                            UnsignedTxInput, UnsignedUtxoTx};
@@ -28,7 +29,11 @@ impl<TxP: TxProvider + Send + Sync> TrezorTxSigner<TxP> {
 
         let trezor_unsigned_tx = self.get_trezor_unsigned_tx().await?;
 
-        let TxSignResult { signatures, .. } = self.trezor.sign_utxo_tx(trezor_unsigned_tx).await?;
+        let TxSignResult {
+            signatures,
+            serialized_tx,
+        } = self.trezor.sign_utxo_tx(trezor_unsigned_tx).await?;
+        debug!("Transaction signed by Trezor: {}", hex::encode(serialized_tx));
         if signatures.len() != self.params.inputs_count() {
             return MmError::err(UtxoSignTxError::InvalidSignaturesNumber {
                 actual: signatures.len(),

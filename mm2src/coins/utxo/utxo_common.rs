@@ -1,4 +1,8 @@
 use super::*;
+use crate::init_withdraw::WithdrawTaskHandle;
+use crate::utxo::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcResult};
+use crate::utxo::utxo_withdraw::{InitUtxoWithdraw, StandardUtxoWithdraw, UtxoWithdraw};
+use crate::{CanRefundHtlc, CoinBalance, TradePreimageValue, TxFeeDetails, ValidateAddressResult, WithdrawResult};
 use bigdecimal::{BigDecimal, Zero};
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
 use chain::constants::SEQUENCE_FINAL;
@@ -18,8 +22,7 @@ use keys::bytes::Bytes;
 use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHash, Public, SegwitAddress, Type as ScriptType};
 use primitives::hash::H512;
 use rpc::v1::types::{Bytes as BytesJson, TransactionInputEnum, H256 as H256Json};
-use script::{Builder, Opcode, Script, ScriptAddress, SignatureVersion, TransactionInputSigner,
-             UnsignedTransactionInput};
+use script::{Builder, Opcode, Script, ScriptAddress, TransactionInputSigner, UnsignedTransactionInput};
 use secp256k1::{PublicKey, Signature};
 use serde_json::{self as json};
 use serialization::{deserialize, serialize, serialize_with_flags, CoinVariant, SERIALIZE_TRANSACTION_WITNESS};
@@ -27,12 +30,10 @@ use std::cmp::Ordering;
 use std::collections::hash_map::{Entry, HashMap};
 use std::str::FromStr;
 use std::sync::atomic::Ordering as AtomicOrdering;
-use utxo_signer::with_key_pair::{p2sh_spend, sign_tx};
+use utxo_signer::with_key_pair::p2sh_spend;
+use utxo_signer::UtxoSignerOps;
 
 pub use chain::Transaction as UtxoTx;
-
-use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcResult};
-use crate::{CanRefundHtlc, CoinBalance, TradePreimageValue, TxFeeDetails, ValidateAddressResult, WithdrawResult};
 
 pub const DEFAULT_FEE_VOUT: usize = 0;
 pub const DEFAULT_SWAP_TX_SPEND_SIZE: u64 = 305;
@@ -292,6 +293,7 @@ where
 
 pub struct UtxoTxBuilder<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> {
     coin: &'a T,
+    from: Address,
     /// The available inputs that *can* be included in the resulting tx
     available_inputs: Vec<UnspentInfo>,
     fee_policy: FeePolicy,
@@ -311,6 +313,7 @@ impl<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> UtxoTxBuilder<'a, T> {
         UtxoTxBuilder {
             tx: coin.as_ref().transaction_preimage(),
             coin,
+            from: coin.as_ref().my_address.clone(),
             available_inputs: vec![],
             fee_policy: FeePolicy::SendExact,
             fee: None,
@@ -322,6 +325,11 @@ impl<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> UtxoTxBuilder<'a, T> {
             min_relay_fee: None,
             dust: None,
         }
+    }
+
+    pub fn with_from_address(mut self, from: Address) -> Self {
+        self.from = from;
+        self
     }
 
     pub fn with_dust(mut self, dust_amount: u64) -> Self {
@@ -453,12 +461,12 @@ impl<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> UtxoTxBuilder<'a, T> {
     }
 
     /// Generates unsigned transaction (TransactionInputSigner) from specified utxos and outputs.
-    /// Sends the change (inputs amount - outputs amount) to "my_address"
+    /// Sends the change (inputs amount - outputs amount) to the [`UtxoTxBuilder::from`] address.
     /// Also returns additional transaction data
     pub async fn build(mut self) -> GenerateTxResult {
         let coin = self.coin;
         let dust: u64 = self.dust();
-        let change_script_pubkey = output_script(&coin.as_ref().my_address, ScriptType::P2PKH).to_bytes();
+        let change_script_pubkey = output_script(&self.from, ScriptType::P2PKH).to_bytes();
 
         let actual_tx_fee = match self.fee {
             Some(fee) => fee,
@@ -1459,108 +1467,21 @@ pub fn is_asset_chain(coin: &UtxoCoinFields) -> bool { coin.conf.asset_chain }
 
 pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> WithdrawResult
 where
-    T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps + Send + Sync + 'static,
 {
-    let decimals = coin.as_ref().decimals;
+    StandardUtxoWithdraw::init(coin, req)?.build().await
+}
 
-    let conf = &coin.as_ref().conf;
-
-    let to = coin
-        .address_from_str(&req.to)
-        .map_to_mm(WithdrawError::InvalidAddress)?;
-
-    let is_p2pkh = to.prefix == conf.pub_addr_prefix && to.t_addr_prefix == conf.pub_t_addr_prefix;
-    let is_p2sh = to.prefix == conf.p2sh_addr_prefix && to.t_addr_prefix == conf.p2sh_t_addr_prefix && conf.segwit;
-
-    let script_type = if is_p2pkh {
-        ScriptType::P2PKH
-    } else if is_p2sh {
-        ScriptType::P2SH
-    } else {
-        return MmError::err(WithdrawError::InvalidAddress("Expected either P2PKH or P2SH".into()));
-    };
-
-    let script_pubkey = output_script(&to, script_type).to_bytes();
-
-    let signature_version = match coin.as_ref().my_address.addr_format {
-        UtxoAddressFormat::Segwit => SignatureVersion::WitnessV0,
-        _ => conf.signature_version,
-    };
-
-    let _utxo_lock = UTXO_LOCK.lock().await;
-    let (unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
-    let (value, fee_policy) = if req.max {
-        (
-            unspents.iter().fold(0, |sum, unspent| sum + unspent.value),
-            FeePolicy::DeductFromOutput(0),
-        )
-    } else {
-        let value = sat_from_big_decimal(&req.amount, decimals)?;
-        (value, FeePolicy::SendExact)
-    };
-    let outputs = vec![TransactionOutput { value, script_pubkey }];
-
-    let mut tx_builder = UtxoTxBuilder::new(&coin)
-        .add_available_inputs(unspents)
-        .add_outputs(outputs)
-        .with_fee_policy(fee_policy);
-
-    match req.fee {
-        Some(WithdrawFee::UtxoFixed { amount }) => {
-            let fixed = sat_from_big_decimal(&amount, decimals)?;
-            tx_builder = tx_builder.with_fee(ActualTxFee::Fixed(fixed));
-        },
-        Some(WithdrawFee::UtxoPerKbyte { amount }) => {
-            let dynamic = sat_from_big_decimal(&amount, decimals)?;
-            tx_builder = tx_builder.with_fee(ActualTxFee::Dynamic(dynamic));
-        },
-        Some(fee_policy) => {
-            let error = format!(
-                "Expected 'UtxoFixed' or 'UtxoPerKbyte' fee types, found {:?}",
-                fee_policy
-            );
-            return MmError::err(WithdrawError::InvalidFeePolicy(error));
-        },
-        None => (),
-    };
-    let (unsigned, data) = tx_builder.build().await.mm_err(|gen_tx_error| {
-        WithdrawError::from_generate_tx_error(gen_tx_error, coin.ticker().to_owned(), decimals)
-    })?;
-    let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
-    let signed = sign_tx(
-        unsigned,
-        &coin.as_ref().key_pair,
-        prev_script,
-        signature_version,
-        coin.as_ref().conf.fork_id,
-    )?;
-
-    let fee_amount = data.fee_amount + data.unused_change.unwrap_or_default();
-    let fee_details = UtxoFeeDetails {
-        amount: big_decimal_from_sat(fee_amount as i64, decimals),
-    };
-    let my_address = coin.my_address().map_to_mm(WithdrawError::InternalError)?;
-    let tx_hex = match coin.as_ref().my_address.addr_format {
-        UtxoAddressFormat::Segwit => serialize_with_flags(&signed, SERIALIZE_TRANSACTION_WITNESS).into(),
-        _ => serialize(&signed).into(),
-    };
-    Ok(TransactionDetails {
-        from: vec![my_address],
-        to: vec![req.to],
-        total_amount: big_decimal_from_sat(data.spent_by_me as i64, decimals),
-        spent_by_me: big_decimal_from_sat(data.spent_by_me as i64, decimals),
-        received_by_me: big_decimal_from_sat(data.received_by_me as i64, decimals),
-        my_balance_change: big_decimal_from_sat(data.received_by_me as i64 - data.spent_by_me as i64, decimals),
-        tx_hash: signed.hash().reversed().to_vec().into(),
-        tx_hex,
-        fee_details: Some(fee_details.into()),
-        block_height: 0,
-        coin: coin.as_ref().conf.ticker.clone(),
-        internal_id: vec![].into(),
-        timestamp: now_ms() / 1000,
-        kmd_rewards: data.kmd_rewards,
-        transaction_type: Default::default(),
-    })
+pub async fn init_withdraw<T>(
+    ctx: MmArc,
+    coin: T,
+    req: WithdrawRequest,
+    task_handle: &WithdrawTaskHandle,
+) -> WithdrawResult
+where
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps + UtxoSignerOps + Send + Sync + 'static,
+{
+    InitUtxoWithdraw::init(ctx, coin, req, task_handle).await?.build().await
 }
 
 pub fn decimals(coin: &UtxoCoinFields) -> u8 { coin.decimals }
@@ -2643,6 +2564,24 @@ pub fn address_from_raw_pubkey(
         hrp,
         addr_format,
     })
+}
+
+pub fn address_from_pubkey(
+    pub_key: &Public,
+    prefix: u8,
+    t_addr_prefix: u8,
+    checksum_type: ChecksumType,
+    hrp: Option<String>,
+    addr_format: UtxoAddressFormat,
+) -> Address {
+    Address {
+        t_addr_prefix,
+        prefix,
+        hash: pub_key.address_hash(),
+        checksum_type,
+        hrp,
+        addr_format,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

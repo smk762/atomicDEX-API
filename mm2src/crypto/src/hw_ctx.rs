@@ -23,6 +23,7 @@ impl HardwareWalletCtx {
     pub fn hw_wallet_type(&self) -> HwWalletType { self.hw_wallet_type }
 
     /// Connects to a Trezor device and checks if MM was initialized from this particular device.
+    /// TODO consider taking a timeout for connecting.
     pub async fn trezor(&self) -> TrezorResponseReceiver<HwResult<TrezorClient>> {
         let trezor = match HwClient::trezor().await {
             Ok(trezor) => trezor,

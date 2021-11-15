@@ -115,6 +115,7 @@ fn utxo_coin_fields_for_test(
             estimate_fee_blocks: 1,
             lightning: false,
             network: None,
+            trezor_coin: None,
         },
         decimals: 8,
         dust_amount: UTXO_DUST_AMOUNT,
@@ -501,6 +502,7 @@ fn test_withdraw_impl_set_fixed_fee() {
 
     let withdraw_req = WithdrawRequest {
         amount: 1.into(),
+        from: None,
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
         coin: TEST_COIN_NAME.into(),
         max: false,
@@ -540,6 +542,7 @@ fn test_withdraw_impl_sat_per_kb_fee() {
 
     let withdraw_req = WithdrawRequest {
         amount: 1.into(),
+        from: None,
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
         coin: TEST_COIN_NAME.into(),
         max: false,
@@ -582,6 +585,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max() {
 
     let withdraw_req = WithdrawRequest {
         amount: "9.9789".parse().unwrap(),
+        from: None,
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
         coin: TEST_COIN_NAME.into(),
         max: false,
@@ -626,6 +630,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_equal_to_max_dust_included_to_fee() 
 
     let withdraw_req = WithdrawRequest {
         amount: "9.9789".parse().unwrap(),
+        from: None,
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
         coin: TEST_COIN_NAME.into(),
         max: false,
@@ -670,6 +675,7 @@ fn test_withdraw_impl_sat_per_kb_fee_amount_over_max() {
 
     let withdraw_req = WithdrawRequest {
         amount: "9.97939455".parse().unwrap(),
+        from: None,
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
         coin: TEST_COIN_NAME.into(),
         max: false,
@@ -702,6 +708,7 @@ fn test_withdraw_impl_sat_per_kb_fee_max() {
 
     let withdraw_req = WithdrawRequest {
         amount: 0.into(),
+        from: None,
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
         coin: TEST_COIN_NAME.into(),
         max: true,
@@ -761,6 +768,7 @@ fn test_withdraw_kmd_rewards_impl(
 
     let withdraw_req = WithdrawRequest {
         amount: BigDecimal::from_str("0.00001").unwrap(),
+        from: None,
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
         coin: "KMD".to_owned(),
         max: false,
@@ -833,6 +841,7 @@ fn test_withdraw_rick_rewards_none() {
 
     let withdraw_req = WithdrawRequest {
         amount: BigDecimal::from_str("0.00001").unwrap(),
+        from: None,
         to: "RQq6fWoy8aGGMLjvRfMY5mBNVm2RQxJyLa".to_string(),
         coin: "RICK".to_owned(),
         max: false,
@@ -3044,6 +3053,7 @@ fn test_withdraw_to_p2pkh() {
 
     let withdraw_req = WithdrawRequest {
         amount: 1.into(),
+        from: None,
         to: p2pkh_address.to_string(),
         coin: TEST_COIN_NAME.into(),
         max: false,
@@ -3090,6 +3100,7 @@ fn test_withdraw_to_p2sh() {
 
     let withdraw_req = WithdrawRequest {
         amount: 1.into(),
+        from: None,
         to: p2sh_address.to_string(),
         coin: TEST_COIN_NAME.into(),
         max: false,
@@ -3136,6 +3147,7 @@ fn test_withdraw_to_p2wpkh() {
 
     let withdraw_req = WithdrawRequest {
         amount: 1.into(),
+        from: None,
         to: p2wpkh_address.to_string(),
         coin: TEST_COIN_NAME.into(),
         max: false,

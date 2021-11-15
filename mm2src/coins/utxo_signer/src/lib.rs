@@ -92,9 +92,9 @@ pub trait TxProvider {
     async fn get_rpc_transaction(&self, tx_hash: &H256Json) -> UtxoSignTxResult<RpcTransaction>;
 }
 
-pub enum SignPolicy {
-    WithTrezor(TrezorClient),
-    WithKeyPair(KeyPair),
+pub enum SignPolicy<'a> {
+    WithTrezor(&'a TrezorClient),
+    WithKeyPair(&'a KeyPair),
 }
 
 #[async_trait]
@@ -109,13 +109,11 @@ pub trait UtxoSignerOps {
 
     fn tx_provider(&self) -> Self::TxGetter;
 
-    async fn sign_policy(&self) -> UtxoSignTxResult<SignPolicy>;
-
-    async fn sign_tx(&self, params: UtxoSignTxParams) -> UtxoSignTxResult<UtxoTx> {
-        match self.sign_policy().await? {
+    async fn sign_tx(&self, params: UtxoSignTxParams, sign_policy: SignPolicy<'_>) -> UtxoSignTxResult<UtxoTx> {
+        match sign_policy {
             SignPolicy::WithTrezor(trezor) => {
                 let signer = with_trezor::TrezorTxSigner {
-                    trezor,
+                    trezor: trezor.clone(),
                     tx_provider: self.tx_provider(),
                     trezor_coin: self.trezor_coin()?,
                     params,
@@ -127,7 +125,7 @@ pub trait UtxoSignerOps {
             SignPolicy::WithKeyPair(key_pair) => {
                 let signed = with_key_pair::sign_tx(
                     params.unsigned_tx,
-                    &key_pair,
+                    key_pair,
                     params.prev_script,
                     params.signature_version,
                     self.fork_id(),

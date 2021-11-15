@@ -1,10 +1,13 @@
 use super::*;
+use crate::init_withdraw::{InitWithdrawCoin, WithdrawTaskHandle};
 use crate::{CanRefundHtlc, CoinBalance, CoinBalancesWithTokens, NegotiateSwapContractAddrErr, SwapOps,
             TradePreimageValue, ValidateAddressResult, WithdrawFut};
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
+use crypto::trezor::TrezorCoin;
 use futures::{FutureExt, TryFutureExt};
 use serialization::CoinVariant;
+use utxo_signer::UtxoSignerOps;
 
 #[derive(Clone, Debug)]
 pub struct UtxoStandardCoin {
@@ -174,6 +177,18 @@ impl UtxoCommonOps for UtxoStandardCoin {
 
     fn addr_format_for_standard_scripts(&self) -> UtxoAddressFormat {
         utxo_common::addr_format_for_standard_scripts(self)
+    }
+
+    fn address_from_pubkey(&self, pubkey: &Public) -> Address {
+        let conf = &self.utxo_arc.conf;
+        utxo_common::address_from_pubkey(
+            pubkey,
+            conf.pub_addr_prefix,
+            conf.pub_t_addr_prefix,
+            conf.checksum_type,
+            conf.bech32_hrp.clone(),
+            self.utxo_arc.my_address.addr_format.clone(),
+        )
     }
 }
 
@@ -522,4 +537,35 @@ impl MmCoin for UtxoStandardCoin {
     fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
         utxo_common::is_coin_protocol_supported(&self.utxo_arc, info)
     }
+}
+
+#[async_trait]
+impl InitWithdrawCoin for UtxoStandardCoin {
+    async fn init_withdraw(
+        &self,
+        ctx: MmArc,
+        req: WithdrawRequest,
+        task_handle: &WithdrawTaskHandle,
+    ) -> Result<TransactionDetails, MmError<WithdrawError>> {
+        utxo_common::init_withdraw(ctx, self.clone(), req, task_handle).await
+    }
+}
+
+impl UtxoSignerOps for UtxoStandardCoin {
+    type TxGetter = UtxoRpcClientEnum;
+
+    fn trezor_coin(&self) -> UtxoSignTxResult<TrezorCoin> {
+        self.utxo_arc
+            .conf
+            .trezor_coin
+            .or_mm_err(|| UtxoSignTxError::CoinNotSupportedWithTrezor {
+                coin: self.utxo_arc.conf.ticker.clone(),
+            })
+    }
+
+    fn fork_id(&self) -> u32 { self.utxo_arc.conf.fork_id }
+
+    fn branch_id(&self) -> u32 { self.utxo_arc.conf.consensus_branch_id }
+
+    fn tx_provider(&self) -> Self::TxGetter { self.utxo_arc.rpc_client.clone() }
 }

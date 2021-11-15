@@ -11,6 +11,7 @@ chain = { path = "../../mm2_bitcoin/chain" }
 common = { path = "../../common" }
 crypto = { path = "../../crypto" }
 derive_more = "0.99"
+hex = "0.4.2"
 keys = { path = "../../mm2_bitcoin/keys" }
 primitives = { path = "../../mm2_bitcoin/primitives" }
 rpc = { path = "../../mm2_bitcoin/rpc" }

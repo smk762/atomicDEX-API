@@ -60,7 +60,7 @@ pub mod for_tests {
 
         let der_path = DerivationPath::from_str("m/44'/141'/0'/0/0").expect("!DerivationPath::from_str");
         let addr = client
-            .get_utxo_address(der_path, TrezorCoin::Komodo)
+            .get_utxo_address(der_path, TrezorCoin::Komodo, false)
             .ack_all()
             .await
             .expect("!get_komodo_address::ack_all")

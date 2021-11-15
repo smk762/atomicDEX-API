@@ -30,6 +30,7 @@ pub mod rpc_clients;
 pub mod slp;
 pub mod utxo_common;
 pub mod utxo_standard;
+pub mod utxo_withdraw;
 
 #[cfg(not(target_arch = "wasm32"))] pub mod tx_cache;
 
@@ -45,6 +46,7 @@ use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsArc;
 use common::{now_ms, small_rng};
+use crypto::trezor::TrezorCoin;
 use derive_more::Display;
 #[cfg(not(target_arch = "wasm32"))] use dirs::home_dir;
 use futures::channel::mpsc;
@@ -85,7 +87,7 @@ use super::{BalanceError, BalanceFut, BalanceResult, CoinTransportMetrics, Coins
             FoundSwapTxSpend, HistorySyncState, KmdRewardsDetails, MarketCoinOps, MmCoin, NumConversError,
             NumConversResult, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee,
             TradePreimageError, TradePreimageFut, TradePreimageResult, Transaction, TransactionDetails,
-            TransactionEnum, TransactionFut, WithdrawError, WithdrawFee, WithdrawRequest};
+            TransactionEnum, TransactionFut, WithdrawError, WithdrawRequest};
 
 #[cfg(test)] pub mod utxo_tests;
 #[cfg(target_arch = "wasm32")] pub mod utxo_wasm_tests;
@@ -454,6 +456,7 @@ pub struct UtxoCoinConf {
     pub lightning: bool,
     /// bitcoin/testnet/signet/regtest Needed for lightning node to know which network to connect to
     pub network: Option<String>,
+    pub trezor_coin: Option<TrezorCoin>,
 }
 
 #[derive(Debug)]
@@ -472,6 +475,7 @@ pub struct UtxoCoinFields {
     /// RPC client
     pub rpc_client: UtxoRpcClientEnum,
     /// ECDSA key pair
+    /// The field is *deprecated*, please use `CryptoCtx` instead.
     pub key_pair: KeyPair,
     /// Lock the mutex when we deal with address utxos
     pub my_address: Address,
@@ -701,6 +705,8 @@ pub trait UtxoCommonOps: UtxoTxGenerationOps + UtxoTxBroadcastOps {
     async fn p2sh_tx_locktime(&self, htlc_locktime: u32) -> Result<u32, MmError<UtxoRpcError>>;
 
     fn addr_format_for_standard_scripts(&self) -> UtxoAddressFormat;
+
+    fn address_from_pubkey(&self, pubkey: &Public) -> Address;
 }
 
 #[async_trait]
@@ -1088,6 +1094,7 @@ impl<'a> UtxoConfBuilder<'a> {
         let estimate_fee_blocks = self.estimate_fee_blocks();
         let lightning = self.lightning();
         let network = self.network();
+        let trezor_coin = self.trezor_coin();
 
         Ok(UtxoCoinConf {
             ticker: self.ticker.to_owned(),
@@ -1119,6 +1126,7 @@ impl<'a> UtxoConfBuilder<'a> {
             estimate_fee_blocks,
             lightning,
             network,
+            trezor_coin,
         })
     }
 
@@ -1289,6 +1297,10 @@ impl<'a> UtxoConfBuilder<'a> {
     }
 
     fn network(&self) -> Option<String> { json::from_value(self.conf["network"].clone()).unwrap_or(None) }
+
+    fn trezor_coin(&self) -> Option<TrezorCoin> {
+        json::from_value(self.conf["trezor_coin"].clone()).unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

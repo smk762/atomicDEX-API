@@ -13,6 +13,7 @@ impl TrezorClient {
         &self,
         path: DerivationPath,
         coin: TrezorCoin,
+        show_display: bool,
     ) -> TrezorResponseReceiver<TrezorResult<String>> {
         let trezor = self.clone();
         let (response_tx, response_rx, shutdown_rx) = trezor_response_channel();
@@ -20,6 +21,7 @@ impl TrezorClient {
             let mut req = proto_bitcoin::GetAddress::default();
             req.set_address_n(serialize_derivation_path(&path));
             req.set_coin_name(coin.to_string());
+            req.set_show_display(show_display);
 
             let result_handler = Box::new(|m: proto_bitcoin::Address| Ok(m.get_address().to_string()));
             let result = trezor.call(req, result_handler).await;

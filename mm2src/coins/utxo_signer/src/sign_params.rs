@@ -3,7 +3,7 @@ use chain::TransactionOutput;
 use common::mm_error::prelude::*;
 use crypto::trezor::utxo::TrezorOutputScriptType;
 use crypto::DerivationPath;
-use keys::{Public as PublicKey, Type as ScriptType};
+use keys::Public as PublicKey;
 use script::{Script, SignatureVersion, TransactionInputSigner, UnsignedTransactionInput};
 
 impl UtxoSignTxError {
@@ -28,15 +28,11 @@ pub enum SpendingInputInfo {
 /// An additional info of a sending output.
 pub struct SendingOutputInfo {
     pub destination_address: String,
-    pub script_type: ScriptType,
 }
 
 impl SendingOutputInfo {
-    pub fn trezor_output_script_type(&self) -> TrezorOutputScriptType {
-        match self.script_type {
-            ScriptType::P2PKH | ScriptType::P2SH | ScriptType::P2WPKH => TrezorOutputScriptType::PayToAddress,
-        }
-    }
+    /// For now, returns [`TrezorOutputScriptType::PayToAddress`] since we don't support SLP tokens yet.
+    pub fn trezor_output_script_type(&self) -> TrezorOutputScriptType { TrezorOutputScriptType::PayToAddress }
 }
 
 pub struct UtxoSignTxParamsBuilder {
