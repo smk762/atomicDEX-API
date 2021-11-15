@@ -1,9 +1,10 @@
 use super::*;
 use crate::utxo::rpc_clients::{electrum_script_hash, BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient,
                                ElectrumNonce};
-use crate::utxo::utxo_common::big_decimal_from_sat;
+use crate::utxo::utxo_common::UtxoTxBuilder;
 use crate::utxo::utxo_standard::UtxoStandardCoin;
-use crate::{MarketCoinOps, MmCoin, WithdrawError, WithdrawFee, WithdrawRequest};
+use crate::utxo::{sign_tx, ActualTxFee, FeePolicy, UtxoCommonOps, UTXO_LOCK};
+use crate::{MarketCoinOps, WithdrawFee};
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::script::Script;
@@ -12,6 +13,7 @@ use bitcoin::consensus::encode::deserialize;
 use bitcoin::hash_types::{BlockHash, TxMerkleNode, Txid};
 use bitcoin::network::constants::Network;
 use bitcoin_hashes::{sha256d, Hash};
+use chain::TransactionOutput;
 use common::executor::{spawn, Timer};
 use common::ip_addr::fetch_external_ip;
 use common::log;
@@ -19,7 +21,6 @@ use common::log::LogState;
 use common::mm_ctx::{from_ctx, MmArc};
 use derive_more::Display;
 use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex};
-use keys::{AddressHashEnum, SegwitAddress};
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager};
 use lightning::chain::transaction::OutPoint;
 use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Filter, Watch, WatchedOutput};
@@ -36,7 +37,9 @@ use lightning_net_tokio::SocketDescriptor;
 use lightning_persister::FilesystemPersister;
 use rand::RngCore;
 use rpc::v1::types::H256;
+use script::{Builder, SignatureVersion};
 use secp256k1::PublicKey;
+use serialization::{serialize_with_flags, SERIALIZE_TRANSACTION_WITNESS};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -83,7 +86,7 @@ pub struct LightningContext {
     /// channel, also tracks HTLC preimages and forwards onion packets appropriately.
     pub channel_managers: AsyncMutex<HashMap<String, Arc<ChannelManager>>>,
     /// Keeps Track of the withdraw fee and if to withdraw the maximum amount for the funding transaction.
-    pub funding_tx_params: AsyncMutex<HashMap<u64, (Option<WithdrawFee>, bool)>>,
+    pub funding_tx_params: AsyncMutex<HashMap<u64, (Option<WithdrawFee>, FeePolicy)>>,
 }
 
 impl LightningContext {
@@ -993,32 +996,57 @@ async fn generate_funding_transaction(
     output_script: Script,
     user_channel_id: u64,
     coin: Arc<UtxoStandardCoin>,
-) -> Result<Transaction, WithdrawError> {
-    let utxo_coin = coin.as_ref().as_ref();
-    let addr = SegwitAddress::new(
-        &AddressHashEnum::WitnessScriptHash(output_script[2..].into()),
-        utxo_coin
-            .conf
-            .bech32_hrp
-            .clone()
-            .expect("Coin should have a bech32_hrp"),
-    )
-    .to_string();
-    let amount = big_decimal_from_sat(channel_value_satoshis as i64, utxo_coin.decimals);
+) -> OpenChannelResult<Transaction> {
+    let coin = coin.as_ref();
+
+    let _utxo_lock = UTXO_LOCK.lock().await;
+    let outputs = vec![TransactionOutput {
+        value: channel_value_satoshis,
+        script_pubkey: output_script.to_bytes().into(),
+    }];
 
     let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
-    let (fee, max) = {
-        let mut funding_tx_params = lightning_ctx.funding_tx_params.lock().await;
-        funding_tx_params.remove(&user_channel_id).unwrap_or((None, false))
-    };
+    let mut funding_tx_params = lightning_ctx.funding_tx_params.lock().await;
+    let (fee, fee_policy) = funding_tx_params
+        .remove(&user_channel_id)
+        .ok_or_else(|| OpenChannelError::InternalError("user_channel_id is not found".into()))?;
+    drop(funding_tx_params);
 
-    let withdraw_req = WithdrawRequest::new(utxo_coin.conf.ticker.clone(), addr, amount, max, fee);
-    let transaction_details = match coin.withdraw(withdraw_req).compat().await {
-        Ok(tx) => tx,
-        Err(e) => return Err(e.into_inner()),
+    let (unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
+    let mut tx_builder = UtxoTxBuilder::new(coin)
+        .add_available_inputs(unspents)
+        .add_outputs(outputs)
+        .with_fee_policy(fee_policy);
+
+    match fee {
+        Some(WithdrawFee::UtxoFixed { .. }) => {
+            tx_builder = tx_builder.with_fee(ActualTxFee::Fixed(channel_value_satoshis));
+        },
+        Some(WithdrawFee::UtxoPerKbyte { .. }) => {
+            tx_builder = tx_builder.with_fee(ActualTxFee::Dynamic(channel_value_satoshis));
+        },
+        Some(fee_policy) => {
+            let error = format!(
+                "Expected 'UtxoFixed' or 'UtxoPerKbyte' fee types, found {:?}",
+                fee_policy
+            );
+            return MmError::err(OpenChannelError::InternalError(error));
+        },
+        None => (),
     };
-    let final_tx: Transaction =
-        deserialize(&transaction_details.tx_hex.into_vec()).expect("Can't deserialize transaction");
+    let (unsigned, _) = tx_builder.build().await?;
+    let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
+    let signed = sign_tx(
+        unsigned,
+        &coin.as_ref().key_pair,
+        prev_script,
+        SignatureVersion::WitnessV0,
+        coin.as_ref().conf.fork_id,
+    )
+    .map_to_mm(OpenChannelError::InternalError)?;
+    let tx_hex: Vec<u8> = serialize_with_flags(&signed, SERIALIZE_TRANSACTION_WITNESS).into();
+
+    let final_tx: Transaction = deserialize(&tx_hex).expect("Can't deserialize transaction");
 
     Ok(final_tx)
 }

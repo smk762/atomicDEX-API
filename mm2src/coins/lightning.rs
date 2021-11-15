@@ -1,8 +1,10 @@
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::utxo::utxo_common::big_decimal_from_sat;
+use crate::utxo::{sat_from_big_decimal, FeePolicy, UtxoCommonOps, UTXO_LOCK};
+#[cfg(not(target_arch = "wasm32"))] use crate::MarketCoinOps;
 use crate::WithdrawFee;
+use bigdecimal::BigDecimal;
 #[cfg(not(target_arch = "wasm32"))]
 use common::ip_addr::myipaddr;
 use common::mm_ctx::MmArc;
@@ -163,17 +165,26 @@ pub async fn connect_to_lightning_node(ctx: MmArc, req: ConnectToNodeRequest) ->
     Ok(res.to_string())
 }
 
+mod named_unit_variant {
+    named_unit_variant!(max);
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ChannelOpenAmount {
+    Exact(BigDecimal),
+    #[serde(with = "named_unit_variant::max")]
+    Max,
+}
+
 fn get_true() -> bool { true }
 
 #[allow(dead_code)]
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub struct OpenChannelRequest {
     pub coin: String,
     pub node_id: String,
-    #[serde(default)]
-    pub amount_in_sat: u64,
-    #[serde(default)]
-    max: bool,
+    pub amount: ChannelOpenAmount,
     fee: Option<WithdrawFee>,
     #[serde(default = "get_true")]
     pub announce_channel: bool,
@@ -192,13 +203,15 @@ pub async fn open_channel(_ctx: MmArc, _req: OpenChannelRequest) -> OpenChannelR
 pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelResult<String> {
     let coin = lp_coinfind_or_err(&ctx, &req.coin).await?;
 
-    let balance = coin.my_spendable_balance().compat().await?;
-    if balance < big_decimal_from_sat(req.amount_in_sat as i64, coin.decimals()) {
-        return MmError::err(OpenChannelError::BalanceError(format!(
-            "Not enough balance to open channel, Current balance: {}",
-            balance
-        )));
-    }
+    let utxo_coin = match coin {
+        MmCoinEnum::UtxoCoin(utxo) => utxo,
+        _ => {
+            return MmError::err(OpenChannelError::UnsupportedCoin(
+                req.coin,
+                "Only utxo coins are supported in lightning".into(),
+            ))
+        },
+    };
 
     let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
 
@@ -208,6 +221,31 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
             return MmError::err(OpenChannelError::LightningNotEnabled(req.coin));
         }
     }
+
+    let decimals = utxo_coin.as_ref().decimals;
+    let (amount, fee_policy) = match req.amount.clone() {
+        ChannelOpenAmount::Exact(value) => {
+            let balance = utxo_coin.my_spendable_balance().compat().await?;
+            if balance < value {
+                return MmError::err(OpenChannelError::BalanceError(format!(
+                    "Not enough balance to open channel, Current balance: {}",
+                    balance
+                )));
+            }
+            let amount = sat_from_big_decimal(&value, decimals)?;
+            (amount, FeePolicy::SendExact)
+        },
+        ChannelOpenAmount::Max => {
+            let _utxo_lock = UTXO_LOCK.lock().await;
+            let (unspents, _) = utxo_coin
+                .ordered_mature_unspents(&utxo_coin.as_ref().my_address)
+                .await?;
+            (
+                unspents.iter().fold(0, |sum, unspent| sum + unspent.value),
+                FeePolicy::DeductFromOutput(0),
+            )
+        },
+    };
 
     let (node_pubkey, node_addr) = parse_node_info(req.node_id.clone())?;
 
@@ -229,7 +267,7 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
 
     {
         let mut funding_tx_params = lightning_ctx.funding_tx_params.lock().await;
-        funding_tx_params.insert(request_id, (req.fee, req.max));
+        funding_tx_params.insert(request_id, (req.fee, fee_policy));
     }
 
     let temporary_channel_id = {
@@ -239,7 +277,7 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
             .ok_or(ConnectToNodeError::LightningNotEnabled(req.coin))?;
         open_ln_channel(
             node_pubkey,
-            req.amount_in_sat,
+            amount,
             request_id,
             req.announce_channel,
             channel_manager.clone(),
@@ -247,7 +285,52 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
     };
 
     Ok(format!(
-        "Initiated opening channel with temporary ID {:?} with node {} and request id {}",
+        "Initiated opening channel with temporary ID: {:?} with node: {} and request id: {}",
         temporary_channel_id, req.node_id, request_id
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{self as json};
+
+    #[test]
+    fn test_deserialize_open_channel_request() {
+        let req = json!({
+            "coin":"test",
+            "node_id": "pubkey@ip",
+            "amount": 0.1,
+        });
+
+        let expected = OpenChannelRequest {
+            coin: "test".into(),
+            node_id: "pubkey@ip".into(),
+            amount: ChannelOpenAmount::Exact(0.1.into()),
+            fee: None,
+            announce_channel: true,
+        };
+
+        let actual: OpenChannelRequest = json::from_value(req).unwrap();
+
+        assert_eq!(expected, actual);
+
+        let req = json!({
+            "coin":"test",
+            "node_id": "pubkey@ip",
+            "amount": "max",
+        });
+
+        let expected = OpenChannelRequest {
+            coin: "test".into(),
+            node_id: "pubkey@ip".into(),
+            amount: ChannelOpenAmount::Max,
+            fee: None,
+            announce_channel: true,
+        };
+
+        let actual: OpenChannelRequest = json::from_value(req).unwrap();
+
+        assert_eq!(expected, actual);
+    }
 }

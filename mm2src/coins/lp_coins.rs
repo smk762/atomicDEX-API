@@ -416,7 +416,7 @@ pub trait MarketCoinOps {
     fn min_trading_vol(&self) -> MmNumber;
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum WithdrawFee {
     UtxoFixed {

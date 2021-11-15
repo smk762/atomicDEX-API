@@ -1,4 +1,6 @@
-use crate::{BalanceError, CoinFindError};
+use crate::utxo::rpc_clients::UtxoRpcError;
+use crate::utxo::GenerateTxError;
+use crate::{BalanceError, CoinFindError, NumConversError};
 use common::mm_error::prelude::*;
 use common::HttpStatusCode;
 use derive_more::Display;
@@ -108,17 +110,27 @@ pub enum OpenChannelError {
     ConnectToNodeError(String),
     #[display(fmt = "No such coin {}", _0)]
     NoSuchCoin(String),
+    #[display(fmt = "Lightning network is not supported for {}: {}", _0, _1)]
+    UnsupportedCoin(String, String),
     #[display(fmt = "Balance Error {}", _0)]
     BalanceError(String),
+    #[display(fmt = "Generate Tx Error {}", _0)]
+    GenerateTxErr(String),
+    #[display(fmt = "RPC error {}", _0)]
+    RpcError(String),
+    #[display(fmt = "Internal error: {}", _0)]
+    InternalError(String),
 }
 
 impl HttpStatusCode for OpenChannelError {
     fn status_code(&self) -> StatusCode {
         match self {
+            OpenChannelError::UnsupportedCoin(_, _) | OpenChannelError::RpcError(_) => StatusCode::BAD_REQUEST,
             OpenChannelError::UnsupportedMode(_, _) => StatusCode::METHOD_NOT_ALLOWED,
-            OpenChannelError::FailureToOpenChannel(_, _) | OpenChannelError::ConnectToNodeError(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            },
+            OpenChannelError::FailureToOpenChannel(_, _)
+            | OpenChannelError::ConnectToNodeError(_)
+            | OpenChannelError::InternalError(_)
+            | OpenChannelError::GenerateTxErr(_) => StatusCode::INTERNAL_SERVER_ERROR,
             OpenChannelError::LightningNotEnabled(_)
             | OpenChannelError::NoSuchCoin(_)
             | OpenChannelError::BalanceError(_) => StatusCode::PRECONDITION_REQUIRED,
@@ -140,4 +152,16 @@ impl From<CoinFindError> for OpenChannelError {
 
 impl From<BalanceError> for OpenChannelError {
     fn from(e: BalanceError) -> Self { OpenChannelError::BalanceError(e.to_string()) }
+}
+
+impl From<NumConversError> for OpenChannelError {
+    fn from(e: NumConversError) -> Self { OpenChannelError::InternalError(e.to_string()) }
+}
+
+impl From<GenerateTxError> for OpenChannelError {
+    fn from(e: GenerateTxError) -> Self { OpenChannelError::GenerateTxErr(e.to_string()) }
+}
+
+impl From<UtxoRpcError> for OpenChannelError {
+    fn from(e: UtxoRpcError) -> Self { OpenChannelError::RpcError(e.to_string()) }
 }
