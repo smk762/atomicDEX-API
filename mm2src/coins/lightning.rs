@@ -3,7 +3,6 @@ use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utxo::{sat_from_big_decimal, FeePolicy, UtxoCommonOps, UTXO_LOCK};
 #[cfg(not(target_arch = "wasm32"))] use crate::MarketCoinOps;
-use crate::WithdrawFee;
 use bigdecimal::BigDecimal;
 #[cfg(not(target_arch = "wasm32"))]
 use common::ip_addr::myipaddr;
@@ -185,7 +184,6 @@ pub struct OpenChannelRequest {
     pub coin: String,
     pub node_id: String,
     pub amount: ChannelOpenAmount,
-    fee: Option<WithdrawFee>,
     #[serde(default = "get_true")]
     pub announce_channel: bool,
 }
@@ -267,7 +265,7 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
 
     {
         let mut funding_tx_params = lightning_ctx.funding_tx_params.lock().await;
-        funding_tx_params.insert(request_id, (req.fee, fee_policy));
+        funding_tx_params.insert(request_id, fee_policy);
     }
 
     let temporary_channel_id = {

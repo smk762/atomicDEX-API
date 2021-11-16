@@ -3,8 +3,8 @@ use crate::utxo::rpc_clients::{electrum_script_hash, BestBlock as RpcBestBlock, 
                                ElectrumNonce};
 use crate::utxo::utxo_common::UtxoTxBuilder;
 use crate::utxo::utxo_standard::UtxoStandardCoin;
-use crate::utxo::{sign_tx, ActualTxFee, FeePolicy, UtxoCommonOps, UTXO_LOCK};
-use crate::{MarketCoinOps, WithdrawFee};
+use crate::utxo::{sign_tx, FeePolicy, UtxoCommonOps, UtxoTxGenerationOps, UTXO_LOCK};
+use crate::MarketCoinOps;
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::blockdata::script::Script;
@@ -86,7 +86,7 @@ pub struct LightningContext {
     /// channel, also tracks HTLC preimages and forwards onion packets appropriately.
     pub channel_managers: AsyncMutex<HashMap<String, Arc<ChannelManager>>>,
     /// Keeps Track of the withdraw fee and if to withdraw the maximum amount for the funding transaction.
-    pub funding_tx_params: AsyncMutex<HashMap<u64, (Option<WithdrawFee>, FeePolicy)>>,
+    pub funding_tx_params: AsyncMutex<HashMap<u64, FeePolicy>>,
 }
 
 impl LightningContext {
@@ -999,7 +999,6 @@ async fn generate_funding_transaction(
 ) -> OpenChannelResult<Transaction> {
     let coin = coin.as_ref();
 
-    let _utxo_lock = UTXO_LOCK.lock().await;
     let outputs = vec![TransactionOutput {
         value: channel_value_satoshis,
         script_pubkey: output_script.to_bytes().into(),
@@ -1007,33 +1006,25 @@ async fn generate_funding_transaction(
 
     let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
     let mut funding_tx_params = lightning_ctx.funding_tx_params.lock().await;
-    let (fee, fee_policy) = funding_tx_params
+    let fee_policy = funding_tx_params
         .remove(&user_channel_id)
         .ok_or_else(|| OpenChannelError::InternalError("user_channel_id is not found".into()))?;
     drop(funding_tx_params);
 
+    let _utxo_lock = UTXO_LOCK.lock().await;
     let (unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
+
     let mut tx_builder = UtxoTxBuilder::new(coin)
         .add_available_inputs(unspents)
         .add_outputs(outputs)
         .with_fee_policy(fee_policy);
 
-    match fee {
-        Some(WithdrawFee::UtxoFixed { .. }) => {
-            tx_builder = tx_builder.with_fee(ActualTxFee::Fixed(channel_value_satoshis));
-        },
-        Some(WithdrawFee::UtxoPerKbyte { .. }) => {
-            tx_builder = tx_builder.with_fee(ActualTxFee::Dynamic(channel_value_satoshis));
-        },
-        Some(fee_policy) => {
-            let error = format!(
-                "Expected 'UtxoFixed' or 'UtxoPerKbyte' fee types, found {:?}",
-                fee_policy
-            );
-            return MmError::err(OpenChannelError::InternalError(error));
-        },
-        None => (),
-    };
+    let fee = coin
+        .get_tx_fee()
+        .await
+        .map_err(|e| OpenChannelError::RpcError(e.to_string()))?;
+    tx_builder = tx_builder.with_fee(fee);
+
     let (unsigned, _) = tx_builder.build().await?;
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
     let signed = sign_tx(
