@@ -305,7 +305,6 @@ mod tests {
             coin: "test".into(),
             node_id: "pubkey@ip".into(),
             amount: ChannelOpenAmount::Exact(0.1.into()),
-            fee: None,
             announce_channel: true,
         };
 
@@ -323,7 +322,6 @@ mod tests {
             coin: "test".into(),
             node_id: "pubkey@ip".into(),
             amount: ChannelOpenAmount::Max,
-            fee: None,
             announce_channel: true,
         };
 
