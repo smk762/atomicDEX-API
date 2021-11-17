@@ -39,7 +39,6 @@ use rand::RngCore;
 use rpc::v1::types::H256;
 use script::{Builder, SignatureVersion};
 use secp256k1::PublicKey;
-use serialization::{serialize_with_flags, SERIALIZE_TRANSACTION_WITNESS};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -1035,9 +1034,6 @@ async fn generate_funding_transaction(
         coin.as_ref().conf.fork_id,
     )
     .map_to_mm(OpenChannelError::InternalError)?;
-    let tx_hex: Vec<u8> = serialize_with_flags(&signed, SERIALIZE_TRANSACTION_WITNESS).into();
 
-    let final_tx: Transaction = deserialize(&tx_hex).expect("Can't deserialize transaction");
-
-    Ok(final_tx)
+    Ok(signed.into())
 }

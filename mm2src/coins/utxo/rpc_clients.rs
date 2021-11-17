@@ -23,6 +23,7 @@ use futures01::future::select_ok;
 use futures01::sync::{mpsc, oneshot};
 use futures01::{Future, Sink, Stream};
 use http::Uri;
+use keys::hash::H256;
 use keys::{Address, Type as ScriptType};
 #[cfg(test)] use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
@@ -201,6 +202,23 @@ impl From<ElectrumUnspent> for UnspentInfo {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum BlockHashOrHeight {
+    Height(i64),
+    Hash(H256Json),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct SpentOutputInfo {
+    // The transaction spending the output
+    pub spending_tx: UtxoTx,
+    // The input index that spends the output
+    pub input_index: usize,
+    // The block hash or height the includes the spending transaction
+    // For electrum clients the block height will be returned, for native clients the block hash will be returned
+    pub spent_in_block: BlockHashOrHeight,
+}
+
 pub type UtxoRpcResult<T> = Result<T, MmError<UtxoRpcError>>;
 pub type UtxoRpcFut<T> = Box<dyn Future<Item = T, Error = MmError<UtxoRpcError>> + Send + 'static>;
 
@@ -258,10 +276,11 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
 
     fn find_output_spend(
         &self,
-        tx: &UtxoTx,
+        tx_hash: H256,
+        script_pubkey: &[u8],
         vout: usize,
-        from_block: u64,
-    ) -> Box<dyn Future<Item = Option<UtxoTx>, Error = String> + Send>;
+        from_block: BlockHashOrHeight,
+    ) -> Box<dyn Future<Item = Option<SpentOutputInfo>, Error = String> + Send>;
 
     /// Get median time past for `count` blocks in the past including `starting_block`
     fn get_median_time_past(
@@ -666,14 +685,17 @@ impl UtxoRpcClientOps for NativeClient {
 
     fn find_output_spend(
         &self,
-        tx: &UtxoTx,
+        tx_hash: H256,
+        _script_pubkey: &[u8],
         vout: usize,
-        from_block: u64,
-    ) -> Box<dyn Future<Item = Option<UtxoTx>, Error = String> + Send> {
+        from_block: BlockHashOrHeight,
+    ) -> Box<dyn Future<Item = Option<SpentOutputInfo>, Error = String> + Send> {
         let selfi = self.clone();
-        let tx = tx.clone();
         let fut = async move {
-            let from_block_hash = try_s!(selfi.get_block_hash(from_block).compat().await);
+            let from_block_hash = match from_block {
+                BlockHashOrHeight::Height(h) => try_s!(selfi.get_block_hash(h as u64).compat().await),
+                BlockHashOrHeight::Hash(h) => h,
+            };
             let list_since_block: ListSinceBlockRes = try_s!(selfi.list_since_block(from_block_hash).compat().await);
             for transaction in list_since_block
                 .transactions
@@ -684,9 +706,13 @@ impl UtxoRpcClientOps for NativeClient {
                 let maybe_spend_tx: UtxoTx =
                     try_s!(deserialize(maybe_spend_tx_bytes.as_slice()).map_err(|e| ERRL!("{:?}", e)));
 
-                for input in maybe_spend_tx.inputs.iter() {
-                    if input.previous_output.hash == tx.hash() && input.previous_output.index == vout as u32 {
-                        return Ok(Some(maybe_spend_tx));
+                for (index, input) in maybe_spend_tx.inputs.iter().enumerate() {
+                    if input.previous_output.hash == tx_hash && input.previous_output.index == vout as u32 {
+                        return Ok(Some(SpentOutputInfo {
+                            spending_tx: maybe_spend_tx,
+                            input_index: index,
+                            spent_in_block: BlockHashOrHeight::Hash(transaction.blockhash),
+                        }));
                     }
                 }
             }
@@ -909,6 +935,12 @@ impl NativeClientImpl {
     /// https://developer.bitcoin.org/reference/rpc/getaddressinfo.html
     pub fn get_address_info(&self, address: &str) -> RpcRes<GetAddressInfoRes> {
         rpc_func!(self, "getaddressinfo", address)
+    }
+
+    /// https://developer.bitcoin.org/reference/rpc/getblockheader.html
+    pub fn get_block_header_bytes(&self, block_hash: H256Json) -> RpcRes<BytesJson> {
+        let verbose = 0;
+        rpc_func!(self, "getblockheader", block_hash, verbose)
     }
 }
 
@@ -1663,13 +1695,13 @@ impl UtxoRpcClientOps for ElectrumClient {
 
     fn find_output_spend(
         &self,
-        tx: &UtxoTx,
+        tx_hash: H256,
+        script_pubkey: &[u8],
         vout: usize,
-        _from_block: u64,
-    ) -> Box<dyn Future<Item = Option<UtxoTx>, Error = String> + Send> {
+        _from_block: BlockHashOrHeight,
+    ) -> Box<dyn Future<Item = Option<SpentOutputInfo>, Error = String> + Send> {
         let selfi = self.clone();
-        let script_hash = hex::encode(electrum_script_hash(&tx.outputs[vout].script_pubkey));
-        let tx = tx.clone();
+        let script_hash = hex::encode(electrum_script_hash(script_pubkey));
         let fut = async move {
             let history = try_s!(selfi.scripthash_get_history(&script_hash).compat().await);
 
@@ -1682,9 +1714,13 @@ impl UtxoRpcClientOps for ElectrumClient {
 
                 let maybe_spend_tx: UtxoTx = try_s!(deserialize(transaction.as_slice()).map_err(|e| ERRL!("{:?}", e)));
 
-                for input in maybe_spend_tx.inputs.iter() {
-                    if input.previous_output.hash == tx.hash() && input.previous_output.index == vout as u32 {
-                        return Ok(Some(maybe_spend_tx));
+                for (index, input) in maybe_spend_tx.inputs.iter().enumerate() {
+                    if input.previous_output.hash == tx_hash && input.previous_output.index == vout as u32 {
+                        return Ok(Some(SpentOutputInfo {
+                            spending_tx: maybe_spend_tx,
+                            input_index: index,
+                            spent_in_block: BlockHashOrHeight::Height(item.height),
+                        }));
                     }
                 }
             }

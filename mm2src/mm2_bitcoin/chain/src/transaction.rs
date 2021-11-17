@@ -4,6 +4,8 @@
 use bytes::Bytes;
 use constants::{LOCKTIME_THRESHOLD, SEQUENCE_FINAL};
 use crypto::{dhash256, sha256};
+use ext_bitcoin::blockdata::transaction::Transaction as ExtTransaction;
+use ext_bitcoin::consensus::encode::deserialize as deserialize_ext;
 use hash::{CipherText, EncCipherText, OutCipherText, ZkProof, ZkProofSapling, H256, H512, H64};
 use hex::FromHex;
 use ser::{deserialize, serialize, serialize_with_flags, SERIALIZE_TRANSACTION_WITNESS};
@@ -193,6 +195,17 @@ pub struct Transaction {
 
 impl From<&'static str> for Transaction {
     fn from(s: &'static str) -> Self { deserialize(&s.from_hex::<Vec<u8>>().unwrap() as &[u8]).unwrap() }
+}
+
+impl From<Transaction> for ExtTransaction {
+    fn from(tx: Transaction) -> ExtTransaction {
+        let tx_hex: Vec<u8> = if tx.has_witness() {
+            serialize_with_flags(&tx, SERIALIZE_TRANSACTION_WITNESS).into()
+        } else {
+            serialize(&tx).into()
+        };
+        deserialize_ext(&tx_hex).expect("Deserialization should not fail!")
+    }
 }
 
 #[allow(clippy::upper_case_acronyms)]

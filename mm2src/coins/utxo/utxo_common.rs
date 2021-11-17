@@ -34,7 +34,8 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 
 pub use chain::Transaction as UtxoTx;
 
-use self::rpc_clients::{electrum_script_hash, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps, UtxoRpcResult};
+use self::rpc_clients::{electrum_script_hash, BlockHashOrHeight, UnspentInfo, UtxoRpcClientEnum, UtxoRpcClientOps,
+                        UtxoRpcResult};
 use crate::{CanRefundHtlc, CoinBalance, TradePreimageValue, TxFeeDetails, ValidateAddressResult, WithdrawResult};
 
 pub const DEFAULT_FEE_VOUT: usize = 0;
@@ -1410,8 +1411,18 @@ pub fn wait_for_output_spend(
     let tx_hash_algo = coin.tx_hash_algo;
     let fut = async move {
         loop {
-            match client.find_output_spend(&tx, output_index, from_block).compat().await {
-                Ok(Some(mut tx)) => {
+            match client
+                .find_output_spend(
+                    tx.hash(),
+                    &tx.outputs[output_index].script_pubkey,
+                    output_index,
+                    BlockHashOrHeight::Height(from_block as i64),
+                )
+                .compat()
+                .await
+            {
+                Ok(Some(spent_output_info)) => {
+                    let mut tx = spent_output_info.spending_tx;
                     tx.tx_hash_algo = tx_hash_algo;
                     return Ok(tx.into());
                 },
@@ -2746,12 +2757,18 @@ async fn search_for_swap_output_spend(
 
     let spend = try_s!(
         coin.rpc_client
-            .find_output_spend(&tx, output_index, search_from_block)
+            .find_output_spend(
+                tx.hash(),
+                &tx.outputs[output_index].script_pubkey,
+                output_index,
+                BlockHashOrHeight::Height(search_from_block as i64)
+            )
             .compat()
             .await
     );
     match spend {
-        Some(mut tx) => {
+        Some(spent_output_info) => {
+            let mut tx = spent_output_info.spending_tx;
             tx.tx_hash_algo = coin.tx_hash_algo;
             let script: Script = tx.inputs[0].script_sig.clone().into();
             if let Some(Ok(ref i)) = script.iter().nth(2) {

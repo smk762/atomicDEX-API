@@ -706,6 +706,7 @@ dependencies = [
 name = "chain"
 version = "0.1.0"
 dependencies = [
+ "bitcoin",
  "bitcrypto",
  "primitives",
  "rustc-hex 2.1.0",
