@@ -14,9 +14,10 @@ use bitcoin_hashes::Hash;
 use common::executor::spawn;
 use common::{block_on, log};
 use futures::compat::Future01CompatExt;
+use keys::hash::H256;
 use lightning::chain::{chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator},
                        Filter, WatchedOutput};
-use rpc::v1::types::H256;
+use rpc::v1::types::H256 as H256Json;
 
 impl FeeEstimator for UtxoStandardCoin {
     // Gets estimated satoshis of fee required per 1000 Weight-Units.
@@ -90,7 +91,7 @@ pub async fn find_watched_output_spend_with_header(
         },
     };
 
-    let block_hash = output.block_hash.map(|h| H256::from(h.as_hash().into_inner()));
+    let block_hash = output.block_hash.map(|h| H256Json::from(h.as_hash().into_inner()));
 
     // from_block parameter is not used in find_output_spend for electrum clients
     // That's why its not a problem if the block hash is none in WatchedOutput
@@ -99,7 +100,7 @@ pub async fn find_watched_output_spend_with_header(
     // register_output. LDK assigns block hash a value or not depending on where it's used in LDK code.
     let output_spend = match client
         .find_output_spend(
-            output.outpoint.txid.as_hash().into_inner().into(),
+            H256::from(output.outpoint.txid.as_hash().into_inner()).reversed(),
             output.script_pubkey.as_ref(),
             output.outpoint.index.into(),
             BlockHashOrHeight::Hash(block_hash.unwrap_or_default()),
@@ -141,7 +142,7 @@ impl Filter for UtxoStandardCoin {
         block_on(utxo_common::register_output(&self.as_ref(), output.clone()));
 
         let block_hash = match output.block_hash {
-            Some(h) => H256::from(h.as_hash().into_inner()),
+            Some(h) => H256Json::from(h.as_hash().into_inner()),
             None => return None,
         };
 
@@ -151,7 +152,7 @@ impl Filter for UtxoStandardCoin {
         // this is the reason for initializing the filter as an option in the start_lightning function as it will be None
         // when implementing lightning for native clients
         let output_spend_fut = client.find_output_spend(
-            output.outpoint.txid.as_hash().into_inner().into(),
+            H256::from(output.outpoint.txid.as_hash().into_inner()).reversed(),
             output.script_pubkey.as_ref(),
             output.outpoint.index.into(),
             BlockHashOrHeight::Hash(block_hash),

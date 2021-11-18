@@ -120,6 +120,10 @@ pub enum OpenChannelError {
     RpcError(String),
     #[display(fmt = "Internal error: {}", _0)]
     InternalError(String),
+    #[display(fmt = "I/O error {}", _0)]
+    IOError(String),
+    #[display(fmt = "Invalid path: {}", _0)]
+    InvalidPath(String),
 }
 
 impl HttpStatusCode for OpenChannelError {
@@ -130,7 +134,9 @@ impl HttpStatusCode for OpenChannelError {
             OpenChannelError::FailureToOpenChannel(_, _)
             | OpenChannelError::ConnectToNodeError(_)
             | OpenChannelError::InternalError(_)
-            | OpenChannelError::GenerateTxErr(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            | OpenChannelError::GenerateTxErr(_)
+            | OpenChannelError::IOError(_)
+            | OpenChannelError::InvalidPath(_) => StatusCode::INTERNAL_SERVER_ERROR,
             OpenChannelError::LightningNotEnabled(_)
             | OpenChannelError::NoSuchCoin(_)
             | OpenChannelError::BalanceError(_) => StatusCode::PRECONDITION_REQUIRED,

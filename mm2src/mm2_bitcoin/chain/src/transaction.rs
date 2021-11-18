@@ -199,12 +199,12 @@ impl From<&'static str> for Transaction {
 
 impl From<Transaction> for ExtTransaction {
     fn from(tx: Transaction) -> ExtTransaction {
-        let tx_hex: Vec<u8> = if tx.has_witness() {
-            serialize_with_flags(&tx, SERIALIZE_TRANSACTION_WITNESS).into()
+        let tx_hex = if tx.has_witness() {
+            serialize_with_flags(&tx, SERIALIZE_TRANSACTION_WITNESS)
         } else {
-            serialize(&tx).into()
+            serialize(&tx)
         };
-        deserialize_ext(&tx_hex).expect("Deserialization should not fail!")
+        deserialize_ext(&tx_hex.take()).expect("Deserialization should not fail!")
     }
 }
 

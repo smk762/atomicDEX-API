@@ -1,7 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::utxo::{sat_from_big_decimal, FeePolicy, UtxoCommonOps, UTXO_LOCK};
+use crate::utxo::{sat_from_big_decimal, UtxoCommonOps, UTXO_LOCK};
 #[cfg(not(target_arch = "wasm32"))] use crate::MarketCoinOps;
 use bigdecimal::BigDecimal;
 #[cfg(not(target_arch = "wasm32"))]
@@ -13,12 +13,9 @@ use futures::compat::Future01CompatExt;
 use ln_errors::{ConnectToNodeError, ConnectToNodeResult, EnableLightningError, EnableLightningResult,
                 OpenChannelError, OpenChannelResult};
 #[cfg(not(target_arch = "wasm32"))]
-use ln_utils::{connect_to_node, network_from_string, nodes_data_path, open_ln_channel, parse_node_info,
-               read_nodes_data_from_file, save_node_data_to_file, start_lightning, LightningConf, LightningContext};
-use std::sync::atomic::AtomicU64;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use ln_utils::{connect_to_node, last_request_id_path, network_from_string, nodes_data_path, open_ln_channel,
+               parse_node_info, read_last_request_id_from_file, read_nodes_data_from_file,
+               save_last_request_id_to_file, save_node_data_to_file, start_lightning, LightningConf, LightningContext};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::{lp_coinfind_or_err, MmCoinEnum};
@@ -26,10 +23,6 @@ use super::{lp_coinfind_or_err, MmCoinEnum};
 mod ln_errors;
 mod ln_rpc;
 #[cfg(not(target_arch = "wasm32"))] mod ln_utils;
-
-lazy_static! {
-    static ref REQUEST_IDX: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
-}
 
 #[derive(Deserialize)]
 pub struct EnableLightningRequest {
@@ -221,7 +214,7 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
     }
 
     let decimals = utxo_coin.as_ref().decimals;
-    let (amount, fee_policy) = match req.amount.clone() {
+    let amount = match req.amount.clone() {
         ChannelOpenAmount::Exact(value) => {
             let balance = utxo_coin.my_spendable_balance().compat().await?;
             if balance < value {
@@ -230,18 +223,14 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
                     balance
                 )));
             }
-            let amount = sat_from_big_decimal(&value, decimals)?;
-            (amount, FeePolicy::SendExact)
+            sat_from_big_decimal(&value, decimals)?
         },
         ChannelOpenAmount::Max => {
             let _utxo_lock = UTXO_LOCK.lock().await;
             let (unspents, _) = utxo_coin
                 .ordered_mature_unspents(&utxo_coin.as_ref().my_address)
                 .await?;
-            (
-                unspents.iter().fold(0, |sum, unspent| sum + unspent.value),
-                FeePolicy::DeductFromOutput(0),
-            )
+            unspents.iter().fold(0, |sum, unspent| sum + unspent.value)
         },
     };
 
@@ -262,12 +251,14 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
     }
 
     // Helps in tracking which FundingGenerationReady events corresponds to which open_channel call
-    let request_id = REQUEST_IDX.fetch_add(1, Ordering::Relaxed);
-
-    {
-        let mut funding_tx_params = lightning_ctx.funding_tx_params.lock().await;
-        funding_tx_params.insert(request_id, fee_policy);
-    }
+    let request_id = match read_last_request_id_from_file(&last_request_id_path(&ctx, &ticker)) {
+        Ok(id) => id + 1,
+        Err(e) => match e.get_inner() {
+            OpenChannelError::InvalidPath(_) => 1,
+            _ => return Err(e),
+        },
+    };
+    save_last_request_id_to_file(&last_request_id_path(&ctx, ticker), request_id)?;
 
     let temporary_channel_id = {
         let channel_managers = lightning_ctx.channel_managers.lock().await;

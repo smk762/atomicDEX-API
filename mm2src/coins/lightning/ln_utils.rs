@@ -43,7 +43,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -167,41 +167,33 @@ fn my_ln_data_dir(ctx: &MmArc, ticker: &str) -> PathBuf { ctx.dbdir().join("LIGH
 
 pub fn nodes_data_path(ctx: &MmArc, ticker: &str) -> PathBuf { my_ln_data_dir(ctx, ticker).join("channel_nodes_data") }
 
+pub fn last_request_id_path(ctx: &MmArc, ticker: &str) -> PathBuf {
+    my_ln_data_dir(ctx, ticker).join("LAST_REQUEST_ID")
+}
+
 // TODO: Implement all the cases
-async fn handle_ln_events(
-    ctx: MmArc,
-    event: &Event,
-    channel_manager: Arc<ChannelManager>,
-    coin: Arc<UtxoStandardCoin>,
-) {
+async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, coin: Arc<UtxoStandardCoin>) {
     match event.clone() {
         Event::FundingGenerationReady {
             temporary_channel_id,
             channel_value_satoshis,
             output_script,
-            user_channel_id,
+            user_channel_id: _,
         } => {
-            let funding_tx = match generate_funding_transaction(
-                ctx,
-                channel_value_satoshis,
-                output_script.clone(),
-                user_channel_id,
-                coin.clone(),
-            )
-            .await
-            {
-                Ok(tx) => tx,
-                Err(e) => {
-                    log::error!(
-                        "Error generating funding transaction for temporary channel id {:?}: {}",
-                        temporary_channel_id,
-                        e.to_string()
-                    );
-                    // TODO: use issue_channel_close_events here when implementing channel closure this will push a Event::DiscardFunding
-                    // event for the other peer
-                    return;
-                },
-            };
+            let funding_tx =
+                match generate_funding_transaction(channel_value_satoshis, output_script.clone(), coin.clone()).await {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        log::error!(
+                            "Error generating funding transaction for temporary channel id {:?}: {}",
+                            temporary_channel_id,
+                            e.to_string()
+                        );
+                        // TODO: use issue_channel_close_events here when implementing channel closure this will push a Event::DiscardFunding
+                        // event for the other peer
+                        return;
+                    },
+                };
             // Give the funding transaction back to LDK for opening the channel.
             match channel_manager.funding_transaction_generated(&temporary_channel_id, funding_tx.clone()) {
                 Ok(_) => {
@@ -431,10 +423,8 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
     // TODO: Implement EventHandler trait instead of this
     let handle = tokio::runtime::Handle::current();
     let channel_manager_event_listener = channel_manager.clone();
-    let event_handler_ctx = ctx.clone();
     let event_handler = move |event: &Event| {
         handle.block_on(handle_ln_events(
-            event_handler_ctx.clone(),
             event,
             channel_manager_event_listener.clone(),
             filter.clone().unwrap(),
@@ -992,25 +982,34 @@ pub fn open_ln_channel(
 
 // Generates the raw funding transaction with one output equal to the channel value.
 async fn generate_funding_transaction(
-    ctx: MmArc,
     channel_value_satoshis: u64,
     output_script: Script,
-    user_channel_id: u64,
     coin: Arc<UtxoStandardCoin>,
 ) -> OpenChannelResult<Transaction> {
     let coin = coin.as_ref();
+
+    let decimals = coin.as_ref().decimals;
+    let balance = coin.my_spendable_balance().compat().await?;
+    let balance_in_sat = sat_from_big_decimal(&balance, decimals)?;
+    if balance_in_sat < channel_value_satoshis {
+        return MmError::err(OpenChannelError::BalanceError(format!(
+            "Not enough balance to open channel, Current balance: {}",
+            balance
+        )));
+    }
 
     let outputs = vec![TransactionOutput {
         value: channel_value_satoshis,
         script_pubkey: output_script.to_bytes().into(),
     }];
 
-    let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
-    let mut funding_tx_params = lightning_ctx.funding_tx_params.lock().await;
-    let fee_policy = funding_tx_params
-        .remove(&user_channel_id)
-        .ok_or_else(|| OpenChannelError::InternalError("user_channel_id is not found".into()))?;
-    drop(funding_tx_params);
+    let fee_policy = if channel_value_satoshis == balance_in_sat {
+        // TODO: fix the problem when opening the channel with max amount as the channel_value_satoshis
+        // will change in the output after deducting the fee
+        FeePolicy::DeductFromOutput(0)
+    } else {
+        FeePolicy::SendExact
+    };
 
     let _utxo_lock = UTXO_LOCK.lock().await;
     let (unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
@@ -1038,4 +1037,29 @@ async fn generate_funding_transaction(
     .map_to_mm(OpenChannelError::InternalError)?;
 
     Ok(signed.into())
+}
+
+pub fn save_last_request_id_to_file(path: &Path, last_request_id: u64) -> OpenChannelResult<()> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(path)
+        .map_to_mm(|e| OpenChannelError::IOError(e.to_string()))?;
+    file.write_all(format!("{}", last_request_id).as_bytes())
+        .map_to_mm(|e| OpenChannelError::IOError(e.to_string()))
+}
+
+pub fn read_last_request_id_from_file(path: &Path) -> OpenChannelResult<u64> {
+    if !path.exists() {
+        return MmError::err(OpenChannelError::InvalidPath(format!(
+            "Path {} does not exist",
+            path.display()
+        )));
+    }
+    let mut file = File::open(path).map_to_mm(|e| OpenChannelError::IOError(e.to_string()))?;
+    let mut contents = String::new();
+    let _ = file.read_to_string(&mut contents);
+    contents
+        .parse::<u64>()
+        .map_to_mm(|e| OpenChannelError::IOError(e.to_string()))
 }
