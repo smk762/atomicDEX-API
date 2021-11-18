@@ -255,9 +255,10 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
         connect_to_node(node_pubkey, node_addr, peer_manager.clone()).await?;
     }
 
-    let nodes_data = read_nodes_data_from_file(&nodes_data_path(&ctx))?;
+    let ticker = utxo_coin.ticker();
+    let nodes_data = read_nodes_data_from_file(&nodes_data_path(&ctx, ticker))?;
     if !nodes_data.contains_key(&node_pubkey) {
-        save_node_data_to_file(&nodes_data_path(&ctx), &req.node_id)?;
+        save_node_data_to_file(&nodes_data_path(&ctx, ticker), &req.node_id)?;
     }
 
     // Helps in tracking which FundingGenerationReady events corresponds to which open_channel call

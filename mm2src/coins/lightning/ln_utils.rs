@@ -163,9 +163,9 @@ fn netaddress_from_ipaddr(addr: IpAddr, port: u16) -> Vec<NetAddress> {
     addresses
 }
 
-fn my_ln_data_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("LIGHTNING") }
+fn my_ln_data_dir(ctx: &MmArc, ticker: &str) -> PathBuf { ctx.dbdir().join("LIGHTNING").join(ticker) }
 
-pub fn nodes_data_path(ctx: &MmArc) -> PathBuf { my_ln_data_dir(ctx).join("channel_nodes_data") }
+pub fn nodes_data_path(ctx: &MmArc, ticker: &str) -> PathBuf { my_ln_data_dir(ctx, ticker).join("channel_nodes_data") }
 
 // TODO: Implement all the cases
 async fn handle_ln_events(
@@ -251,6 +251,11 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
         }
     }
 
+    // If the listening port is used start_lightning should return an error early
+    let listener = TcpListener::bind(format!("{}:{}", conf.listening_addr, conf.listening_port))
+        .await
+        .map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
+
     // Initialize the FeeEstimator. UtxoStandardCoin implements the FeeEstimator trait, so it'll act as our fee estimator.
     let fee_estimator = Arc::new(coin.clone());
 
@@ -262,7 +267,7 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
     let broadcaster = Arc::new(coin.clone());
 
     // Initialize Persist
-    let ln_data_dir = my_ln_data_dir(&ctx)
+    let ln_data_dir = my_ln_data_dir(&ctx, &ticker)
         .as_path()
         .to_str()
         .ok_or("Data dir is a non-UTF-8 string")
@@ -410,9 +415,6 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
     ));
 
     // Initialize p2p networking
-    let listener = TcpListener::bind(format!("{}:{}", conf.listening_addr, conf.listening_port))
-        .await
-        .map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
     spawn(ln_p2p_loop(ctx.clone(), peer_manager.clone(), listener));
 
     // Update best block whenever there's a new chain tip or a block has been newly disconnected
@@ -465,7 +467,7 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
 
     // If node is restarting read other nodes data from disk and reconnect to channel nodes/peers if possible.
     if restarting_node {
-        let mut nodes_data = read_nodes_data_from_file(&nodes_data_path(&ctx))?;
+        let mut nodes_data = read_nodes_data_from_file(&nodes_data_path(&ctx, &ticker))?;
         for (pubkey, node_addr) in nodes_data.drain() {
             for chan_info in channel_manager.list_channels() {
                 if pubkey == chan_info.counterparty.node_id {
