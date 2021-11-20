@@ -39,6 +39,7 @@ use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::mm2::database::init_and_migrate_db;
+use crate::mm2::lp_message_service::{init_message_service, InitMessageServiceError};
 use crate::mm2::lp_network::{lp_network_ports, p2p_event_process_loop, NetIdError, P2PContext};
 use crate::mm2::lp_ordermatch::{broadcast_maker_orders_keep_alive_loop, clean_memory_loop, init_ordermatch_context,
                                 lp_ordermatch_loop, orders_kick_start, BalanceUpdateOrdermatchHandler,
@@ -176,12 +177,6 @@ impl From<SqlError> for MmInitError {
     fn from(e: SqlError) -> Self { MmInitError::ErrorSqliteInitializing(e.to_string()) }
 }
 
-impl MmInitError {
-    pub fn db_directory_is_not_writable(path: &str) -> MmInitError {
-        MmInitError::DbDirectoryIsNotWritable { path: path.to_owned() }
-    }
-}
-
 impl From<OrdermatchInitError> for MmInitError {
     fn from(e: OrdermatchInitError) -> Self {
         match e {
@@ -189,6 +184,16 @@ impl From<OrdermatchInitError> for MmInitError {
                 MmInitError::ErrorDeserializingConfig { field, error }
             },
             OrdermatchInitError::Internal(internal) => MmInitError::Internal(internal),
+        }
+    }
+}
+
+impl From<InitMessageServiceError> for MmInitError {
+    fn from(e: InitMessageServiceError) -> Self {
+        match e {
+            InitMessageServiceError::ErrorDeserializingConfig { field, error } => {
+                MmInitError::ErrorDeserializingConfig { field, error }
+            },
         }
     }
 }
@@ -243,6 +248,12 @@ impl From<TrezorInteractionError> for MmInitError {
             TrezorInteractionError::UnexpectedUserAction { expected } => MmInitError::UnexpectedUserAction { expected },
             TrezorInteractionError::Internal(internal) => MmInitError::Internal(internal),
         }
+    }
+}
+
+impl MmInitError {
+    pub fn db_directory_is_not_writable(path: &str) -> MmInitError {
+        MmInitError::DbDirectoryIsNotWritable { path: path.to_owned() }
     }
 }
 
@@ -432,6 +443,7 @@ pub async fn lp_init_continue(ctx: MmArc) -> MmInitResult<()> {
     }
 
     init_ordermatch_context(&ctx)?;
+    init_message_service(&ctx).await?;
     init_p2p(ctx.clone()).await?;
 
     let balance_update_ordermatch_handler = BalanceUpdateOrdermatchHandler::new(ctx.clone());

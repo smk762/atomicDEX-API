@@ -1,6 +1,7 @@
 use super::{DispatcherError, DispatcherResult, PUBLIC_METHODS};
 use crate::mm2::lp_native_dex::rpc_command::{mm_init_status, mm_init_user_action};
 use crate::mm2::lp_ordermatch::{start_simple_market_maker_bot, stop_simple_market_maker_bot};
+use crate::mm2::rpc::rate_limiter::{process_rate_limit, RateLimitContext};
 use crate::{mm2::lp_stats::{add_node_to_version_stat, remove_node_from_version_stat, start_version_stat_collection,
                             stop_version_stat_collection, update_version_stat_collection},
             mm2::lp_swap::trade_preimage_rpc,
@@ -35,7 +36,12 @@ pub async fn process_single_request(
         return MmError::err(DispatcherError::LocalHostOnly);
     }
 
-    auth(&request, &ctx)?;
+    let rate_limit_ctx = RateLimitContext::from_ctx(&ctx).unwrap();
+    if rate_limit_ctx.is_banned(client.ip()).await {
+        return MmError::err(DispatcherError::Banned);
+    }
+
+    auth(&request, &ctx, &client).await?;
     match request.mmrpc {
         MmRpcVersion::V2 => dispatcher_v2(request, ctx).await,
     }
@@ -76,7 +82,7 @@ where
     Ok(response.serialize_http_response())
 }
 
-fn auth(request: &MmRpcRequest, ctx: &MmArc) -> DispatcherResult<()> {
+async fn auth(request: &MmRpcRequest, ctx: &MmArc, client: &SocketAddr) -> DispatcherResult<()> {
     if PUBLIC_METHODS.contains(&Some(request.method.as_str())) {
         return Ok(());
     }
@@ -87,7 +93,7 @@ fn auth(request: &MmRpcRequest, ctx: &MmArc) -> DispatcherResult<()> {
     });
     match request.userpass {
         Some(ref userpass) if userpass == rpc_password => Ok(()),
-        Some(_) => MmError::err(DispatcherError::UserpassIsInvalid),
+        Some(_) => Err(process_rate_limit(ctx, client).await),
         None => MmError::err(DispatcherError::UserpassIsNotSet),
     }
 }
@@ -117,6 +123,6 @@ async fn dispatcher_v2(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Re
         "withdraw" => handle_mmrpc(ctx, request, withdraw).await,
         "withdraw_status" => handle_mmrpc(ctx, request, withdraw_status).await,
         "withdraw_user_action" => handle_mmrpc(ctx, request, withdraw_user_action).await,
-        _ => MmError::err(DispatcherError::NoSuchMethod { method: request.method }),
+        _ => MmError::err(DispatcherError::NoSuchMethod),
     }
 }
