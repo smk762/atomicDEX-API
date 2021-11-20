@@ -8493,7 +8493,7 @@ fn test_enable_lightning() {
 
     let coins = json! ([
         {
-            "coin": "tBTC",
+            "coin": "tBTC-TEST-segwit",
             "name": "tbitcoin",
             "fname": "tBitcoin",
             "rpcport": 18332,
@@ -8502,19 +8502,27 @@ fn test_enable_lightning() {
             "wiftype": 239,
             "segwit": true,
             "bech32_hrp": "tb",
-            "lightning": true,
-            "network": "testnet",
+            "address_format":{"format":"segwit"},
+            "orderbook_ticker": "tBTC-TEST",
             "txfee": 0,
             "estimate_fee_mode": "ECONOMICAL",
             "mm2": 1,
             "required_confirmations": 0,
             "protocol": {
-                "type": "UTXO"
-            },
-            "address_format": {
-                "format": "segwit",
+              "type": "UTXO"
             }
-        }
+          },
+          {
+            "coin": "tBTC-TEST-lightning",
+            "mm2": 1,
+            "protocol": {
+              "type": "LIGHTNING",
+              "protocol_data":{
+                "platform": "tBTC-TEST-segwit",
+                "network": "testnet"
+              }
+            }
+          }
     ]);
 
     let mut mm = MarketMakerIt::start(
@@ -8538,7 +8546,7 @@ fn test_enable_lightning() {
     let electrum = block_on(mm.rpc(json!({
         "userpass": mm.userpass,
         "method": "electrum",
-        "coin": "tBTC",
+        "coin": "tBTC-TEST-segwit",
         "servers": [{"url":"electrum1.cipig.net:10068"},{"url":"electrum2.cipig.net:10068"},{"url":"electrum3.cipig.net:10068"}],
         "mm2": 1,
     }))).unwrap();
@@ -8550,22 +8558,20 @@ fn test_enable_lightning() {
         electrum.1
     );
 
-    let enable_lightning = block_on(mm.rpc(json!({
-        "mmrpc": "2.0",
-        "method": "enable_lightning",
+    let electrum = block_on(mm.rpc(json!({
         "userpass": mm.userpass,
-        "params": {
-            "coin": "tBTC",
-            "name": "test_node",
-        },
+        "method": "electrum",
+        "coin": "tBTC-TEST-lightning",
+        "name": "test_node",
+        "mm2": 1,
     })))
     .unwrap();
     assert_eq!(
-        enable_lightning.0,
+        electrum.0,
         StatusCode::OK,
-        "RPC «enable_lightning» failed with {} {}",
-        enable_lightning.0,
-        enable_lightning.1
+        "RPC «electrum» failed with {} {}",
+        electrum.0,
+        electrum.1
     );
 
     block_on(mm.wait_for_log(60., |log| log.contains("Calling ChannelManager's timer_tick_occurred"))).unwrap();

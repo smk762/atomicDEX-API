@@ -5,7 +5,7 @@ use crate::{mm2::lp_stats::{add_node_to_version_stat, remove_node_from_version_s
                             stop_version_stat_collection, update_version_stat_collection},
             mm2::lp_swap::trade_preimage_rpc,
             mm2::rpc::get_public_key::get_public_key};
-use coins::lightning::{connect_to_lightning_node, enable_lightning, open_channel};
+use coins::lightning::{connect_to_lightning_node, open_channel};
 use coins::utxo::slp::SlpToken;
 use coins::{add_delegation, get_staking_infos, remove_delegation, withdraw};
 use coins_activation::enable_token;
@@ -94,7 +94,6 @@ async fn dispatcher(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Respo
         "add_delegation" => handle_mmrpc(ctx, request, add_delegation).await,
         "add_node_to_version_stat" => handle_mmrpc(ctx, request, add_node_to_version_stat).await,
         "connect_to_lightning_node" => handle_mmrpc(ctx, request, connect_to_lightning_node).await,
-        "enable_lightning" => handle_mmrpc(ctx, request, enable_lightning).await,
         "enable_slp" => handle_mmrpc(ctx, request, enable_token::<SlpToken>).await,
         "get_public_key" => handle_mmrpc(ctx, request, get_public_key).await,
         "get_staking_infos" => handle_mmrpc(ctx, request, get_staking_infos).await,

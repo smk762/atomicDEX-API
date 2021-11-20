@@ -108,6 +108,8 @@ pub use test_coin::TestCoin;
 #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
 pub mod z_coin;
 
+use crate::lightning::ln_utils::{network_from_string, start_lightning};
+use crate::lightning::{LightningActivationParams, LightningCoin};
 use crate::qrc20::Qrc20ActivationParams;
 use crate::utxo::bch::{bch_coin_from_conf_and_params, BchActivationParams, BchCoin};
 use crate::utxo::rpc_clients::UtxoRpcError;
@@ -1235,6 +1237,7 @@ pub enum MmCoinEnum {
     ZCoin(ZCoin),
     Bch(BchCoin),
     SlpToken(SlpToken),
+    LightningCoin(LightningCoin),
     Test(TestCoin),
 }
 
@@ -1266,6 +1269,10 @@ impl From<SlpToken> for MmCoinEnum {
     fn from(c: SlpToken) -> MmCoinEnum { MmCoinEnum::SlpToken(c) }
 }
 
+impl From<LightningCoin> for MmCoinEnum {
+    fn from(c: LightningCoin) -> MmCoinEnum { MmCoinEnum::LightningCoin(c) }
+}
+
 #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
 impl From<ZCoin> for MmCoinEnum {
     fn from(c: ZCoin) -> MmCoinEnum { MmCoinEnum::ZCoin(c) }
@@ -1282,6 +1289,7 @@ impl Deref for MmCoinEnum {
             MmCoinEnum::EthCoin(ref c) => c,
             MmCoinEnum::Bch(ref c) => c,
             MmCoinEnum::SlpToken(ref c) => c,
+            MmCoinEnum::LightningCoin(ref c) => c,
             #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
             MmCoinEnum::ZCoin(ref c) => c,
             MmCoinEnum::Test(ref c) => c,
@@ -1362,6 +1370,11 @@ pub enum CoinProtocol {
     },
     BCH {
         slp_prefix: String,
+    },
+    LIGHTNING {
+        platform: String,
+        // Mainnet/Testnet/Signet/RegTest
+        network: String,
     },
     #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
     ZHTLC,
@@ -1599,6 +1612,24 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             let confs = required_confirmations.unwrap_or(platform_coin.required_confirmations());
             let token = SlpToken::new(*decimals, ticker.into(), token_id.clone().into(), platform_coin, confs);
             token.into()
+        },
+        // Only BTC is supported for now
+        CoinProtocol::LIGHTNING { platform, network } => {
+            let network = network_from_string(network.to_string()).map_err(|e| ERRL!("{}", e))?;
+
+            let platform_coin = try_s!(lp_coinfind(ctx, &platform).await);
+            let platform_coin = match platform_coin {
+                Some(MmCoinEnum::UtxoCoin(coin)) => coin,
+                Some(_) => return ERR!("Platform coin {} is not UtxoCoin", platform),
+                None => return ERR!("Platform coin {} is not activated", platform),
+            };
+
+            let params =
+                LightningActivationParams::from_legacy_req(platform_coin.clone(), req).map_err(|e| ERRL!("{}", e))?;
+            let lightning_coin = start_lightning(ctx, platform_coin, ticker.into(), params, network)
+                .await
+                .map_err(|e| ERRL!("{}", e))?;
+            lightning_coin.into()
         },
         #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
         CoinProtocol::ZHTLC => {
@@ -2133,6 +2164,9 @@ pub fn address_by_coin_conf_and_pubkey_str(
                 },
                 _ => ERR!("Platform protocol {:?} is not BCH", platform_protocol),
             }
+        },
+        CoinProtocol::LIGHTNING { .. } => {
+            ERR!("address_by_coin_conf_and_pubkey_str is not implemented for lightning protocol yet!")
         },
         #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
         CoinProtocol::ZHTLC => utxo::address_by_conf_and_pubkey_str(coin, conf, pubkey, addr_format),

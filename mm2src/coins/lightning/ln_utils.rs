@@ -1,60 +1,67 @@
 use super::*;
-use crate::utxo::rpc_clients::{electrum_script_hash, BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient,
-                               ElectrumNonce};
-use crate::utxo::utxo_common::UtxoTxBuilder;
 use crate::utxo::utxo_standard::UtxoStandardCoin;
-use crate::utxo::{sign_tx, FeePolicy, UtxoCommonOps, UtxoTxGenerationOps, UTXO_LOCK};
-use crate::MarketCoinOps;
-use bitcoin::blockdata::block::BlockHeader;
-use bitcoin::blockdata::constants::genesis_block;
-use bitcoin::blockdata::script::Script;
-use bitcoin::blockdata::transaction::{Transaction, TxOut};
-use bitcoin::consensus::encode::deserialize;
-use bitcoin::hash_types::{BlockHash, TxMerkleNode, Txid};
 use bitcoin::network::constants::Network;
-use bitcoin_hashes::{sha256d, Hash};
-use chain::TransactionOutput;
-use common::executor::{spawn, Timer};
-use common::ip_addr::fetch_external_ip;
-use common::log;
-use common::log::LogState;
-use common::mm_ctx::{from_ctx, MmArc};
+use common::mm_ctx::MmArc;
 use derive_more::Display;
-use futures::{compat::Future01CompatExt, lock::Mutex as AsyncMutex};
-use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager};
-use lightning::chain::transaction::OutPoint;
-use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Filter, Watch, WatchedOutput};
-use lightning::ln::channelmanager;
-use lightning::ln::channelmanager::{ChainParameters, ChannelManagerReadArgs, SimpleArcChannelManager};
-use lightning::ln::msgs::NetAddress;
-use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
-use lightning::routing::network_graph::{NetGraphMsgHandler, NetworkGraph};
-use lightning::util::config::UserConfig;
-use lightning::util::events::Event;
-use lightning::util::ser::ReadableArgs;
-use lightning_background_processor::BackgroundProcessor;
-use lightning_net_tokio::SocketDescriptor;
-use lightning_persister::FilesystemPersister;
-use rand::RngCore;
-use rpc::v1::types::H256;
-use script::{Builder, SignatureVersion};
 use secp256k1::PublicKey;
-use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
-use std::time::SystemTime;
-use tokio::net::TcpListener;
 
-const CHECK_FOR_NEW_BEST_BLOCK_INTERVAL: u64 = 60;
-const BROADCAST_NODE_ANNOUNCEMENT_INTERVAL: u64 = 60;
-const TRY_RECONNECTING_TO_NODE_INTERVAL: u64 = 60;
+cfg_native! {
+    use crate::utxo::rpc_clients::{electrum_script_hash, BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient,
+                                   ElectrumNonce};
+    use crate::utxo::utxo_common::UtxoTxBuilder;
+    use crate::utxo::{sign_tx, FeePolicy, UtxoCommonOps, UtxoTxGenerationOps, UTXO_LOCK};
+    use crate::MarketCoinOps;
+    use bitcoin::blockdata::block::BlockHeader;
+    use bitcoin::blockdata::constants::genesis_block;
+    use bitcoin::blockdata::script::Script;
+    use bitcoin::blockdata::transaction::{Transaction, TxOut};
+    use bitcoin::consensus::encode::deserialize;
+    use bitcoin::hash_types::{BlockHash, TxMerkleNode, Txid};
+    use bitcoin_hashes::{sha256d, Hash};
+    use chain::TransactionOutput;
+    use common::executor::{spawn, Timer};
+    use common::ip_addr::fetch_external_ip;
+    use common::log;
+    use common::log::LogState;
+    use futures::compat::Future01CompatExt;
+    use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager};
+    use lightning::chain::transaction::OutPoint;
+    use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Filter, Watch, WatchedOutput};
+    use lightning::ln::channelmanager;
+    use lightning::ln::channelmanager::{ChainParameters, ChannelManagerReadArgs, SimpleArcChannelManager};
+    use lightning::ln::msgs::NetAddress;
+    use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
+    use lightning::routing::network_graph::{NetGraphMsgHandler, NetworkGraph};
+    use lightning::util::config::UserConfig;
+    use lightning::util::events::Event;
+    use lightning::util::ser::ReadableArgs;
+    use lightning_background_processor::BackgroundProcessor;
+    use lightning_net_tokio::SocketDescriptor;
+    use lightning_persister::FilesystemPersister;
+    use rand::RngCore;
+    use rpc::v1::types::H256;
+    use script::{Builder, SignatureVersion};
+    use std::cmp::Ordering;
+    use std::convert::TryInto;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::Arc;
+    use std::time::SystemTime;
+    use tokio::net::TcpListener;
+}
 
+cfg_native! {
+    const CHECK_FOR_NEW_BEST_BLOCK_INTERVAL: u64 = 60;
+    const BROADCAST_NODE_ANNOUNCEMENT_INTERVAL: u64 = 60;
+    const TRY_RECONNECTING_TO_NODE_INTERVAL: u64 = 60;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 type ChainMonitor = chainmonitor::ChainMonitor<
     InMemorySigner,
     Arc<UtxoStandardCoin>,
@@ -64,9 +71,11 @@ type ChainMonitor = chainmonitor::ChainMonitor<
     Arc<FilesystemPersister>,
 >;
 
-type ChannelManager = SimpleArcChannelManager<ChainMonitor, UtxoStandardCoin, UtxoStandardCoin, LogState>;
+#[cfg(not(target_arch = "wasm32"))]
+pub type ChannelManager = SimpleArcChannelManager<ChainMonitor, UtxoStandardCoin, UtxoStandardCoin, LogState>;
 
-type PeerManager = SimpleArcPeerManager<
+#[cfg(not(target_arch = "wasm32"))]
+pub type PeerManager = SimpleArcPeerManager<
     SocketDescriptor,
     ChainMonitor,
     UtxoStandardCoin,
@@ -74,67 +83,6 @@ type PeerManager = SimpleArcPeerManager<
     dyn Access + Send + Sync,
     LogState,
 >;
-
-#[derive(Default)]
-pub struct LightningContext {
-    /// The lightning nodes peer managers that take care of connecting to peers, etc..
-    pub peer_managers: AsyncMutex<HashMap<String, Arc<PeerManager>>>,
-    /// The lightning nodes background processors that take care of tasks that need to happen periodically
-    pub background_processors: AsyncMutex<HashMap<String, BackgroundProcessor>>,
-    /// The lightning nodes channel managers which keep track of the number of open channels and sends messages to the appropriate
-    /// channel, also tracks HTLC preimages and forwards onion packets appropriately.
-    pub channel_managers: AsyncMutex<HashMap<String, Arc<ChannelManager>>>,
-    /// Keeps Track of the withdraw fee and if to withdraw the maximum amount for the funding transaction.
-    pub funding_tx_params: AsyncMutex<HashMap<u64, FeePolicy>>,
-}
-
-impl LightningContext {
-    /// Obtains a reference to this crate context, creating it if necessary.
-    pub fn from_ctx(ctx: &MmArc) -> Result<Arc<LightningContext>, String> {
-        Ok(try_s!(from_ctx(&ctx.lightning_ctx, move || {
-            Ok(LightningContext::default())
-        })))
-    }
-}
-
-#[derive(Debug)]
-pub struct LightningConf {
-    /// RPC client (Using only electrum for now as part of the PoC)
-    /// This will be removed when Lightning is implemented for NativeClient and UtxoStandardCoin will be used instead
-    /// Any code that uses conf.rpc_client will have a different implementation for NativeClient in the future
-    pub rpc_client: ElectrumClient,
-    // Mainnet/Testnet/Signet/RegTest
-    pub network: Network,
-    // The listening port for the p2p LN node
-    pub listening_port: u16,
-    /// The set (possibly empty) of socket addresses on which this node accepts incoming connections.
-    /// If the user wishes to preserve privacy, addresses should likely contain only Tor Onion addresses.
-    pub listening_addr: IpAddr,
-    // Printable human-readable string to describe this node to other users.
-    pub node_name: [u8; 32],
-    // Node's RGB color. This is used for showing the node in a network graph with the desired color.
-    pub node_color: [u8; 3],
-}
-
-impl LightningConf {
-    pub fn new(
-        rpc_client: ElectrumClient,
-        network: Network,
-        listening_addr: IpAddr,
-        listening_port: u16,
-        node_name: String,
-        node_color: [u8; 3],
-    ) -> Self {
-        LightningConf {
-            rpc_client,
-            network,
-            listening_port,
-            listening_addr,
-            node_name: node_name.as_bytes().try_into().expect("Node name has incorrect length"),
-            node_color,
-        }
-    }
-}
 
 pub fn network_from_string(network: String) -> EnableLightningResult<Network> {
     network
@@ -144,6 +92,7 @@ pub fn network_from_string(network: String) -> EnableLightningResult<Network> {
 }
 
 // TODO: add TOR address option
+#[cfg(not(target_arch = "wasm32"))]
 fn netaddress_from_ipaddr(addr: IpAddr, port: u16) -> Vec<NetAddress> {
     if addr == Ipv4Addr::new(0, 0, 0, 0) || addr == Ipv4Addr::new(127, 0, 0, 1) {
         return Vec::new();
@@ -172,6 +121,7 @@ pub fn last_request_id_path(ctx: &MmArc, ticker: &str) -> PathBuf {
 }
 
 // TODO: Implement all the cases
+#[cfg(not(target_arch = "wasm32"))]
 async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, coin: Arc<UtxoStandardCoin>) {
     match event.clone() {
         Event::FundingGenerationReady {
@@ -232,31 +182,47 @@ async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, c
     }
 }
 
-pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: LightningConf) -> EnableLightningResult<()> {
-    let lightning_ctx = LightningContext::from_ctx(&ctx).unwrap();
-    let ticker = coin.ticker().to_string();
+#[cfg(target_arch = "wasm32")]
+pub async fn start_lightning(
+    _ctx: &MmArc,
+    _platform_coin: UtxoStandardCoin,
+    _ticker: String,
+    _params: LightningActivationParams,
+    _network: Network,
+) -> EnableLightningResult<LightningCoin> {
+    MmError::err(EnableLightningError::UnsupportedMode(
+        "'connect_to_lightning_node'".into(),
+        "native".into(),
+    ))
+}
 
-    {
-        let background_processor = lightning_ctx.background_processors.lock().await;
-        if background_processor.contains_key(&ticker) {
-            return MmError::err(EnableLightningError::AlreadyRunning(ticker.clone()));
-        }
-    }
-
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn start_lightning(
+    ctx: &MmArc,
+    platform_coin: UtxoStandardCoin,
+    ticker: String,
+    params: LightningActivationParams,
+    network: Network,
+) -> EnableLightningResult<LightningCoin> {
+    // The set (possibly empty) of socket addresses on which this node accepts incoming connections.
+    // If the user wishes to preserve privacy, addresses should likely contain only Tor Onion addresses.
+    let listening_addr = myipaddr(ctx.clone())
+        .await
+        .map_to_mm(EnableLightningError::InvalidAddress)?;
     // If the listening port is used start_lightning should return an error early
-    let listener = TcpListener::bind(format!("{}:{}", conf.listening_addr, conf.listening_port))
+    let listener = TcpListener::bind(format!("{}:{}", listening_addr, params.listening_port))
         .await
         .map_to_mm(|e| EnableLightningError::IOError(e.to_string()))?;
 
     // Initialize the FeeEstimator. UtxoStandardCoin implements the FeeEstimator trait, so it'll act as our fee estimator.
-    let fee_estimator = Arc::new(coin.clone());
+    let fee_estimator = Arc::new(platform_coin.clone());
 
     // Initialize the Logger
     let logger = ctx.log.clone();
 
     // Initialize the BroadcasterInterface. UtxoStandardCoin implements the BroadcasterInterface trait, so it'll act as our transaction
     // broadcaster.
-    let broadcaster = Arc::new(coin.clone());
+    let broadcaster = Arc::new(platform_coin.clone());
 
     // Initialize Persist
     let ln_data_dir = my_ln_data_dir(&ctx, &ticker)
@@ -268,7 +234,7 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
     let persister = Arc::new(FilesystemPersister::new(ln_data_dir.clone()));
 
     // Initialize the Filter. UtxoStandardCoin implements the Filter trait, so it'll act as our filter.
-    let filter = Some(Arc::new(coin.clone()));
+    let filter = Some(Arc::new(platform_coin.clone()));
 
     // Initialize the ChainMonitor
     let chain_monitor: Arc<ChainMonitor> = Arc::new(chainmonitor::ChainMonitor::new(
@@ -281,9 +247,6 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
 
     let seed: [u8; 32] = ctx.secp256k1_key_pair().private().secret.into();
 
-    // Lock context and wait 1ms before dropping to insure randomness for different coins
-    // when starting multiple lightning nodes for different coins at the same time
-    let background_processor = lightning_ctx.background_processors.lock().await;
     // The current time is used to derive random numbers from the seed where required, to ensure all random generation is unique across restarts.
     let cur = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -291,8 +254,6 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
 
     // Initialize the KeysManager
     let keys_manager = Arc::new(KeysManager::new(&seed, cur.as_secs(), cur.subsec_nanos()));
-    Timer::sleep_ms(1).await;
-    drop(background_processor);
 
     // Read ChannelMonitor state from disk, important for lightning node is restarting and has at least 1 channel
     let mut channelmonitors = persister
@@ -308,14 +269,22 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
 
     let mut user_config = UserConfig::default();
     // When set to false an incoming channel doesn't have to match our announced channel preference which allows public channels
-    // TODO: Add user config to LightningConf maybe get it from coin config / also add to lightning context
+    // TODO: Add user config to LightningCoinConf maybe get it from coin config / also add to lightning context
     user_config
         .peer_channel_config_limits
         .force_announced_channel_preference = false;
 
     let mut restarting_node = true;
-    let network = conf.network;
-    let best_header = get_best_header(conf.rpc_client.clone()).await?;
+    let rpc_client = match &platform_coin.as_ref().rpc_client {
+        UtxoRpcClientEnum::Electrum(c) => c,
+        UtxoRpcClientEnum::Native(_) => {
+            return MmError::err(EnableLightningError::UnsupportedMode(
+                "Lightning network".into(),
+                "electrum".into(),
+            ))
+        },
+    };
+    let best_header = get_best_header(rpc_client.clone()).await?;
     let best_block = RpcBestBlock::from(best_header.clone());
     let best_block_hash = BlockHash::from_hash(
         sha256d::Hash::from_slice(&best_block.hash.0).map_to_mm(|e| EnableLightningError::HashError(e.to_string()))?,
@@ -364,7 +333,7 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
     if restarting_node && channel_manager_blockhash != best_block_hash {
         process_txs_confirmations(
             filter.clone().unwrap().clone(),
-            conf.rpc_client.clone(),
+            rpc_client.clone(),
             chain_monitor.clone(),
             channel_manager.clone(),
             best_header.block_height(),
@@ -415,7 +384,7 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
         filter.clone().unwrap(),
         chain_monitor.clone(),
         channel_manager.clone(),
-        conf.rpc_client.clone(),
+        rpc_client.clone(),
         best_block,
     ));
 
@@ -450,11 +419,6 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
         logger.0,
     );
 
-    {
-        let mut background_processors = lightning_ctx.background_processors.lock().await;
-        background_processors.insert(ticker.clone(), background_processor);
-    }
-
     // If node is restarting read other nodes data from disk and reconnect to channel nodes/peers if possible.
     if restarting_node {
         let mut nodes_data = read_nodes_data_from_file(&nodes_data_path(&ctx, &ticker))?;
@@ -472,29 +436,26 @@ pub async fn start_lightning(ctx: MmArc, coin: UtxoStandardCoin, conf: Lightning
         }
     }
 
-    {
-        let mut peer_managers = lightning_ctx.peer_managers.lock().await;
-        peer_managers.insert(ticker.clone(), peer_manager);
-    }
-
     // Broadcast Node Announcement
     spawn(ln_node_announcement_loop(
         ctx.clone(),
         channel_manager.clone(),
-        conf.node_name,
-        conf.node_color,
-        conf.listening_addr,
-        conf.listening_port,
+        params.node_name,
+        params.node_color,
+        listening_addr,
+        params.listening_port,
     ));
 
-    {
-        let mut channel_managers = lightning_ctx.channel_managers.lock().await;
-        channel_managers.insert(ticker, channel_manager);
-    }
-
-    Ok(())
+    Ok(LightningCoin {
+        platform_coin,
+        conf: Arc::new(LightningCoinConf { ticker }),
+        peer_manager,
+        background_processor: Arc::new(background_processor),
+        channel_manager,
+    })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn ln_p2p_loop(ctx: MmArc, peer_manager: Arc<PeerManager>, listener: TcpListener) {
     loop {
         if ctx.is_stopping() {
@@ -519,6 +480,7 @@ async fn ln_p2p_loop(ctx: MmArc, peer_manager: Arc<PeerManager>, listener: TcpLi
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct ConfirmedTransactionInfo {
     txid: Txid,
     header: BlockHeader,
@@ -527,6 +489,7 @@ struct ConfirmedTransactionInfo {
     height: u32,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ConfirmedTransactionInfo {
     fn new(txid: Txid, header: BlockHeader, index: usize, transaction: Transaction, height: u32) -> Self {
         ConfirmedTransactionInfo {
@@ -540,6 +503,7 @@ impl ConfirmedTransactionInfo {
 }
 
 // Used to order 2 transactions if one spends the other by the spent transaction first
+#[cfg(not(target_arch = "wasm32"))]
 fn cmp_txs_for_spending(spent_tx: &Transaction, spending_tx: &Transaction) -> Ordering {
     for tx_in in &spending_tx.input {
         if spent_tx.txid() == tx_in.previous_output.txid {
@@ -549,6 +513,7 @@ fn cmp_txs_for_spending(spent_tx: &Transaction, spending_tx: &Transaction) -> Or
     Ordering::Equal
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn process_txs_confirmations(
     filter: Arc<UtxoStandardCoin>,
     client: ElectrumClient,
@@ -684,6 +649,7 @@ async fn process_txs_confirmations(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn get_best_header(best_header_listener: ElectrumClient) -> EnableLightningResult<ElectrumBlockHeader> {
     best_header_listener
         .blockchain_headers_subscribe()
@@ -692,6 +658,7 @@ async fn get_best_header(best_header_listener: ElectrumClient) -> EnableLightnin
         .map_to_mm(|e| EnableLightningError::RpcError(e.to_string()))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn update_best_block(
     chain_monitor: Arc<ChainMonitor>,
     channel_manager: Arc<ChannelManager>,
@@ -742,6 +709,7 @@ async fn update_best_block(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn ln_best_block_update_loop(
     ctx: MmArc,
     filter: Arc<UtxoStandardCoin>,
@@ -779,6 +747,7 @@ async fn ln_best_block_update_loop(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn ln_node_announcement_loop(
     ctx: MmArc,
     channel_manager: Arc<ChannelManager>,
@@ -886,6 +855,7 @@ pub enum ConnectToNodeRes {
     ConnectedSuccessfully(String, String),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn connect_to_node(
     pubkey: PublicKey,
     node_addr: SocketAddr,
@@ -935,6 +905,7 @@ pub async fn connect_to_node(
     ))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn connect_to_node_loop(ctx: MmArc, pubkey: PublicKey, node_addr: SocketAddr, peer_manager: Arc<PeerManager>) {
     for node_pubkey in peer_manager.get_peer_node_ids() {
         if node_pubkey == pubkey {
@@ -960,6 +931,7 @@ async fn connect_to_node_loop(ctx: MmArc, pubkey: PublicKey, node_addr: SocketAd
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn open_ln_channel(
     node_pubkey: PublicKey,
     amount_in_sat: u64,
@@ -981,6 +953,7 @@ pub fn open_ln_channel(
 }
 
 // Generates the raw funding transaction with one output equal to the channel value.
+#[cfg(not(target_arch = "wasm32"))]
 async fn generate_funding_transaction(
     channel_value_satoshis: u64,
     output_script: Script,
