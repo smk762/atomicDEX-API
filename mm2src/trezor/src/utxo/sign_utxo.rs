@@ -2,8 +2,8 @@ use crate::proto::messages_bitcoin as proto_bitcoin;
 use crate::utxo::unsigned_tx::UnsignedUtxoTx;
 use crate::utxo::Signature;
 use crate::{TrezorClient, TrezorError, TrezorResponse, TrezorResult};
-use common::mm_error::prelude::*;
 use common::log::{debug, info};
+use common::mm_error::prelude::*;
 
 pub struct TxSignResult {
     pub signatures: Vec<Signature>,

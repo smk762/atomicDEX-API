@@ -1,7 +1,7 @@
 use crate::init_withdraw::{WithdrawAwaitingStatus, WithdrawInProgressStatus, WithdrawTaskHandle};
 use crate::utxo::utxo_common::{big_decimal_from_sat, UtxoTxBuilder};
-use crate::utxo::{output_script, sat_from_big_decimal, ActualTxFee, Address, FeePolicy, UtxoAddressFormat,
-                  UtxoCoinFields, UtxoCommonOps, UtxoFeeDetails, UtxoTx, UTXO_LOCK};
+use crate::utxo::{output_script, sat_from_big_decimal, ActualTxFee, Address, FeePolicy, PrivKeyPolicy,
+                  UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps, UtxoFeeDetails, UtxoTx, UTXO_LOCK};
 use crate::{MarketCoinOps, TransactionDetails, WithdrawError, WithdrawFee, WithdrawFromAddress, WithdrawRequest,
             WithdrawResult};
 use async_trait::async_trait;
@@ -13,7 +13,8 @@ use common::now_ms;
 use common::rpc_task::RpcTaskError;
 use crypto::trezor::trezor_rpc_task::{TrezorInteractWithUser, TrezorInteractionError, TrezorInteractionStatuses};
 use crypto::trezor::{TrezorClient, TrezorError};
-use crypto::{CryptoCtx, CryptoInitError, DerivationPath, EcdsaCurve, HardwareWalletCtx, HwError, HwWalletType};
+use crypto::{Bip32Error, CryptoCtx, CryptoInitError, DerivationPath, EcdsaCurve, HardwareWalletCtx, HwError,
+             HwWalletType};
 use keys::{Public as PublicKey, Type as ScriptType};
 use primitives::hash::H264;
 use script::{Builder, Script, SignatureVersion, TransactionInputSigner};
@@ -87,8 +88,8 @@ impl From<RpcTaskError> for WithdrawError {
     }
 }
 
-impl From<bip32::Error> for WithdrawError {
-    fn from(e: bip32::Error) -> Self {
+impl From<Bip32Error> for WithdrawError {
+    fn from(e: Bip32Error) -> Self {
         WithdrawError::HardwareWalletInternal(format!("Error parsing pubkey received from Hardware Wallet: {}", e))
     }
 }
@@ -199,7 +200,7 @@ where
         let fee_details = UtxoFeeDetails {
             amount: big_decimal_from_sat(fee_amount as i64, decimals),
         };
-        let tx_hex = match coin.as_ref().my_address.addr_format {
+        let tx_hex = match coin.as_ref().address_mode.address_format() {
             UtxoAddressFormat::Segwit => serialize_with_flags(&signed, SERIALIZE_TRANSACTION_WITNESS).into(),
             _ => serialize(&signed).into(),
         };
@@ -296,9 +297,16 @@ where
             .with_unsigned_tx(unsigned_tx)
             .with_prev_script(Builder::build_p2pkh(&self.from_address.hash));
         let sign_params = sign_params.build()?;
-        let sign_policy = match self.trezor {
-            Some(ref trezor) => SignPolicy::WithTrezor(trezor),
-            None => SignPolicy::WithKeyPair(&self.coin.as_ref().key_pair),
+
+        let sign_policy = match self.coin.as_ref().priv_key_policy {
+            PrivKeyPolicy::KeyPair(ref key_pair) => SignPolicy::WithKeyPair(key_pair),
+            PrivKeyPolicy::HardwareWallet => match self.trezor {
+                Some(ref trezor) => SignPolicy::WithTrezor(trezor),
+                None => {
+                    let error = "'InitUtxoWithdraw::trezor' is expected to be set".to_owned();
+                    return MmError::err(WithdrawError::InternalError(error));
+                },
+            },
         };
 
         // TODO refactor [`UtxoSignerOps::sign_tx`] to use [`TrezorInteractWithUser::interact_with_user_if_required`].
@@ -322,7 +330,7 @@ where
     ) -> Result<InitUtxoWithdraw<'a, Coin>, MmError<WithdrawError>> {
         let crypto_ctx = CryptoCtx::from_ctx(&ctx)?;
         match *crypto_ctx {
-            CryptoCtx::KeyPair { .. } => Self::init_with_key_pair(coin, req, task_handle),
+            CryptoCtx::KeyPair(_) => Self::init_with_key_pair(coin, req, task_handle),
             CryptoCtx::HardwareWallet(ref hw_ctx) => match hw_ctx.hw_wallet_type() {
                 HwWalletType::Trezor => Self::init_with_trezor(hw_ctx, coin, req, task_handle).await,
             },
@@ -334,8 +342,8 @@ where
         req: WithdrawRequest,
         task_handle: &'a WithdrawTaskHandle,
     ) -> Result<InitUtxoWithdraw<'a, Coin>, MmError<WithdrawError>> {
-        let from_pubkey = *coin.my_public_key();
-        let from_address = coin.as_ref().my_address.clone();
+        let from_pubkey = *coin.my_public_key()?;
+        let from_address = coin.as_ref().address_mode.certain_or_err()?.clone();
         let from_address_string = coin.my_address().map_to_mm(WithdrawError::InternalError)?;
         Ok(InitUtxoWithdraw {
             coin,
@@ -344,7 +352,6 @@ where
             from_address,
             from_address_string,
             // Temporary initialize the derivation path by default since this field is not used without Trezor.
-            // TODO add a coin derivation path to `UtxoCoinFields`.
             from_derivation_path: DerivationPath::default(),
             from_pubkey,
             trezor: None,
@@ -402,6 +409,7 @@ where
 pub struct StandardUtxoWithdraw<Coin> {
     coin: Coin,
     req: WithdrawRequest,
+    my_address: Address,
     my_address_string: String,
 }
 
@@ -412,7 +420,7 @@ where
 {
     fn coin(&self) -> &Coin { &self.coin }
 
-    fn from_address(&self) -> Address { self.coin.as_ref().my_address.clone() }
+    fn from_address(&self) -> Address { self.my_address.clone() }
 
     fn from_address_string(&self) -> String { self.my_address_string.clone() }
 
@@ -423,9 +431,10 @@ where
     fn on_finishing(&self) -> Result<(), MmError<WithdrawError>> { Ok(()) }
 
     async fn sign_tx(&self, unsigned_tx: TransactionInputSigner) -> Result<UtxoTx, MmError<WithdrawError>> {
+        let key_pair = self.coin.as_ref().priv_key_policy.key_pair_or_err()?;
         Ok(with_key_pair::sign_tx(
             unsigned_tx,
-            &self.coin().as_ref().key_pair,
+            key_pair,
             self.prev_script(),
             self.signature_version(),
             self.coin.as_ref().conf.fork_id,
@@ -435,13 +444,15 @@ where
 
 impl<Coin> StandardUtxoWithdraw<Coin>
 where
-    Coin: MarketCoinOps,
+    Coin: AsRef<UtxoCoinFields> + MarketCoinOps,
 {
     pub fn init(coin: Coin, req: WithdrawRequest) -> Result<Self, MmError<WithdrawError>> {
+        let my_address = coin.as_ref().address_mode.certain_or_err()?.clone();
         let my_address_string = coin.my_address().map_to_mm(WithdrawError::InternalError)?;
         Ok(StandardUtxoWithdraw {
             coin,
             req,
+            my_address,
             my_address_string,
         })
     }

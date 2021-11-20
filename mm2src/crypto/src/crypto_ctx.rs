@@ -1,5 +1,6 @@
 use crate::hw_client::{HwClient, HwError};
 use crate::hw_ctx::HardwareWalletCtx;
+use crate::key_pair_ctx::KeyPairCtx;
 use crate::HwWalletType;
 use bip32::Error as Bip32Error;
 use bitcrypto::dhash160;
@@ -8,7 +9,7 @@ use common::mm_error::prelude::*;
 use common::privkey::{key_pair_from_seed, PrivKeyError};
 use derive_more::Display;
 use hw_common::primitives::EcdsaCurve;
-use keys::{KeyPair, Public as PublicKey};
+use keys::Public as PublicKey;
 use primitives::hash::H264;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -58,11 +59,7 @@ impl From<TrezorError> for CryptoInitError {
 }
 
 pub enum CryptoCtx {
-    KeyPair {
-        /// secp256k1 key pair derived from passphrase.
-        /// cf. `key_pair_from_seed`.
-        secp256k1_key_pair: KeyPair,
-    },
+    KeyPair(KeyPairCtx),
     HardwareWallet(HardwareWalletCtx),
 }
 
@@ -84,7 +81,7 @@ impl CryptoCtx {
 
     pub fn secp256k1_pubkey(&self) -> PublicKey {
         match self {
-            CryptoCtx::KeyPair { ref secp256k1_key_pair } => *secp256k1_key_pair.public(),
+            CryptoCtx::KeyPair(key_pair_ctx) => key_pair_ctx.secp256k1_pubkey(),
             CryptoCtx::HardwareWallet(hw_ctx) => hw_ctx.secp256k1_pubkey(),
         }
     }
@@ -110,7 +107,7 @@ impl CryptoCtx {
         let secp256k1_key_pair_for_legacy = key_pair_from_seed(&passphrase)?;
 
         let rmd160 = secp256k1_key_pair.public().address_hash();
-        let crypto_ctx = CryptoCtx::KeyPair { secp256k1_key_pair };
+        let crypto_ctx = CryptoCtx::KeyPair(KeyPairCtx { secp256k1_key_pair });
         *ctx_field = Some(Arc::new(crypto_ctx));
 
         // TODO remove initializing legacy fields when lp_swap and lp_ordermatch support CryptoCtx.

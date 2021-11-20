@@ -34,7 +34,6 @@
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, ParseBigDecimalError, Zero};
 use common::executor::{spawn, Timer};
-use common::log::warn;
 use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsWeak;
@@ -91,10 +90,10 @@ use eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx}
 pub mod init_withdraw;
 
 pub mod utxo;
-use utxo::qtum::{self, qtum_coin_from_conf_and_params, QtumCoin};
+use utxo::qtum::{self, qtum_coin_from_with_priv_key, QtumCoin};
 use utxo::slp::SlpToken;
 use utxo::utxo_common::big_decimal_from_sat_unsigned;
-use utxo::utxo_standard::{utxo_standard_coin_from_conf_and_params, UtxoStandardCoin};
+use utxo::utxo_standard::{utxo_standard_coin_with_priv_key, UtxoStandardCoin};
 use utxo::{GenerateTxError, UtxoFeeDetails, UtxoTx};
 
 pub mod qrc20;
@@ -135,12 +134,6 @@ cfg_wasm32! {
     pub type TxHistoryDbLocked<'a> = DbLocked<'a, TxHistoryDb>;
 }
 
-/// TODO remove this as soon as possible.
-const DEFAULT_PRIV_KEY: [u8; 32] = [
-    3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72, 172,
-    110, 180, 13, 123, 179, 10, 49,
-];
-
 pub type BalanceResult<T> = Result<T, MmError<BalanceError>>;
 pub type BalanceFut<T> = Box<dyn Future<Item = T, Error = MmError<BalanceError>> + Send>;
 pub type NonZeroBalanceFut<T> = Box<dyn Future<Item = T, Error = MmError<GetNonZeroBalance>> + Send>;
@@ -166,6 +159,18 @@ pub enum TxHistoryError {
     ErrorClearing(String),
     NotSupported(String),
     InternalError(String),
+}
+
+#[derive(Debug, Display)]
+pub enum PrivKeyNotAllowed {
+    #[display(fmt = "Hardware Wallet is not supported")]
+    HardwareWalletNotSupported,
+}
+
+#[derive(Debug, Display, PartialEq)]
+pub enum AddressModeNotSupported {
+    #[display(fmt = "HD wallets are not supported")]
+    HdWalletNotSupported,
 }
 
 pub trait Transaction: fmt::Debug + 'static {
@@ -419,7 +424,7 @@ pub trait MarketCoinOps {
 
     fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send>;
 
-    fn display_priv_key(&self) -> String;
+    fn display_priv_key(&self) -> Result<String, String>;
 
     /// Get the minimum amount to send.
     fn min_tx_amount(&self) -> BigDecimal;
@@ -719,6 +724,10 @@ impl From<NumConversError> for TradePreimageError {
     fn from(e: NumConversError) -> Self { TradePreimageError::InternalError(e.to_string()) }
 }
 
+impl From<AddressModeNotSupported> for TradePreimageError {
+    fn from(e: AddressModeNotSupported) -> Self { TradePreimageError::InternalError(e.to_string()) }
+}
+
 impl TradePreimageError {
     /// Construct [`TradePreimageError`] from [`GenerateTxError`] using additional `coin` and `decimals`.
     pub fn from_generate_tx_error(
@@ -797,6 +806,8 @@ pub enum BalanceError {
     Transport(String),
     #[display(fmt = "Invalid response: {}", _0)]
     InvalidResponse(String),
+    #[display(fmt = "{}", _0)]
+    AddressModeNotSupported(AddressModeNotSupported),
     #[display(fmt = "Internal: {}", _0)]
     Internal(String),
 }
@@ -817,6 +828,10 @@ impl From<NumConversError> for BalanceError {
     fn from(e: NumConversError) -> Self { BalanceError::Internal(e.to_string()) }
 }
 
+impl From<AddressModeNotSupported> for BalanceError {
+    fn from(e: AddressModeNotSupported) -> Self { BalanceError::AddressModeNotSupported(e) }
+}
+
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum StakingInfosError {
@@ -824,6 +839,8 @@ pub enum StakingInfosError {
     CoinDoesntSupportStakingInfos { coin: String },
     #[display(fmt = "No such coin {}", coin)]
     NoSuchCoin { coin: String },
+    #[display(fmt = "Address mode not supported: {}", _0)]
+    AddressModeNotSupported(String),
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[display(fmt = "Internal error: {}", _0)]
@@ -842,12 +859,16 @@ impl From<UtxoRpcError> for StakingInfosError {
     }
 }
 
+impl From<AddressModeNotSupported> for StakingInfosError {
+    fn from(e: AddressModeNotSupported) -> Self { StakingInfosError::AddressModeNotSupported(e.to_string()) }
+}
+
 impl HttpStatusCode for StakingInfosError {
     fn status_code(&self) -> StatusCode {
         match self {
-            StakingInfosError::NoSuchCoin { .. } | StakingInfosError::CoinDoesntSupportStakingInfos { .. } => {
-                StatusCode::BAD_REQUEST
-            },
+            StakingInfosError::NoSuchCoin { .. }
+            | StakingInfosError::CoinDoesntSupportStakingInfos { .. }
+            | StakingInfosError::AddressModeNotSupported(_) => StatusCode::BAD_REQUEST,
             StakingInfosError::Transport(_) | StakingInfosError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -915,6 +936,7 @@ impl From<StakingInfosError> for DelegationError {
             },
             StakingInfosError::NoSuchCoin { coin } => DelegationError::NoSuchCoin { coin },
             StakingInfosError::Transport(e) => DelegationError::Transport(e),
+            StakingInfosError::AddressModeNotSupported(reason) => DelegationError::DelegationOpsNotSupported { reason },
             StakingInfosError::Internal(e) => DelegationError::InternalError(e),
         }
     }
@@ -932,6 +954,9 @@ impl From<BalanceError> for DelegationError {
     fn from(e: BalanceError) -> Self {
         match e {
             BalanceError::Transport(error) | BalanceError::InvalidResponse(error) => DelegationError::Transport(error),
+            BalanceError::AddressModeNotSupported(e) => {
+                DelegationError::DelegationOpsNotSupported { reason: e.to_string() }
+            },
             BalanceError::Internal(internal) => DelegationError::InternalError(internal),
         }
     }
@@ -942,6 +967,14 @@ impl From<UtxoSignWithKeyPairError> for DelegationError {
         let error = format!("Error signing: {}", e);
         DelegationError::InternalError(error)
     }
+}
+
+impl From<PrivKeyNotAllowed> for DelegationError {
+    fn from(e: PrivKeyNotAllowed) -> Self { DelegationError::DelegationOpsNotSupported { reason: e.to_string() } }
+}
+
+impl From<AddressModeNotSupported> for DelegationError {
+    fn from(e: AddressModeNotSupported) -> Self { DelegationError::DelegationOpsNotSupported { reason: e.to_string() } }
 }
 
 impl HttpStatusCode for DelegationError {
@@ -1088,6 +1121,7 @@ impl From<BalanceError> for WithdrawError {
     fn from(e: BalanceError) -> Self {
         match e {
             BalanceError::Transport(error) | BalanceError::InvalidResponse(error) => WithdrawError::Transport(error),
+            BalanceError::AddressModeNotSupported(e) => WithdrawError::from(e),
             BalanceError::Internal(internal) => WithdrawError::InternalError(internal),
         }
     }
@@ -1110,6 +1144,14 @@ impl From<UtxoSignWithKeyPairError> for WithdrawError {
         let error = format!("Error signing: {}", e);
         WithdrawError::InternalError(error)
     }
+}
+
+impl From<AddressModeNotSupported> for WithdrawError {
+    fn from(e: AddressModeNotSupported) -> Self { WithdrawError::InternalError(e.to_string()) }
+}
+
+impl From<PrivKeyNotAllowed> for WithdrawError {
+    fn from(e: PrivKeyNotAllowed) -> Self { WithdrawError::InternalError(e.to_string()) }
 }
 
 impl WithdrawError {
@@ -1607,17 +1649,9 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
         ));
     }
     let secret = match *try_s!(CryptoCtx::from_ctx(ctx)) {
-        CryptoCtx::KeyPair { ref secp256k1_key_pair } => secp256k1_key_pair.private().secret.as_slice().to_vec(),
+        CryptoCtx::KeyPair(ref key_pair_ctx) => key_pair_ctx.secp256k1_privkey_bytes().to_vec(),
         CryptoCtx::HardwareWallet(_) => {
-            warn!(
-                r#"'enable/electrum' RPC doesn't support coins activation with a Hardware Wallet yet.
-The '{}' coin will be activated with a default private key.
-It's possible to use the 'init_withdraw' RPC call ONLY.
-Please note this coin must not be used for any other purposes.
-"#,
-                ticker
-            );
-            DEFAULT_PRIV_KEY.to_vec()
+            return ERR!("'enable' and 'electrum' RPC calls don't support coins activation with a Hardware Wallet")
         },
     };
 
@@ -1631,11 +1665,11 @@ Please note this coin must not be used for any other purposes.
     let coin: MmCoinEnum = match &protocol {
         CoinProtocol::UTXO => {
             let params = try_s!(UtxoActivationParams::from_legacy_req(req));
-            try_s!(utxo_standard_coin_from_conf_and_params(ctx, ticker, &coins_en, params, &secret).await).into()
+            try_s!(utxo_standard_coin_with_priv_key(ctx, ticker, &coins_en, params, &secret).await).into()
         },
         CoinProtocol::QTUM => {
             let params = try_s!(UtxoActivationParams::from_legacy_req(req));
-            try_s!(qtum_coin_from_conf_and_params(ctx, ticker, &coins_en, params, &secret).await).into()
+            try_s!(qtum_coin_from_with_priv_key(ctx, ticker, &coins_en, params, &secret).await).into()
         },
         CoinProtocol::ETH | CoinProtocol::ERC20 { .. } => {
             try_s!(eth_coin_from_conf_and_request(ctx, ticker, &coins_en, req, &secret, protocol).await).into()
@@ -1685,26 +1719,63 @@ Please note this coin must not be used for any other purposes.
         },
     };
 
-    let block_count = try_s!(coin.current_block().compat().await);
-    // TODO, #156: Warn the user when we know that the wallet is under-initialized.
-    log! ([=ticker] if !coins_en["etomic"].is_null() {", etomic"} ", " [=block_count]);
+    let register_params = RegisterCoinParams {
+        ticker: ticker.to_owned(),
+        tx_history: req["tx_history"].as_bool().unwrap_or(false),
+    };
+    try_s!(lp_register_coin(ctx, coin.clone(), register_params).await);
+    Ok(coin)
+}
+
+#[derive(Debug, Display)]
+pub enum RegisterCoinError {
+    #[display(fmt = "Coin '{}' is initialized already", coin)]
+    CoinIsInitializedAlready {
+        coin: String,
+    },
+    #[display(fmt = "Error getting block count: {}", _0)]
+    ErrorGettingBlockCount(String),
+    Internal(String),
+}
+
+pub struct RegisterCoinParams {
+    pub ticker: String,
+    pub tx_history: bool,
+}
+
+pub async fn lp_register_coin(
+    ctx: &MmArc,
+    coin: MmCoinEnum,
+    params: RegisterCoinParams,
+) -> Result<(), MmError<RegisterCoinError>> {
+    let RegisterCoinParams { ticker, tx_history } = params;
+    let cctx = CoinsContext::from_ctx(ctx).map_to_mm(RegisterCoinError::Internal)?;
+
+    let block_count = coin
+        .current_block()
+        .compat()
+        .await
+        .map_to_mm(RegisterCoinError::ErrorGettingBlockCount)?;
+    // Warn the user when we know that the wallet is under-initialized.
+    log!([ticker]", "[block_count]);
+
     // TODO AP: locking the coins list during the entire initialization prevents different coins from being
     // activated concurrently which results in long activation time: https://github.com/KomodoPlatform/atomicDEX/issues/24
     // So I'm leaving the possibility of race condition intentionally in favor of faster concurrent activation.
     // Should consider refactoring: maybe extract the RPC client initialization part from coin init functions.
     let mut coins = cctx.coins.lock().await;
-    match coins.raw_entry_mut().from_key(ticker) {
-        RawEntryMut::Occupied(_oe) => return ERR!("Coin {} already initialized", ticker),
-        RawEntryMut::Vacant(ve) => ve.insert(ticker.to_string(), coin.clone()),
+    match coins.raw_entry_mut().from_key(&ticker) {
+        RawEntryMut::Occupied(_oe) => {
+            return MmError::err(RegisterCoinError::CoinIsInitializedAlready { coin: ticker.clone() })
+        },
+        RawEntryMut::Vacant(ve) => ve.insert(ticker.clone(), coin.clone()),
     };
-    let history = req["tx_history"].as_bool().unwrap_or(false);
-    if history {
-        try_s!(lp_spawn_tx_history(ctx.clone(), coin.clone()));
+    if tx_history {
+        lp_spawn_tx_history(ctx.clone(), coin).map_to_mm(RegisterCoinError::Internal)?;
     }
-    let ticker = ticker.to_owned();
     let ctx_weak = ctx.weak();
     spawn(async move { check_balance_update_loop(ctx_weak, ticker).await });
-    Ok(coin)
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2074,7 +2145,7 @@ pub async fn show_priv_key(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, S
     let res = try_s!(json::to_vec(&json!({
         "result": {
             "coin": ticker,
-            "priv_key": coin.display_priv_key(),
+            "priv_key": try_s!(coin.display_priv_key()),
         }
     })));
     Ok(try_s!(Response::builder().body(res)))
@@ -2174,9 +2245,9 @@ pub async fn convert_utxo_address(ctx: MmArc, req: Json) -> Result<Response<Vec<
         MmCoinEnum::UtxoCoin(utxo) => utxo,
         _ => return ERR!("Coin {} is not utxo", req.to_coin),
     };
-    addr.prefix = coin.as_ref().my_address.prefix;
-    addr.t_addr_prefix = coin.as_ref().my_address.t_addr_prefix;
-    addr.checksum_type = coin.as_ref().my_address.checksum_type;
+    addr.prefix = coin.as_ref().conf.pub_addr_prefix;
+    addr.t_addr_prefix = coin.as_ref().conf.pub_t_addr_prefix;
+    addr.checksum_type = coin.as_ref().conf.checksum_type;
 
     let response = try_s!(json::to_vec(&json!({
         "result": addr.to_string(),

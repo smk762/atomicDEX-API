@@ -1,8 +1,8 @@
 use super::*;
 use crate::init_withdraw::{InitWithdrawCoin, WithdrawTaskHandle};
-use crate::utxo::qtum::qtum_delegation::QtumStakingAbiError;
-use crate::{eth, CanRefundHtlc, CoinBalance, CoinBalancesWithTokens, DelegationFut, NegotiateSwapContractAddrErr,
-            StakingInfosFut, SwapOps, TradePreimageValue, ValidateAddressResult, WithdrawFut};
+use crate::{eth, CanRefundHtlc, CoinBalance, CoinBalancesWithTokens, DelegationError, DelegationFut,
+            NegotiateSwapContractAddrErr, StakingInfosFut, SwapOps, TradePreimageValue, ValidateAddressResult,
+            WithdrawFut};
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
 use crypto::trezor::TrezorCoin;
@@ -34,16 +34,17 @@ pub trait QtumDelegationOps {
 
     fn remove_delegation(&self) -> DelegationFut;
 
-    fn generate_pod(&self, addr_hash: AddressHash) -> Result<keys::Signature, MmError<QtumStakingAbiError>>;
+    fn generate_pod(&self, addr_hash: AddressHash) -> Result<keys::Signature, MmError<DelegationError>>;
 }
 
 #[async_trait]
 pub trait QtumBasedCoin: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps {
     async fn qtum_balance(&self) -> BalanceResult<CoinBalance> {
+        let my_address = self.as_ref().address_mode.certain_or_err()?.clone();
         let balance = self
             .as_ref()
             .rpc_client
-            .display_balance(self.as_ref().my_address.clone(), self.as_ref().decimals)
+            .display_balance(my_address, self.as_ref().decimals)
             .compat()
             .await?;
 
@@ -78,8 +79,8 @@ pub trait QtumBasedCoin: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps {
         let utxo_segwit_err = match Address::from_segwitaddress(
             from,
             self.as_ref().conf.checksum_type,
-            self.as_ref().my_address.prefix,
-            self.as_ref().my_address.t_addr_prefix,
+            self.as_ref().conf.pub_addr_prefix,
+            self.as_ref().conf.pub_t_addr_prefix,
         ) {
             Ok(addr) => {
                 let is_segwit =
@@ -111,11 +112,14 @@ pub trait QtumBasedCoin: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps {
             hash: address.0.into(),
             checksum_type: utxo.conf.checksum_type,
             hrp: utxo.conf.bech32_hrp.clone(),
-            addr_format: utxo.my_address.addr_format.clone(),
+            addr_format: utxo.address_mode.address_format().clone(),
         }
     }
 
-    fn my_addr_as_contract_addr(&self) -> H160 { contract_addr_from_utxo_addr(self.as_ref().my_address.clone()) }
+    fn my_addr_as_contract_addr(&self) -> Result<H160, MmError<AddressModeNotSupported>> {
+        let my_address = self.as_ref().address_mode.certain_or_err()?.clone();
+        Ok(contract_addr_from_utxo_addr(my_address))
+    }
 
     fn utxo_address_from_contract_addr(&self, address: H160) -> Address {
         let utxo = self.as_ref();
@@ -125,7 +129,7 @@ pub trait QtumBasedCoin: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps {
             hash: address.0.into(),
             checksum_type: utxo.conf.checksum_type,
             hrp: utxo.conf.bech32_hrp.clone(),
-            addr_format: utxo.my_address.addr_format.clone(),
+            addr_format: utxo.address_mode.address_format().clone(),
         }
     }
 
@@ -137,7 +141,7 @@ pub trait QtumBasedCoin: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps {
             utxo.conf.pub_t_addr_prefix,
             utxo.conf.checksum_type,
             utxo.conf.bech32_hrp.clone(),
-            utxo.my_address.addr_format.clone()
+            utxo.address_mode.address_format().clone()
         ));
         Ok(qtum::contract_addr_from_utxo_addr(qtum_address))
     }
@@ -166,7 +170,7 @@ impl From<QtumCoin> for UtxoArc {
     fn from(coin: QtumCoin) -> Self { coin.utxo_arc }
 }
 
-pub async fn qtum_coin_from_conf_and_params(
+pub async fn qtum_coin_from_with_priv_key(
     ctx: &MmArc,
     ticker: &str,
     conf: &Json,
@@ -174,8 +178,15 @@ pub async fn qtum_coin_from_conf_and_params(
     priv_key: &[u8],
 ) -> Result<QtumCoin, String> {
     let coin: QtumCoin = try_s!(
-        utxo_common::utxo_arc_from_conf_and_params(ctx, ticker, conf, activation_params, priv_key, QtumCoin::from)
-            .await
+        utxo_common::utxo_arc_from_conf_and_params(
+            ctx,
+            ticker,
+            conf,
+            activation_params,
+            PrivKeyBuildPolicy::PrivKey(priv_key),
+            QtumCoin::from
+        )
+        .await
     );
     Ok(coin)
 }
@@ -233,7 +244,7 @@ impl UtxoCommonOps for QtumCoin {
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo_arc, satoshi) }
 
-    fn my_public_key(&self) -> &Public { self.utxo_arc.key_pair.public() }
+    fn my_public_key(&self) -> Result<&Public, MmError<PrivKeyNotAllowed>> { utxo_common::my_public_key(self.as_ref()) }
 
     fn address_from_str(&self, address: &str) -> Result<Address, String> {
         utxo_common::checked_address_from_str(&self.utxo_arc, address)
@@ -338,7 +349,7 @@ impl UtxoCommonOps for QtumCoin {
             conf.pub_t_addr_prefix,
             conf.checksum_type,
             conf.bech32_hrp.clone(),
-            self.utxo_arc.my_address.addr_format.clone(),
+            self.utxo_arc.address_mode.address_format().clone(),
         )
     }
 }
@@ -618,7 +629,7 @@ impl MarketCoinOps for QtumCoin {
         utxo_common::current_block(&self.utxo_arc)
     }
 
-    fn display_priv_key(&self) -> String { utxo_common::display_priv_key(&self.utxo_arc) }
+    fn display_priv_key(&self) -> Result<String, String> { utxo_common::display_priv_key(&self.utxo_arc) }
 
     fn min_tx_amount(&self) -> BigDecimal { utxo_common::min_tx_amount(self.as_ref()) }
 

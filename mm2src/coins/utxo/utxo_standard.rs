@@ -26,7 +26,7 @@ impl From<UtxoStandardCoin> for UtxoArc {
     fn from(coin: UtxoStandardCoin) -> Self { coin.utxo_arc }
 }
 
-pub async fn utxo_standard_coin_from_conf_and_params(
+pub async fn utxo_standard_coin_with_priv_key(
     ctx: &MmArc,
     ticker: &str,
     conf: &Json,
@@ -39,7 +39,7 @@ pub async fn utxo_standard_coin_from_conf_and_params(
             ticker,
             conf,
             activation_params,
-            priv_key,
+            PrivKeyBuildPolicy::PrivKey(priv_key),
             UtxoStandardCoin::from
         )
         .await
@@ -86,7 +86,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo_arc, satoshi) }
 
-    fn my_public_key(&self) -> &Public { self.utxo_arc.key_pair.public() }
+    fn my_public_key(&self) -> Result<&Public, MmError<PrivKeyNotAllowed>> { utxo_common::my_public_key(self.as_ref()) }
 
     fn address_from_str(&self, address: &str) -> Result<Address, String> {
         utxo_common::checked_address_from_str(&self.utxo_arc, address)
@@ -187,7 +187,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
             conf.pub_t_addr_prefix,
             conf.checksum_type,
             conf.bech32_hrp.clone(),
-            self.utxo_arc.my_address.addr_format.clone(),
+            self.utxo_arc.address_mode.address_format().clone(),
         )
     }
 }
@@ -463,7 +463,7 @@ impl MarketCoinOps for UtxoStandardCoin {
         utxo_common::current_block(&self.utxo_arc)
     }
 
-    fn display_priv_key(&self) -> String { utxo_common::display_priv_key(&self.utxo_arc) }
+    fn display_priv_key(&self) -> Result<String, String> { utxo_common::display_priv_key(&self.utxo_arc) }
 
     fn min_tx_amount(&self) -> BigDecimal { utxo_common::min_tx_amount(self.as_ref()) }
 

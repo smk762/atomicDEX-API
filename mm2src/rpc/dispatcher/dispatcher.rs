@@ -9,7 +9,7 @@ use coins::init_withdraw::{init_withdraw, withdraw_status, withdraw_user_action}
 use coins::lightning::enable_lightning;
 use coins::utxo::slp::SlpToken;
 use coins::{add_delegation, get_staking_infos, remove_delegation, withdraw};
-use coins_activation::enable_token;
+use coins_activation::{enable_token, init_utxo, init_utxo_status};
 use common::log::{error, warn};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
@@ -101,6 +101,8 @@ async fn dispatcher_v2(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Re
         "enable_lightning" => handle_mmrpc(ctx, request, enable_lightning).await,
         "get_public_key" => handle_mmrpc(ctx, request, get_public_key).await,
         "get_staking_infos" => handle_mmrpc(ctx, request, get_staking_infos).await,
+        "init_utxo" => handle_mmrpc(ctx, request, init_utxo).await,
+        "init_utxo_status" => handle_mmrpc(ctx, request, init_utxo_status).await,
         "init_withdraw" => handle_mmrpc(ctx, request, init_withdraw).await,
         "mm_init_status" => handle_mmrpc(ctx, request, mm_init_status).await,
         "mm_init_user_action" => handle_mmrpc(ctx, request, mm_init_user_action).await,

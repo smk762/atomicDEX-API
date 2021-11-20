@@ -9,6 +9,7 @@ edition = "2018"
 async-trait = "0.1"
 coins = { path = "../coins" }
 common = { path = "../common" }
+crypto = { path = "../crypto" }
 derive_more = "0.99"
 rpc = { path = "../mm2_bitcoin/rpc" }
 ser_error = { path = "../derives/ser_error" }

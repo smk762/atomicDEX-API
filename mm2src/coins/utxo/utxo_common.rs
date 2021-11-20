@@ -62,11 +62,27 @@ pub struct UtxoArcBuilder<'a> {
     ticker: &'a str,
     conf: &'a Json,
     activation_params: UtxoActivationParams,
-    priv_key: &'a [u8],
+    priv_key: PrivKeyBuildPolicy<'a>,
 }
 
 impl<'a> UtxoArcBuilder<'a> {
     pub fn new(
+        ctx: &'a MmArc,
+        ticker: &'a str,
+        conf: &'a Json,
+        activation_params: UtxoActivationParams,
+        priv_key: PrivKeyBuildPolicy<'a>,
+    ) -> UtxoArcBuilder<'a> {
+        UtxoArcBuilder {
+            ctx,
+            ticker,
+            conf,
+            activation_params,
+            priv_key,
+        }
+    }
+
+    pub fn with_priv_key(
         ctx: &'a MmArc,
         ticker: &'a str,
         conf: &'a Json,
@@ -78,7 +94,7 @@ impl<'a> UtxoArcBuilder<'a> {
             ticker,
             conf,
             activation_params,
-            priv_key,
+            priv_key: PrivKeyBuildPolicy::PrivKey(priv_key),
         }
     }
 }
@@ -87,8 +103,8 @@ impl<'a> UtxoArcBuilder<'a> {
 impl UtxoCoinBuilder for UtxoArcBuilder<'_> {
     type ResultCoin = UtxoArc;
 
-    async fn build(self) -> Result<Self::ResultCoin, String> {
-        let utxo = try_s!(self.build_utxo_fields().await);
+    async fn build(self) -> UtxoCoinBuildResult<Self::ResultCoin> {
+        let utxo = self.build_utxo_fields().await?;
         Ok(UtxoArc(Arc::new(utxo)))
     }
 
@@ -100,7 +116,7 @@ impl UtxoCoinBuilder for UtxoArcBuilder<'_> {
 
     fn ticker(&self) -> &str { self.ticker }
 
-    fn priv_key(&self) -> &[u8] { self.priv_key }
+    fn priv_key(&self) -> PrivKeyBuildPolicy<'_> { self.priv_key.clone() }
 }
 
 pub async fn utxo_arc_from_conf_and_params<T>(
@@ -108,14 +124,14 @@ pub async fn utxo_arc_from_conf_and_params<T>(
     ticker: &str,
     conf: &Json,
     activation_params: UtxoActivationParams,
-    priv_key: &[u8],
+    priv_key: PrivKeyBuildPolicy<'_>,
     constructor: impl Fn(UtxoArc) -> T + Send + 'static,
-) -> Result<T, String>
+) -> UtxoCoinBuildResult<T>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let builder = UtxoArcBuilder::new(ctx, ticker, conf, activation_params.clone(), priv_key);
-    let utxo_arc = try_s!(builder.build().await);
+    let utxo_arc = builder.build().await?;
     let coin = constructor(utxo_arc.clone());
 
     if let Some(merge_params) = activation_params.utxo_merge_params {
@@ -250,8 +266,8 @@ pub fn address_from_str_unchecked(coin: &UtxoCoinFields, address: &str) -> Resul
     if let Ok(segwit) = Address::from_segwitaddress(
         address,
         coin.conf.checksum_type,
-        coin.my_address.prefix,
-        coin.my_address.t_addr_prefix,
+        coin.conf.pub_addr_prefix,
+        coin.conf.pub_t_addr_prefix,
     ) {
         return Ok(segwit);
     }
@@ -261,12 +277,16 @@ pub fn address_from_str_unchecked(coin: &UtxoCoinFields, address: &str) -> Resul
         coin.conf.checksum_type,
         coin.conf.pub_addr_prefix,
         coin.conf.p2sh_addr_prefix,
-        coin.my_address.t_addr_prefix,
+        coin.conf.pub_t_addr_prefix,
     ) {
         return Ok(cashaddress);
     }
 
     return ERR!("Invalid address: {}", address);
+}
+
+pub fn my_public_key(coin: &UtxoCoinFields) -> Result<&Public, MmError<PrivKeyNotAllowed>> {
+    coin.priv_key_policy.key_pair_or_err().map(|key_pair| key_pair.public())
 }
 
 pub fn checked_address_from_str(coin: &UtxoCoinFields, address: &str) -> Result<Address, String> {
@@ -293,7 +313,7 @@ where
 
 pub struct UtxoTxBuilder<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> {
     coin: &'a T,
-    from: Address,
+    from: Option<Address>,
     /// The available inputs that *can* be included in the resulting tx
     available_inputs: Vec<UnspentInfo>,
     fee_policy: FeePolicy,
@@ -313,7 +333,7 @@ impl<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> UtxoTxBuilder<'a, T> {
         UtxoTxBuilder {
             tx: coin.as_ref().transaction_preimage(),
             coin,
-            from: coin.as_ref().my_address.clone(),
+            from: coin.as_ref().address_mode.certain().cloned(),
             available_inputs: vec![],
             fee_policy: FeePolicy::SendExact,
             fee: None,
@@ -328,7 +348,7 @@ impl<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> UtxoTxBuilder<'a, T> {
     }
 
     pub fn with_from_address(mut self, from: Address) -> Self {
-        self.from = from;
+        self.from = Some(from);
         self
     }
 
@@ -466,7 +486,11 @@ impl<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> UtxoTxBuilder<'a, T> {
     pub async fn build(mut self) -> GenerateTxResult {
         let coin = self.coin;
         let dust: u64 = self.dust();
-        let change_script_pubkey = output_script(&self.from, ScriptType::P2PKH).to_bytes();
+        let from = self
+            .from
+            .clone()
+            .or_mm_err(|| GenerateTxError::Internal("'from' address is not specified".to_owned()))?;
+        let change_script_pubkey = output_script(&from, ScriptType::P2PKH).to_bytes();
 
         let actual_tx_fee = match self.fee {
             Some(fee) => fee,
@@ -648,6 +672,7 @@ pub async fn p2sh_spending_tx<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
+    let key_pair = try_s!(coin.as_ref().priv_key_policy.key_pair_or_err());
     let lock_time = try_s!(coin.p2sh_tx_locktime(lock_time).await);
     let n_time = if coin.as_ref().conf.is_pos {
         Some((now_ms() / 1000) as u32)
@@ -689,7 +714,7 @@ where
     let signed_input = try_s!(p2sh_spend(
         &unsigned,
         DEFAULT_SWAP_VOUT,
-        &coin.as_ref().key_pair,
+        key_pair,
         script_data,
         redeem_script.into(),
         coin.as_ref().conf.signature_version,
@@ -727,7 +752,7 @@ where
         coin.as_ref().conf.pub_t_addr_prefix,
         coin.as_ref().conf.checksum_type,
         coin.as_ref().conf.bech32_hrp.clone(),
-        coin.as_ref().my_address.addr_format.clone()
+        coin.as_ref().address_mode.address_format().clone(),
     ));
     let amount = try_fus!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
     let output = TransactionOutput {
@@ -817,6 +842,9 @@ pub fn send_maker_spends_taker_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
+    let key_pair = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err());
+    let my_address = try_fus!(coin.as_ref().address_mode.certain_or_err()).clone();
+
     let mut prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let script_data = Builder::default()
@@ -827,11 +855,11 @@ where
         time_lock,
         &*dhash160(secret),
         &try_fus!(Public::from_slice(taker_pub)),
-        coin.as_ref().key_pair.public(),
+        key_pair.public(),
     );
     let fut = async move {
         let fee = try_s!(coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE).await);
-        let script_pubkey = output_script(&coin.as_ref().my_address, ScriptType::P2PKH).to_bytes();
+        let script_pubkey = output_script(&my_address, ScriptType::P2PKH).to_bytes();
         let output = TransactionOutput {
             value: prev_tx.outputs[0].value - fee,
             script_pubkey,
@@ -864,6 +892,9 @@ pub fn send_taker_spends_maker_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
+    let key_pair = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err());
+    let my_address = try_fus!(coin.as_ref().address_mode.certain_or_err()).clone();
+
     let mut prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let script_data = Builder::default()
@@ -874,11 +905,11 @@ where
         time_lock,
         &*dhash160(secret),
         &try_fus!(Public::from_slice(maker_pub)),
-        coin.as_ref().key_pair.public(),
+        key_pair.public(),
     );
     let fut = async move {
         let fee = try_s!(coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE).await);
-        let script_pubkey = output_script(&coin.as_ref().my_address, ScriptType::P2PKH).to_bytes();
+        let script_pubkey = output_script(&my_address, ScriptType::P2PKH).to_bytes();
         let output = TransactionOutput {
             value: prev_tx.outputs[0].value - fee,
             script_pubkey,
@@ -911,18 +942,21 @@ pub fn send_taker_refunds_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
+    let key_pair = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err());
+    let my_address = try_fus!(coin.as_ref().address_mode.certain_or_err()).clone();
+
     let mut prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
     let redeem_script = payment_script(
         time_lock,
         secret_hash,
-        coin.as_ref().key_pair.public(),
+        key_pair.public(),
         &try_fus!(Public::from_slice(maker_pub)),
     );
     let fut = async move {
         let fee = try_s!(coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE).await);
-        let script_pubkey = output_script(&coin.as_ref().my_address, ScriptType::P2PKH).to_bytes();
+        let script_pubkey = output_script(&my_address, ScriptType::P2PKH).to_bytes();
         let output = TransactionOutput {
             value: prev_tx.outputs[0].value - fee,
             script_pubkey,
@@ -955,18 +989,21 @@ pub fn send_maker_refunds_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
+    let key_pair = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err());
+    let my_address = try_fus!(coin.as_ref().address_mode.certain_or_err()).clone();
+
     let mut prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
     let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
     let redeem_script = payment_script(
         time_lock,
         secret_hash,
-        coin.as_ref().key_pair.public(),
+        key_pair.public(),
         &try_fus!(Public::from_slice(taker_pub)),
     );
     let fut = async move {
         let fee = try_s!(coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE).await);
-        let script_pubkey = output_script(&coin.as_ref().my_address, ScriptType::P2PKH).to_bytes();
+        let script_pubkey = output_script(&my_address, ScriptType::P2PKH).to_bytes();
         let output = TransactionOutput {
             value: prev_tx.outputs[0].value - fee,
             script_pubkey,
@@ -1092,7 +1129,7 @@ where
         coin.as_ref().conf.pub_t_addr_prefix,
         coin.as_ref().conf.checksum_type,
         coin.as_ref().conf.bech32_hrp.clone(),
-        coin.as_ref().my_address.addr_format.clone()
+        coin.as_ref().address_mode.address_format().clone(),
     ));
 
     if !try_fus!(check_all_inputs_signed_by_pub(&tx, sender_pubkey)) {
@@ -1163,7 +1200,7 @@ pub fn validate_maker_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + Clone + Send + Sync + 'static,
 {
-    let my_public = coin.as_ref().key_pair.public();
+    let my_public = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err()).public();
     let mut tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
 
@@ -1190,7 +1227,7 @@ pub fn validate_taker_payment<T>(
 where
     T: AsRef<UtxoCoinFields> + Clone + Send + Sync + 'static,
 {
-    let my_public = coin.as_ref().key_pair.public();
+    let my_public = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err()).public();
     let mut tx: UtxoTx = try_fus!(deserialize(payment_tx).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
 
@@ -1215,10 +1252,11 @@ pub fn check_if_my_payment_sent<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
+    let my_public = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err()).public();
     let script = payment_script(
         time_lock,
         secret_hash,
-        coin.as_ref().key_pair.public(),
+        my_public,
         &try_fus!(Public::from_slice(other_pub)),
     );
     let hash = dhash160(&script);
@@ -1245,7 +1283,7 @@ where
                     hash,
                     checksum_type: coin.as_ref().conf.checksum_type,
                     hrp: coin.as_ref().conf.bech32_hrp.clone(),
-                    addr_format: coin.as_ref().my_address.addr_format.clone(),
+                    addr_format: coin.as_ref().address_mode.address_format().clone(),
                 };
                 let target_addr = target_addr.to_string();
                 let is_imported = try_s!(client.is_address_imported(&target_addr).await);
@@ -1277,10 +1315,11 @@ pub fn search_for_swap_tx_spend_my(
     output_index: usize,
     search_from_block: u64,
 ) -> Result<Option<FoundSwapTxSpend>, String> {
+    let my_public = try_s!(coin.priv_key_policy.key_pair_or_err()).public();
     block_on(search_for_swap_output_spend(
         coin,
         time_lock,
-        coin.key_pair.public(),
+        my_public,
         &try_s!(Public::from_slice(other_pub)),
         secret_hash,
         tx,
@@ -1298,11 +1337,12 @@ pub fn search_for_swap_tx_spend_other(
     output_index: usize,
     search_from_block: u64,
 ) -> Result<Option<FoundSwapTxSpend>, String> {
+    let my_public = try_s!(coin.priv_key_policy.key_pair_or_err()).public();
     block_on(search_for_swap_output_spend(
         coin,
         time_lock,
         &try_s!(Public::from_slice(other_pub)),
-        coin.key_pair.public(),
+        my_public,
         secret_hash,
         tx,
         output_index,
@@ -1355,13 +1395,17 @@ pub fn my_address<T>(coin: &T) -> Result<String, String>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    coin.as_ref().my_address.display_address()
+    match coin.as_ref().address_mode {
+        AddressMode::Certain(ref my_address) => my_address.display_address(),
+        AddressMode::Derived(_) => ERR!("'my_address' is deprecated for HD wallets"),
+    }
 }
 
 pub fn my_balance(coin: &UtxoCoinFields) -> BalanceFut<CoinBalance> {
+    let my_address = try_f!(coin.address_mode.certain_or_err().mm_err(BalanceError::from)).clone();
     Box::new(
         coin.rpc_client
-            .display_balance(coin.my_address.clone(), coin.decimals)
+            .display_balance(my_address, coin.decimals)
             .map_to_mm_fut(BalanceError::from)
             // at the moment standard UTXO coins do not have an unspendable balance
             .map(|spendable| CoinBalance {
@@ -1449,7 +1493,12 @@ pub fn current_block(coin: &UtxoCoinFields) -> Box<dyn Future<Item = u64, Error 
     Box::new(coin.rpc_client.get_block_count().map_err(|e| ERRL!("{}", e)))
 }
 
-pub fn display_priv_key(coin: &UtxoCoinFields) -> String { format!("{}", coin.key_pair.private()) }
+pub fn display_priv_key(coin: &UtxoCoinFields) -> Result<String, String> {
+    match coin.priv_key_policy {
+        PrivKeyPolicy::KeyPair(ref key_pair) => Ok(key_pair.private().to_string()),
+        PrivKeyPolicy::HardwareWallet => ERR!("'display_priv_key' doesn't support Hardware Wallets"),
+    }
+}
 
 pub fn min_tx_amount(coin: &UtxoCoinFields) -> BigDecimal {
     big_decimal_from_sat(coin.dust_amount as i64, coin.decimals)
@@ -1824,7 +1873,11 @@ where
                 .collect()
         },
         UtxoRpcClientEnum::Electrum(client) => {
-            let script = output_script(&coin.as_ref().my_address, ScriptType::P2PKH);
+            let my_address = match coin.as_ref().address_mode.certain_or_err() {
+                Ok(my_address) => my_address,
+                Err(e) => return RequestTxHistoryResult::UnknownError(e.to_string()),
+            };
+            let script = output_script(my_address, ScriptType::P2PKH);
             let script_hash = electrum_script_hash(&script);
 
             mm_counter!(metrics, "tx.history.request.count", 1,
@@ -1883,6 +1936,7 @@ where
     let verbose_tx = try_s!(coin.as_ref().rpc_client.get_verbose_transaction(&hash).compat().await);
     let mut tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
+    let my_address = try_s!(coin.as_ref().address_mode.certain_or_err());
 
     input_transactions.insert(hash, HistoryUtxoTx {
         tx: tx.clone(),
@@ -1918,7 +1972,7 @@ where
                 .clone()
                 .into()
         ));
-        if from.contains(&coin.as_ref().my_address) {
+        if from.contains(my_address) {
             spent_by_me += prev_tx_value;
         }
         from_addresses.extend(from.into_iter());
@@ -1927,7 +1981,7 @@ where
     for output in tx.outputs.iter() {
         output_amount += output.value;
         let to = try_s!(coin.addresses_from_script(&output.script_pubkey.clone().into()));
-        if to.contains(&coin.as_ref().my_address) {
+        if to.contains(my_address) {
             received_by_me += output.value;
         }
         to_addresses.extend(to.into_iter());
@@ -2169,6 +2223,7 @@ where
     let tx_fee = coin.get_tx_fee().await?;
     // [`FeePolicy::DeductFromOutput`] is used if the value is [`TradePreimageValue::UpperBound`] only
     let is_amount_upper_bound = matches!(fee_policy, FeePolicy::DeductFromOutput(_));
+    let my_address = coin.as_ref().address_mode.certain_or_err()?;
 
     match tx_fee {
         ActualTxFee::Fixed(fee_amount) => {
@@ -2181,7 +2236,7 @@ where
             let dynamic_fee = coin.increase_dynamic_fee_by_stage(fee, stage);
 
             let outputs_count = outputs.len();
-            let (unspents, _recently_sent_txs) = coin.list_unspent_ordered(&coin.as_ref().my_address).await?;
+            let (unspents, _recently_sent_txs) = coin.list_unspent_ordered(my_address).await?;
 
             let actual_tx_fee = ActualTxFee::Dynamic(dynamic_fee);
 
@@ -2210,7 +2265,7 @@ where
         },
         ActualTxFee::FixedPerKb(fee) => {
             let outputs_count = outputs.len();
-            let (unspents, _recently_sent_txs) = coin.list_unspent_ordered(&coin.as_ref().my_address).await?;
+            let (unspents, _recently_sent_txs) = coin.list_unspent_ordered(my_address).await?;
 
             let mut tx_builder = UtxoTxBuilder::new(coin)
                 .add_available_inputs(unspents)
@@ -2346,13 +2401,13 @@ pub fn set_requires_notarization(coin: &UtxoCoinFields, requires_nota: bool) {
 }
 
 pub fn coin_protocol_info(coin: &UtxoCoinFields) -> Vec<u8> {
-    rmp_serde::to_vec(&coin.my_address.addr_format).expect("Serialization should not fail")
+    rmp_serde::to_vec(coin.address_mode.address_format()).expect("Serialization should not fail")
 }
 
 pub fn is_coin_protocol_supported(coin: &UtxoCoinFields, info: &Option<Vec<u8>>) -> bool {
     match info {
         Some(format) => rmp_serde::from_read_ref::<_, UtxoAddressFormat>(format).is_ok(),
-        None => !coin.my_address.addr_format.is_segwit(),
+        None => !coin.address_mode.address_format().is_segwit(),
     }
 }
 
@@ -2507,8 +2562,9 @@ where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps + ?Sized,
 {
     let mut attempts = 0i32;
+    let my_address = coin.as_ref().address_mode.certain_or_err()?;
     loop {
-        let (mature_unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
+        let (mature_unspents, _) = coin.ordered_mature_unspents(my_address).await?;
         let spendable_balance = mature_unspents.iter().fold(BigDecimal::zero(), |acc, x| {
             acc + big_decimal_from_sat(x.value as i64, coin.as_ref().decimals)
         });
@@ -2724,10 +2780,11 @@ fn generate_swap_payment_outputs<T>(
 where
     T: AsRef<UtxoCoinFields>,
 {
+    let my_public = try_s!(coin.as_ref().priv_key_policy.key_pair_or_err()).public();
     let redeem_script = payment_script(
         time_lock,
         secret_hash,
-        coin.as_ref().key_pair.public(),
+        my_public,
         &try_s!(Public::from_slice(other_pub)),
     );
     let redeem_script_hash = dhash160(&redeem_script);
@@ -2887,8 +2944,16 @@ async fn merge_utxo_loop<T>(
             None => break,
         };
 
+        let my_address = match coin.as_ref().address_mode {
+            AddressMode::Certain(ref my_address) => my_address,
+            AddressMode::Derived(_) => {
+                warn!("'merge_utxo_loop' is currently not used for HD wallets");
+                return;
+            },
+        };
+
         let ticker = &coin.as_ref().conf.ticker;
-        let (unspents, recently_spent) = match coin.list_unspent_ordered(&coin.as_ref().my_address).await {
+        let (unspents, recently_spent) = match coin.list_unspent_ordered(my_address).await {
             Ok((unspents, recently_spent)) => (unspents, recently_spent),
             Err(e) => {
                 error!("Error {} on list_unspent_ordered of coin {}", e, ticker);
@@ -2899,7 +2964,7 @@ async fn merge_utxo_loop<T>(
             let unspents: Vec<_> = unspents.into_iter().take(max_merge_at_once).collect();
             info!("Trying to merge {} UTXOs of coin {}", unspents.len(), ticker);
             let value = unspents.iter().fold(0, |sum, unspent| sum + unspent.value);
-            let script_pubkey = Builder::build_p2pkh(&coin.as_ref().my_address.hash).to_bytes();
+            let script_pubkey = Builder::build_p2pkh(&my_address.hash).to_bytes();
             let output = TransactionOutput { value, script_pubkey };
             let merge_tx_fut = generate_and_send_tx(
                 &coin,
