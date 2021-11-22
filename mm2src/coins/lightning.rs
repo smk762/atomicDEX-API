@@ -3,10 +3,9 @@ use super::{lp_coinfind_or_err, MmCoinEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utxo::{sat_from_big_decimal, UtxoCommonOps, UtxoTxGenerationOps, UTXO_LOCK};
-use crate::{BalanceFut, CoinBalance, CoinBalancesWithTokens, FeeApproxStage, FoundSwapTxSpend, HistorySyncState,
-            MarketCoinOps, MmCoin, NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageFut,
-            TradePreimageValue, TransactionEnum, TransactionFut, UtxoStandardCoin, ValidateAddressResult, WithdrawFut,
-            WithdrawRequest};
+use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
+            NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageFut, TradePreimageValue, TransactionEnum,
+            TransactionFut, UtxoStandardCoin, ValidateAddressResult, WithdrawFut, WithdrawRequest};
 use bigdecimal::BigDecimal;
 use bitcoin::blockdata::script::Script;
 use bitcoin::hash_types::Txid;
@@ -263,8 +262,6 @@ impl MarketCoinOps for LightningCoin {
 
     // Returns platform_coin balance for now
     fn my_balance(&self) -> BalanceFut<CoinBalance> { self.platform_coin().my_balance() }
-
-    fn get_balances_with_tokens(&self) -> BalanceFut<CoinBalancesWithTokens> { unimplemented!() }
 
     fn base_coin_balance(&self) -> BalanceFut<BigDecimal> { unimplemented!() }
 

@@ -1,14 +1,16 @@
 use super::lp_protocol::{MmRpcBuilder, MmRpcRequest};
 use super::{DispatcherError, DispatcherResult, PUBLIC_METHODS};
 use crate::mm2::lp_ordermatch::{start_simple_market_maker_bot, stop_simple_market_maker_bot};
+use crate::mm2::rpc::rate_limiter::{process_rate_limit, RateLimitContext};
 use crate::{mm2::lp_stats::{add_node_to_version_stat, remove_node_from_version_stat, start_version_stat_collection,
                             stop_version_stat_collection, update_version_stat_collection},
             mm2::lp_swap::trade_preimage_rpc,
             mm2::rpc::get_public_key::get_public_key};
 use coins::lightning::{connect_to_lightning_node, open_channel};
+use coins::utxo::bch::BchCoin;
 use coins::utxo::slp::SlpToken;
 use coins::{add_delegation, get_staking_infos, remove_delegation, withdraw};
-use coins_activation::enable_token;
+use coins_activation::{enable_platform_coin_with_tokens, enable_token};
 use common::log::{error, warn};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
@@ -33,7 +35,12 @@ pub async fn process_single_request(
         return MmError::err(DispatcherError::LocalHostOnly);
     }
 
-    auth(&request, &ctx)?;
+    let rate_limit_ctx = RateLimitContext::from_ctx(&ctx).unwrap();
+    if rate_limit_ctx.is_banned(client.ip()).await {
+        return MmError::err(DispatcherError::Banned);
+    }
+
+    auth(&request, &ctx, &client).await?;
     dispatcher(request, ctx).await
 }
 
@@ -72,7 +79,7 @@ where
     Ok(response.serialize_http_response())
 }
 
-fn auth(request: &MmRpcRequest, ctx: &MmArc) -> DispatcherResult<()> {
+async fn auth(request: &MmRpcRequest, ctx: &MmArc, client: &SocketAddr) -> DispatcherResult<()> {
     if PUBLIC_METHODS.contains(&Some(request.method.as_str())) {
         return Ok(());
     }
@@ -83,7 +90,7 @@ fn auth(request: &MmRpcRequest, ctx: &MmArc) -> DispatcherResult<()> {
     });
     match request.userpass {
         Some(ref userpass) if userpass == rpc_password => Ok(()),
-        Some(_) => MmError::err(DispatcherError::UserpassIsInvalid),
+        Some(_) => Err(process_rate_limit(ctx, client).await),
         None => MmError::err(DispatcherError::UserpassIsNotSet),
     }
 }
@@ -94,6 +101,7 @@ async fn dispatcher(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Respo
         "add_delegation" => handle_mmrpc(ctx, request, add_delegation).await,
         "add_node_to_version_stat" => handle_mmrpc(ctx, request, add_node_to_version_stat).await,
         "connect_to_lightning_node" => handle_mmrpc(ctx, request, connect_to_lightning_node).await,
+        "enable_bch_with_tokens" => handle_mmrpc(ctx, request, enable_platform_coin_with_tokens::<BchCoin>).await,
         "enable_slp" => handle_mmrpc(ctx, request, enable_token::<SlpToken>).await,
         "get_public_key" => handle_mmrpc(ctx, request, get_public_key).await,
         "get_staking_infos" => handle_mmrpc(ctx, request, get_staking_infos).await,
@@ -107,6 +115,6 @@ async fn dispatcher(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Respo
         "update_version_stat_collection" => handle_mmrpc(ctx, request, update_version_stat_collection).await,
         "trade_preimage" => handle_mmrpc(ctx, request, trade_preimage_rpc).await,
         "withdraw" => handle_mmrpc(ctx, request, withdraw).await,
-        _ => MmError::err(DispatcherError::NoSuchMethod { method: request.method }),
+        _ => MmError::err(DispatcherError::NoSuchMethod),
     }
 }

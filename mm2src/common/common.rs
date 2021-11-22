@@ -128,6 +128,7 @@ pub mod big_int_str;
 pub mod crash_reports;
 pub mod custom_futures;
 pub mod duplex_mutex;
+pub mod event_dispatcher;
 pub mod for_tests;
 pub mod grpc_web;
 pub mod iguana_utils;
@@ -161,7 +162,7 @@ pub mod indexed_db;
 
 use backtrace::SymbolName;
 use bigdecimal::BigDecimal;
-use futures::compat::Future01CompatExt;
+pub use futures::compat::Future01CompatExt;
 use futures::future::FutureExt;
 use futures::task::Waker;
 use futures01::{future, task::Task, Future};
