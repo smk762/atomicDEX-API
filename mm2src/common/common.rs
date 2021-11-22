@@ -99,7 +99,6 @@ pub mod mm_ctx;
 pub mod mm_number;
 pub mod mm_rpc_protocol;
 pub mod privkey;
-pub mod rpc_task;
 pub mod seri;
 #[path = "patterns/state_machine.rs"] pub mod state_machine;
 pub mod time_cache;
@@ -862,7 +861,7 @@ impl SerializationError {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct SuccessResponse(&'static str);
 
 impl SuccessResponse {

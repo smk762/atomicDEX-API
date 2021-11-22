@@ -90,6 +90,7 @@ use http::StatusCode;
 use itertools::Itertools;
 use ser_error::SerializeErrorType;
 use serde::{Serialize, Serializer};
+use std::cell::UnsafeCell;
 use std::fmt;
 use std::panic::Location;
 
@@ -116,6 +117,8 @@ impl<E> !NotMmError for MmError<E> {}
 /// This is required because an auto trait is not automatically implemented for a non-sized types,
 /// e.g for Box<dyn Trait>.
 impl<T: ?Sized> NotMmError for Box<T> {}
+
+impl<T: ?Sized> NotMmError for UnsafeCell<T> {}
 
 pub trait SerMmErrorType: SerializeErrorType + fmt::Display + NotMmError {}
 

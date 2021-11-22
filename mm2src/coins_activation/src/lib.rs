@@ -1,3 +1,4 @@
+mod context;
 mod init_utxo;
 mod platform_coin_with_tokens;
 mod standalone_coin;

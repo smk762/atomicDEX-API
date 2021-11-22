@@ -1,11 +1,11 @@
-use crate::mm2::lp_native_dex::rpc_task::MmInitUserAction;
+use crate::mm2::lp_native_dex::init_context::MmInitContext;
+use crate::mm2::lp_native_dex::mm_init_task::{MmInitStatus, MmInitUserAction};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
-use common::rpc_task::{RpcTaskError, RpcTaskStatus};
 use common::{HttpStatusCode, SuccessResponse};
 use derive_more::Display;
 use http::StatusCode;
-use serde_json as json;
+use rpc_task::RpcTaskError;
 
 const FORGET_INIT_RESULT_IF_FINISHED: bool = false;
 
@@ -13,6 +13,7 @@ const FORGET_INIT_RESULT_IF_FINISHED: bool = false;
 #[serde(tag = "error_type", content = "error_data")]
 pub enum MmInitStatusError {
     InitializationNotStartedYet,
+    Internal(String),
 }
 
 impl HttpStatusCode for MmInitStatusError {
@@ -22,13 +23,17 @@ impl HttpStatusCode for MmInitStatusError {
 #[derive(Deserialize)]
 pub struct MmInitStatusReq;
 
-pub async fn mm_init_status(ctx: MmArc, _req: MmInitStatusReq) -> Result<RpcTaskStatus, MmError<MmInitStatusError>> {
-    let init_task_id = *ctx
+pub async fn mm_init_status(ctx: MmArc, _req: MmInitStatusReq) -> Result<MmInitStatus, MmError<MmInitStatusError>> {
+    let init_ctx = MmInitContext::from_ctx(&ctx).map_to_mm(|_| MmInitStatusError::InitializationNotStartedYet)?;
+    let mut task_manager = init_ctx
+        .mm_init_task_manager
+        .lock()
+        .map_to_mm(|poison| MmInitStatusError::Internal(poison.to_string()))?;
+
+    let init_task_id = *init_ctx
         .mm_init_task_id
         .ok_or(MmInitStatusError::InitializationNotStartedYet)?;
-
-    let mut rpc_manager = ctx.rpc_task_manager();
-    rpc_manager
+    task_manager
         .task_status(init_task_id, FORGET_INIT_RESULT_IF_FINISHED)
         .or_mm_err(|| MmInitStatusError::InitializationNotStartedYet)
 }
@@ -58,13 +63,16 @@ pub async fn mm_init_user_action(
     ctx: MmArc,
     req: MmInitUserAction,
 ) -> Result<SuccessResponse, MmError<MmInitUserActionError>> {
-    let init_task_id = *ctx
+    let init_ctx = MmInitContext::from_ctx(&ctx).map_to_mm(|_| MmInitUserActionError::InitializationNotStartedYet)?;
+    let mut task_manager = init_ctx
+        .mm_init_task_manager
+        .lock()
+        .map_to_mm(|poison| MmInitUserActionError::Internal(poison.to_string()))?;
+
+    let init_task_id = *init_ctx
         .mm_init_task_id
         .ok_or(MmInitUserActionError::InitializationNotStartedYet)?;
 
-    let mut rpc_manager = ctx.rpc_task_manager();
-    // TODO refactor it when `RpcTaskManager` is generic
-    let response_json = json::to_value(req).map_to_mm(|e| MmInitUserActionError::Internal(e.to_string()))?;
-    rpc_manager.on_user_action(init_task_id, response_json)?;
+    task_manager.on_user_action(init_task_id, req)?;
     Ok(SuccessResponse::new())
 }

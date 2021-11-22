@@ -1,9 +1,9 @@
 use crate::{TrezorError, TrezorEvent, TrezorPinMatrix3x3Response, TrezorResponseReceiver};
 use async_trait::async_trait;
 use common::mm_error::prelude::*;
-use common::rpc_task::{RpcTaskError, RpcTaskHandle};
 use derive_more::Display;
 use futures::StreamExt;
+use rpc_task::{RpcTaskError, RpcTaskHandle};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use std::convert::{TryFrom, TryInto};
@@ -34,7 +34,12 @@ pub struct TrezorInteractionStatuses<InProgressStatus, AwaitingStatus> {
 }
 
 #[async_trait]
-pub trait TrezorInteractWithUser<T, Item, Error, InProgressStatus, AwaitingStatus, UserAction>: Sized {
+pub trait TrezorInteractWithUser<T, Item, Error, InProgressStatus, AwaitingStatus, UserAction>
+where
+    Self: Sized,
+    Item: Serialize,
+    Error: SerMmErrorType,
+{
     async fn interact_with_user_if_required(
         self,
         timeout: Duration,
@@ -47,8 +52,8 @@ pub trait TrezorInteractWithUser<T, Item, Error, InProgressStatus, AwaitingStatu
 impl<T, Item, Error, InProgressStatus, AwaitingStatus, UserAction>
     TrezorInteractWithUser<T, Item, Error, InProgressStatus, AwaitingStatus, UserAction> for TrezorResponseReceiver<T>
 where
-    Item: Send + Sync,
-    Error: Send + Sync,
+    Item: Serialize + Send + Sync,
+    Error: SerMmErrorType + Send + Sync,
     T: Send + 'static,
     InProgressStatus: Clone + Serialize + Send + Sync,
     AwaitingStatus: Clone + Serialize + Send + Sync,

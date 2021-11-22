@@ -112,6 +112,7 @@ pub use test_coin::TestCoin;
 #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
 pub mod z_coin;
 
+use crate::init_withdraw::{WithdrawTaskManager, WithdrawTaskManagerShared};
 use crate::qrc20::Qrc20ActivationParams;
 use crate::utxo::bch::{bch_coin_from_conf_and_params, BchActivationParams, BchCoin};
 use crate::utxo::rpc_clients::UtxoRpcError;
@@ -1029,7 +1030,7 @@ impl DelegationError {
     }
 }
 
-#[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
+#[derive(Clone, Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum WithdrawError {
     /*                                              */
@@ -1076,8 +1077,6 @@ pub enum WithdrawError {
     Timeout(Duration),
     #[display(fmt = "Unexpected user action. Expected '{}'", expected)]
     UnexpectedUserAction { expected: String },
-    #[display(fmt = "Error deserializing user action: '{}'", _0)]
-    ErrorDeserializingUserAction(String),
     #[display(fmt = "Request doesn't contain 'from' address")]
     FromAddressIsNotSet,
     #[display(fmt = "Error parsing 'from' address")]
@@ -1095,7 +1094,6 @@ impl HttpStatusCode for WithdrawError {
             WithdrawError::Timeout(_) => StatusCode::REQUEST_TIMEOUT,
             WithdrawError::CoinDoesntSupportInitWithdraw { .. }
             | WithdrawError::UnexpectedUserAction { .. }
-            | WithdrawError::ErrorDeserializingUserAction(_)
             | WithdrawError::NotSufficientBalance { .. }
             | WithdrawError::ZeroBalanceToWithdrawMax
             | WithdrawError::AmountTooLow { .. }
@@ -1405,6 +1403,7 @@ pub struct CoinsContext {
     /// Similar to `LP_coins`.
     coins: AsyncMutex<HashMap<String, MmCoinEnum>>,
     balance_update_handlers: AsyncMutex<Vec<Box<dyn BalanceTradeFeeUpdatedHandler + Send + Sync>>>,
+    withdraw_task_manager: WithdrawTaskManagerShared,
     #[cfg(target_arch = "wasm32")]
     /// The database has to be initialized only once!
     tx_history_db: ConstructibleDb<TxHistoryDb>,
@@ -1421,6 +1420,7 @@ impl CoinsContext {
             Ok(CoinsContext {
                 coins: AsyncMutex::new(HashMap::new()),
                 balance_update_handlers: AsyncMutex::new(vec![]),
+                withdraw_task_manager: WithdrawTaskManager::new_shared(),
                 #[cfg(target_arch = "wasm32")]
                 tx_history_db: ConstructibleDb::from_ctx(ctx),
             })

@@ -23,13 +23,12 @@ use common::executor::{spawn, spawn_boxed, Timer};
 use common::log::{error, info, warn};
 use common::mm_ctx::{MmArc, MmCtx};
 use common::mm_error::prelude::*;
-use common::privkey::PrivKeyError;
-use common::rpc_task::{spawn_rpc_task, RpcTaskError};
 use crypto::trezor::trezor_rpc_task::TrezorInteractionError;
 use crypto::{CryptoCtx, CryptoInitError, HwError};
 use derive_more::Display;
 use mm2_libp2p::{spawn_gossipsub, AdexBehaviourError, NodeType, RelayAddress, RelayAddressError, WssCerts};
 use rand::random;
+use rpc_task::RpcTaskError;
 use serde_json::{self as json};
 use std::fs;
 use std::io::{self, Read, Write};
@@ -53,17 +52,18 @@ cfg_native! {
     use common::rusqlite::Error as SqlError;
 }
 
+#[path = "lp_init/init_context.rs"] mod init_context;
+#[path = "lp_init/mm_init_task.rs"] mod mm_init_task;
 #[path = "lp_init/rpc_command.rs"] pub mod rpc_command;
-#[path = "lp_init/rpc_task.rs"] mod rpc_task;
 
-use rpc_task::MmInitTask;
+use mm_init_task::MmInitTask;
 
 const NETID_7777_SEEDNODES: [&str; 3] = ["seed1.defimania.live", "seed2.defimania.live", "seed3.defimania.live"];
 
 pub type P2PResult<T> = Result<T, MmError<P2PInitError>>;
 pub type MmInitResult<T> = Result<T, MmError<MmInitError>>;
 
-#[derive(Debug, Display, Serialize)]
+#[derive(Clone, Debug, Display, Serialize)]
 pub enum P2PInitError {
     #[display(
         fmt = "Invalid WSS key/cert at {:?}. The file must contain {}'",
@@ -102,7 +102,7 @@ impl From<AdexBehaviourError> for P2PInitError {
     }
 }
 
-#[derive(Debug, Display, Serialize, SerializeErrorType)]
+#[derive(Clone, Debug, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum MmInitError {
     Canceled,
@@ -142,7 +142,7 @@ pub enum MmInitError {
     OrdersKickStartError(String),
     NullStringPassphrase,
     #[display(fmt = "Invalid passphrase: {}", _0)]
-    InvalidPassphrase(PrivKeyError),
+    InvalidPassphrase(String),
     #[display(fmt = "Invalid Hardware Wallet device response: {}", _0)]
     InvalidHardwareDeviceResponse(String),
     #[display(fmt = "No Trezor device available")]
@@ -153,8 +153,6 @@ pub enum MmInitError {
     UnexpectedUserAction {
         expected: String,
     },
-    #[display(fmt = "Error deserializing user action: '{}'", _0)]
-    ErrorDeserializingUserAction(String),
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
 }
@@ -205,7 +203,7 @@ impl From<CryptoInitError> for MmInitError {
                 MmInitError::Internal(e.to_string())
             },
             CryptoInitError::NullStringPassphrase => MmInitError::NullStringPassphrase,
-            CryptoInitError::InvalidPassphrase(pass) => MmInitError::InvalidPassphrase(pass),
+            CryptoInitError::InvalidPassphrase(pass) => MmInitError::InvalidPassphrase(pass.to_string()),
             CryptoInitError::InvalidXpub(bip32_err) => {
                 MmInitError::InvalidHardwareDeviceResponse(bip32_err.to_string())
             },
@@ -231,10 +229,7 @@ impl From<RpcTaskError> for MmInitError {
         match e {
             RpcTaskError::Canceled => MmInitError::Canceled,
             RpcTaskError::Timeout(timeout) => MmInitError::Timeout(timeout),
-            RpcTaskError::ErrorDeserializingUserAction(e) => MmInitError::ErrorDeserializingUserAction(e),
-            RpcTaskError::NoSuchTask(_)
-            | RpcTaskError::UnexpectedTaskStatus { .. }
-            | RpcTaskError::ErrorSerializingStatus(_) => MmInitError::Internal(error),
+            RpcTaskError::NoSuchTask(_) | RpcTaskError::UnexpectedTaskStatus { .. } => MmInitError::Internal(error),
             RpcTaskError::Internal(internal) => MmInitError::Internal(internal),
         }
     }
@@ -479,13 +474,10 @@ pub async fn lp_init(ctx: MmArc) -> MmInitResult<()> {
         // Currently, `MmInitTask` initializes `CryptoCtx` with Hardware Wallet only.
         // Later I'm going to change it.
         // The main blocker is that if an error occurs while MarketMaker initializing,
-        // we have to exit with an error since our users are used to this behaviour.
+        // we should exit with an error since our users are used to this behaviour.
         // But `MmInitTask` inserts the error into [`MmCtx::rpc_task_manager`] and doesn't stop anything.
         let task = MmInitTask::new(ctx.clone());
-        let mm_init_task_id = spawn_rpc_task(ctx.clone(), task)?;
-        ctx.mm_init_task_id
-            .pin(mm_init_task_id)
-            .expect("MarketMaker initialization task has been spawned already");
+        task.spawn()?;
     } else {
         let passphrase: String =
             json::from_value(ctx.conf["passphrase"].clone()).map_to_mm(|e| MmInitError::ErrorDeserializingConfig {

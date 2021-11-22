@@ -10,13 +10,13 @@ use chain::TransactionOutput;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::now_ms;
-use common::rpc_task::RpcTaskError;
 use crypto::trezor::trezor_rpc_task::{TrezorInteractWithUser, TrezorInteractionError, TrezorInteractionStatuses};
 use crypto::trezor::{TrezorClient, TrezorError};
 use crypto::{Bip32Error, CryptoCtx, CryptoInitError, DerivationPath, EcdsaCurve, HardwareWalletCtx, HwError,
              HwWalletType};
 use keys::{Public as PublicKey, Type as ScriptType};
 use primitives::hash::H264;
+use rpc_task::RpcTaskError;
 use script::{Builder, Script, SignatureVersion, TransactionInputSigner};
 use serialization::{serialize, serialize_with_flags, SERIALIZE_TRANSACTION_WITNESS};
 use std::iter::once;
@@ -79,10 +79,9 @@ impl From<RpcTaskError> for WithdrawError {
         match e {
             RpcTaskError::Canceled => WithdrawError::InternalError("Canceled".to_owned()),
             RpcTaskError::Timeout(timeout) => WithdrawError::Timeout(timeout),
-            RpcTaskError::ErrorDeserializingUserAction(e) => WithdrawError::ErrorDeserializingUserAction(e),
-            RpcTaskError::NoSuchTask(_)
-            | RpcTaskError::UnexpectedTaskStatus { .. }
-            | RpcTaskError::ErrorSerializingStatus(_) => WithdrawError::InternalError(error),
+            RpcTaskError::NoSuchTask(_) | RpcTaskError::UnexpectedTaskStatus { .. } => {
+                WithdrawError::InternalError(error)
+            },
             RpcTaskError::Internal(internal) => WithdrawError::InternalError(internal),
         }
     }

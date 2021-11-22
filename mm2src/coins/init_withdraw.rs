@@ -1,17 +1,30 @@
-use crate::{lp_coinfind_or_err, MmCoinEnum, WithdrawError};
+use crate::{lp_coinfind_or_err, CoinsContext, MmCoinEnum, WithdrawError};
 use crate::{TransactionDetails, WithdrawRequest};
 use async_trait::async_trait;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
-use common::rpc_task::{spawn_rpc_task, RpcTask, RpcTaskError, RpcTaskHandle, RpcTaskStatus, TaskId};
 use common::{HttpStatusCode, SuccessResponse};
 use crypto::trezor::trezor_rpc_task::TrezorInteractionError;
 use crypto::trezor::TrezorPinMatrix3x3Response;
 use derive_more::Display;
 use http::StatusCode;
-use serde_json as json;
+use rpc_task::{RpcTask, RpcTaskError, RpcTaskHandle, RpcTaskManager, RpcTaskManagerShared, RpcTaskStatus, TaskId};
 use std::convert::TryFrom;
 
+pub type WithdrawTaskManager = RpcTaskManager<
+    TransactionDetails,
+    WithdrawError,
+    WithdrawInProgressStatus,
+    WithdrawAwaitingStatus,
+    WithdrawUserAction,
+>;
+pub type WithdrawTaskManagerShared = RpcTaskManagerShared<
+    TransactionDetails,
+    WithdrawError,
+    WithdrawInProgressStatus,
+    WithdrawAwaitingStatus,
+    WithdrawUserAction,
+>;
 pub type WithdrawTaskHandle = RpcTaskHandle<
     TransactionDetails,
     WithdrawError,
@@ -19,12 +32,15 @@ pub type WithdrawTaskHandle = RpcTaskHandle<
     WithdrawAwaitingStatus,
     WithdrawUserAction,
 >;
+pub type WithdrawRpcStatus =
+    RpcTaskStatus<TransactionDetails, WithdrawError, WithdrawInProgressStatus, WithdrawAwaitingStatus>;
 pub type WithdrawInitResult<T> = Result<T, MmError<WithdrawError>>;
 
 #[derive(Debug, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum WithdrawStatusError {
     NoSuchTask(TaskId),
+    Internal(String),
 }
 
 impl HttpStatusCode for WithdrawStatusError {
@@ -73,7 +89,8 @@ pub async fn init_withdraw(ctx: MmArc, request: WithdrawRequest) -> WithdrawInit
         coin,
         request,
     };
-    let task_id = spawn_rpc_task(ctx, task)?;
+    let coins_ctx = CoinsContext::from_ctx(&ctx).map_to_mm(WithdrawError::InternalError)?;
+    let task_id = WithdrawTaskManager::spawn_rpc_task(&coins_ctx.withdraw_task_manager, task)?;
     Ok(InitWithdrawResponse { task_id })
 }
 
@@ -87,9 +104,13 @@ pub struct WithdrawStatusRequest {
 pub async fn withdraw_status(
     ctx: MmArc,
     req: WithdrawStatusRequest,
-) -> Result<RpcTaskStatus, MmError<WithdrawStatusError>> {
-    let mut rpc_manager = ctx.rpc_task_manager();
-    rpc_manager
+) -> Result<WithdrawRpcStatus, MmError<WithdrawStatusError>> {
+    let coins_ctx = CoinsContext::from_ctx(&ctx).map_to_mm(WithdrawStatusError::Internal)?;
+    let mut task_manager = coins_ctx
+        .withdraw_task_manager
+        .lock()
+        .map_to_mm(|e| WithdrawStatusError::Internal(e.to_string()))?;
+    task_manager
         .task_status(req.task_id, req.forget_if_finished)
         .or_mm_err(|| WithdrawStatusError::NoSuchTask(req.task_id))
 }
@@ -139,11 +160,12 @@ pub async fn withdraw_user_action(
     ctx: MmArc,
     req: WithdrawUserActionRequest,
 ) -> Result<SuccessResponse, MmError<WithdrawUserActionError>> {
-    let mut rpc_manager = ctx.rpc_task_manager();
-    // TODO refactor it when `RpcTaskManager` is generic
-    let response_json =
-        json::to_value(req.user_action).map_to_mm(|e| WithdrawUserActionError::Internal(e.to_string()))?;
-    rpc_manager.on_user_action(req.task_id, response_json)?;
+    let coins_ctx = CoinsContext::from_ctx(&ctx).map_to_mm(WithdrawUserActionError::Internal)?;
+    let mut task_manager = coins_ctx
+        .withdraw_task_manager
+        .lock()
+        .map_to_mm(|e| WithdrawUserActionError::Internal(e.to_string()))?;
+    task_manager.on_user_action(req.task_id, req.user_action)?;
     Ok(SuccessResponse::new())
 }
 

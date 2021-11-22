@@ -1,3 +1,4 @@
+use crate::context::CoinsActivationContext;
 use async_trait::async_trait;
 use coins::utxo::qtum::QtumCoin;
 use coins::utxo::rpc_clients::ElectrumRpcRequest;
@@ -6,17 +7,31 @@ use coins::utxo::{utxo_common, PrivKeyBuildPolicy, UtxoActivationParams, UtxoCoi
 use coins::{coin_conf, lp_coinfind, lp_register_coin, CoinProtocol, MmCoinEnum, RegisterCoinError, RegisterCoinParams};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
-use common::rpc_task::{spawn_rpc_task, RpcTask, RpcTaskError, RpcTaskHandle, RpcTaskStatus, TaskId};
 use common::{HttpStatusCode, StatusCode};
 use crypto::trezor::TrezorPinMatrix3x3Response;
 use crypto::{CryptoCtx, CryptoInitError};
 use derive_more::Display;
+use rpc_task::{RpcTask, RpcTaskError, RpcTaskHandle, RpcTaskManager, RpcTaskManagerShared, RpcTaskStatus, TaskId};
 use ser_error_derive::SerializeErrorType;
 use serde::{Deserialize, Serialize};
 use serde_json::{self as json};
 use std::time::Duration;
 
 pub type InitUtxoResult<T> = Result<T, MmError<InitUtxoError>>;
+pub type UtxoInitTaskManager = RpcTaskManager<
+    InitUtxoResponse,
+    InitUtxoError,
+    InitUtxoInProgressStatus,
+    InitUtxoAwaitingStatus,
+    InitUtxoUserAction,
+>;
+pub type UtxoInitTaskManagerShared = RpcTaskManagerShared<
+    InitUtxoResponse,
+    InitUtxoError,
+    InitUtxoInProgressStatus,
+    InitUtxoAwaitingStatus,
+    InitUtxoUserAction,
+>;
 type UtxoInitTaskHandle = RpcTaskHandle<
     InitUtxoResponse,
     InitUtxoError,
@@ -24,9 +39,10 @@ type UtxoInitTaskHandle = RpcTaskHandle<
     InitUtxoAwaitingStatus,
     InitUtxoUserAction,
 >;
+type UtxoInitStatus = RpcTaskStatus<InitUtxoResponse, InitUtxoError, InitUtxoInProgressStatus, InitUtxoAwaitingStatus>;
 
 /// A combination of `UtxoCoinBuildError`, `UtxoConfError`, `RpcTaskError` errors.
-#[derive(Display, Serialize, SerializeErrorType)]
+#[derive(Clone, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum InitUtxoError {
     #[display(fmt = "Coin '{}' is activated already", coin)]
@@ -90,8 +106,6 @@ pub enum InitUtxoError {
     CantDetectUserHome,
     #[display(fmt = "Withdraw timed out {:?}", _0)]
     Timeout(Duration),
-    #[display(fmt = "Error deserializing user action: '{}'", _0)]
-    ErrorDeserializingUserAction(String),
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
 }
@@ -102,10 +116,7 @@ impl From<RpcTaskError> for InitUtxoError {
         match e {
             RpcTaskError::Canceled => InitUtxoError::Internal("Canceled".to_owned()),
             RpcTaskError::Timeout(timeout) => InitUtxoError::Timeout(timeout),
-            RpcTaskError::ErrorDeserializingUserAction(e) => InitUtxoError::ErrorDeserializingUserAction(e),
-            RpcTaskError::NoSuchTask(_)
-            | RpcTaskError::UnexpectedTaskStatus { .. }
-            | RpcTaskError::ErrorSerializingStatus(_) => InitUtxoError::Internal(error),
+            RpcTaskError::NoSuchTask(_) | RpcTaskError::UnexpectedTaskStatus { .. } => InitUtxoError::Internal(error),
             RpcTaskError::Internal(internal) => InitUtxoError::Internal(internal),
         }
     }
@@ -189,8 +200,7 @@ impl HttpStatusCode for InitUtxoError {
             | InitUtxoError::InvalidDecimals(_)
             | InitUtxoError::NativeRpcNotSupportedInWasm
             | InitUtxoError::ErrorReadingNativeModeConf(_)
-            | InitUtxoError::RpcPortIsNotSet
-            | InitUtxoError::ErrorDeserializingUserAction(_) => StatusCode::BAD_REQUEST,
+            | InitUtxoError::RpcPortIsNotSet => StatusCode::BAD_REQUEST,
             InitUtxoError::CoinConfNotFound { .. } => StatusCode::NOT_FOUND,
             InitUtxoError::ElectrumProtocolVersionCheckError(_)
             | InitUtxoError::ErrorDetectingFeeMethod(_)
@@ -208,6 +218,7 @@ impl HttpStatusCode for InitUtxoError {
 #[serde(tag = "error_type", content = "error_data")]
 pub enum InitUtxoStatusError {
     NoSuchTask(TaskId),
+    Internal(String),
 }
 
 impl HttpStatusCode for InitUtxoStatusError {
@@ -231,7 +242,8 @@ pub async fn init_utxo(ctx: MmArc, request: InitUtxoRequest) -> InitUtxoResult<I
         ctx: ctx.clone(),
         request,
     };
-    let task_id = spawn_rpc_task(ctx, task)?;
+    let coins_act_ctx = CoinsActivationContext::from_ctx(&ctx).map_to_mm(InitUtxoError::Internal)?;
+    let task_id = UtxoInitTaskManager::spawn_rpc_task(&coins_act_ctx.init_utxo_task_manager, task)?;
     Ok(InitWithdrawResponse { task_id })
 }
 
@@ -245,14 +257,18 @@ pub struct InitUtxoStatusRequest {
 pub async fn init_utxo_status(
     ctx: MmArc,
     req: InitUtxoStatusRequest,
-) -> Result<RpcTaskStatus, MmError<InitUtxoStatusError>> {
-    let mut rpc_manager = ctx.rpc_task_manager();
-    rpc_manager
+) -> Result<UtxoInitStatus, MmError<InitUtxoStatusError>> {
+    let coins_act_ctx = CoinsActivationContext::from_ctx(&ctx).map_to_mm(InitUtxoStatusError::Internal)?;
+    let mut task_manager = coins_act_ctx
+        .init_utxo_task_manager
+        .lock()
+        .map_to_mm(|poison| InitUtxoStatusError::Internal(poison.to_string()))?;
+    task_manager
         .task_status(req.task_id, req.forget_if_finished)
         .or_mm_err(|| InitUtxoStatusError::NoSuchTask(req.task_id))
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub enum InitUtxoInProgressStatus {
     ActivatingCoin,
     /// This status doesn't require the user to send `UserAction`,
@@ -261,7 +277,7 @@ pub enum InitUtxoInProgressStatus {
     WaitingForUserToConfirmAddress,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub enum InitUtxoAwaitingStatus {
     WaitForTrezorPin,
 }
@@ -278,7 +294,7 @@ pub struct InitUtxoTask {
 }
 
 /// TODO return `addresses` with balances.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct InitUtxoResponse {
     coin: String,
     required_confirmations: u64,

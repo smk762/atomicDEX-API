@@ -828,6 +828,7 @@ dependencies = [
  "rlp 0.3.0",
  "rmp-serde",
  "rpc",
+ "rpc_task",
  "rusqlite",
  "rust-ini",
  "rustls",
@@ -867,6 +868,7 @@ dependencies = [
  "crypto",
  "derive_more",
  "rpc",
+ "rpc_task",
  "ser_error",
  "ser_error_derive",
  "serde",
@@ -3287,6 +3289,7 @@ dependencies = [
  "regex",
  "rmp-serde",
  "rpc",
+ "rpc_task",
  "script",
  "secp256k1",
  "ser_error",
@@ -4567,6 +4570,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpc_task"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "common",
+ "derive_more",
+ "futures 0.3.15",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "rusb"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5776,6 +5791,7 @@ dependencies = [
  "protobuf",
  "protoc-rust",
  "rand 0.7.3",
+ "rpc_task",
  "serde",
  "serde_derive",
  "wasm-bindgen",

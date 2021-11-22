@@ -68,8 +68,7 @@ impl CryptoCtx {
         let ctx_field = ctx
             .crypto_ctx
             .lock()
-            // `PoisonError` doesn't implement `NotMmError`, so we can't use [`MapToMmResult::map_to_mm`].
-            .map_err(|poison| MmError::new(CryptoInitError::Internal(poison.to_string())))?;
+            .map_to_mm(|poison| CryptoInitError::Internal(poison.to_string()))?;
         let ctx = match ctx_field.deref() {
             Some(ctx) => ctx,
             None => return MmError::err(CryptoInitError::NotInitialized),
@@ -92,8 +91,7 @@ impl CryptoCtx {
         let mut ctx_field = ctx
             .crypto_ctx
             .lock()
-            // `PoisonError` doesn't implement `NotMmError`, so we can't use [`MapToMmResult::map_to_mm`].
-            .map_err(|poison| MmError::new(CryptoInitError::Internal(poison.to_string())))?;
+            .map_to_mm(|poison| CryptoInitError::Internal(poison.to_string()))?;
         if ctx_field.is_some() {
             return MmError::err(CryptoInitError::InitializedAlready);
         }
@@ -150,8 +148,7 @@ impl CryptoCtx {
         let mut ctx_field = ctx
             .crypto_ctx
             .lock()
-            // `PoisonError` doesn't implement `NotMmError`, so we can't use [`MapToMmResult::map_to_mm`].
-            .map_err(|poison| MmError::new(CryptoInitError::Internal(poison.to_string())))?;
+            .map_to_mm(|poison| CryptoInitError::Internal(poison.to_string()))?;
         if ctx_field.is_some() {
             return MmError::err(CryptoInitError::InitializedAlready);
         }

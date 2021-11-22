@@ -85,6 +85,7 @@ mm2-libp2p = { path = "mm2src/mm2_libp2p" }
 num-rational = { version = "0.2", features = ["serde", "bigint", "bigint-std"] }
 num-traits = "0.2"
 rpc = { path = "mm2src/mm2_bitcoin/rpc" }
+rpc_task = { path = "mm2src/rpc_task" }
 parking_lot = { version = "0.11", features = ["nightly"] }
 parity-util-mem = "0.9"
 # AP: portfolio RPCs are not documented and not used as of now
@@ -159,6 +160,7 @@ members = [
     "mm2src/mm2_libp2p",
     "mm2src/gossipsub",
     "mm2src/hw_common",
+    "mm2src/rpc_task",
     "mm2src/trezor",
 ]
 # https://doc.rust-lang.org/beta/cargo/reference/features.html#feature-resolver-version-2
