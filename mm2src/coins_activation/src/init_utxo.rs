@@ -332,7 +332,7 @@ impl RpcTask for InitUtxoTask {
 }
 
 impl InitUtxoTask {
-    /// TODO refactor it when Artem's changes are merged.
+    /// TODO refactor it at the next iteration.
     async fn activate_utxo_coin(&self) -> InitUtxoResult<MmCoinEnum> {
         let coins_en = coin_conf(&self.ctx, &self.request.coin);
         if coins_en.is_null() {
