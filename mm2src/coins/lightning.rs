@@ -2,12 +2,14 @@
 use super::{lp_coinfind_or_err, MmCoinEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::utxo::{sat_from_big_decimal, UtxoCommonOps, UTXO_LOCK};
+use crate::utxo::{sat_from_big_decimal, UtxoCommonOps, UtxoTxGenerationOps, UTXO_LOCK};
 use crate::{BalanceFut, CoinBalance, CoinBalancesWithTokens, FeeApproxStage, FoundSwapTxSpend, HistorySyncState,
             MarketCoinOps, MmCoin, NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageFut,
             TradePreimageValue, TransactionEnum, TransactionFut, UtxoStandardCoin, ValidateAddressResult, WithdrawFut,
             WithdrawRequest};
 use bigdecimal::BigDecimal;
+use bitcoin::blockdata::script::Script;
+use bitcoin::hash_types::Txid;
 #[cfg(not(target_arch = "wasm32"))]
 use common::ip_addr::myipaddr;
 use common::mm_ctx::MmArc;
@@ -16,7 +18,9 @@ use common::mm_number::MmNumber;
 use derive_more::Display;
 #[cfg(not(target_arch = "wasm32"))]
 use futures::compat::Future01CompatExt;
+use futures::lock::Mutex as AsyncMutex;
 use futures01::Future;
+use lightning::chain::WatchedOutput;
 #[cfg(not(target_arch = "wasm32"))]
 use lightning_background_processor::BackgroundProcessor;
 use ln_errors::{ConnectToNodeError, ConnectToNodeResult, EnableLightningError, EnableLightningResult,
@@ -27,6 +31,7 @@ use ln_utils::{connect_to_node, last_request_id_path, nodes_data_path, open_ln_c
                save_node_data_to_file, ChannelManager, PeerManager};
 use rpc::v1::types::Bytes as BytesJson;
 use serde_json::{self as json, Value as Json};
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::fmt;
 use std::sync::Arc;
@@ -36,13 +41,43 @@ mod ln_rpc;
 pub mod ln_utils;
 
 #[derive(Debug)]
+pub struct PlatformFields {
+    pub platform_coin: UtxoStandardCoin,
+    // This cache stores the transactions that the LN node has interest in.
+    pub registered_txs: AsyncMutex<HashMap<Txid, HashSet<Script>>>,
+    // This cache stores the outputs that the LN node has interest in.
+    pub registered_outputs: AsyncMutex<Vec<WatchedOutput>>,
+}
+
+impl PlatformFields {
+    pub async fn add_tx(&self, txid: &Txid, script_pubkey: &Script) {
+        let mut registered_txs = self.registered_txs.lock().await;
+        match registered_txs.get_mut(txid) {
+            Some(h) => {
+                h.insert(script_pubkey.clone());
+            },
+            None => {
+                let mut script_pubkeys = HashSet::new();
+                script_pubkeys.insert(script_pubkey.clone());
+                registered_txs.insert(*txid, script_pubkeys);
+            },
+        }
+    }
+
+    pub async fn add_output(&self, output: WatchedOutput) {
+        let mut registered_outputs = self.registered_outputs.lock().await;
+        registered_outputs.push(output);
+    }
+}
+
+#[derive(Debug)]
 pub struct LightningCoinConf {
     ticker: String,
 }
 
 #[derive(Clone)]
 pub struct LightningCoin {
-    pub platform_coin: UtxoStandardCoin,
+    pub platform_fields: Arc<PlatformFields>,
     pub conf: Arc<LightningCoinConf>,
     /// The lightning node peer manager that takes care of connecting to peers, etc..
     #[cfg(not(target_arch = "wasm32"))]
@@ -58,8 +93,16 @@ pub struct LightningCoin {
 
 impl fmt::Debug for LightningCoin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "LightningCoin {{ platform_coin: {:?} }}", self.platform_coin)
+        write!(
+            f,
+            "LightningCoin {{ platform_fields: {:?}, conf: {:?} }}",
+            self.platform_fields, self.conf
+        )
     }
+}
+
+impl LightningCoin {
+    fn platform_coin(&self) -> &UtxoStandardCoin { &self.platform_fields.platform_coin }
 }
 
 impl SwapOps for LightningCoin {
@@ -216,10 +259,10 @@ impl MarketCoinOps for LightningCoin {
     fn ticker(&self) -> &str { &self.conf.ticker }
 
     // Returns platform_coin address for now
-    fn my_address(&self) -> Result<String, String> { self.platform_coin.my_address() }
+    fn my_address(&self) -> Result<String, String> { self.platform_coin().my_address() }
 
     // Returns platform_coin balance for now
-    fn my_balance(&self) -> BalanceFut<CoinBalance> { self.platform_coin.my_balance() }
+    fn my_balance(&self) -> BalanceFut<CoinBalance> { self.platform_coin().my_balance() }
 
     fn get_balances_with_tokens(&self) -> BalanceFut<CoinBalancesWithTokens> { unimplemented!() }
 
@@ -250,7 +293,9 @@ impl MarketCoinOps for LightningCoin {
 
     fn tx_enum_from_bytes(&self, _bytes: &[u8]) -> Result<TransactionEnum, String> { unimplemented!() }
 
-    fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send> { self.platform_coin.current_block() }
+    fn current_block(&self) -> Box<dyn Future<Item = u64, Error = String> + Send> {
+        self.platform_coin().current_block()
+    }
 
     fn display_priv_key(&self) -> String { unimplemented!() }
 
@@ -290,9 +335,9 @@ impl MmCoin for LightningCoin {
         unimplemented!()
     }
 
-    fn required_confirmations(&self) -> u64 { self.platform_coin.required_confirmations() }
+    fn required_confirmations(&self) -> u64 { self.platform_coin().required_confirmations() }
 
-    fn requires_notarization(&self) -> bool { self.platform_coin.requires_notarization() }
+    fn requires_notarization(&self) -> bool { self.platform_coin().requires_notarization() }
 
     fn set_required_confirmations(&self, _confirmations: u64) { unimplemented!() }
 
@@ -300,7 +345,7 @@ impl MmCoin for LightningCoin {
 
     fn swap_contract_address(&self) -> Option<BytesJson> { unimplemented!() }
 
-    fn mature_confirmations(&self) -> Option<u32> { self.platform_coin.mature_confirmations() }
+    fn mature_confirmations(&self) -> Option<u32> { self.platform_coin().mature_confirmations() }
 
     fn coin_protocol_info(&self) -> Vec<u8> { unimplemented!() }
 
@@ -460,13 +505,15 @@ pub async fn open_channel(_ctx: MmArc, _req: OpenChannelRequest) -> OpenChannelR
 /// Opens a channel on the lightning network.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelResult<String> {
+    use crate::utxo::ActualTxFee;
+
     let coin = lp_coinfind_or_err(&ctx, &req.coin).await?;
     let ln_coin = match coin {
         MmCoinEnum::LightningCoin(c) => c,
         _ => return MmError::err(OpenChannelError::UnsupportedCoin(coin.ticker().to_string())),
     };
 
-    let platform_coin = ln_coin.platform_coin.clone();
+    let platform_coin = ln_coin.platform_coin().clone();
     let decimals = platform_coin.as_ref().decimals;
     let amount = match req.amount.clone() {
         ChannelOpenAmount::Exact(value) => {
@@ -480,11 +527,22 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
             sat_from_big_decimal(&value, decimals)?
         },
         ChannelOpenAmount::Max => {
+            let fee = match platform_coin.get_tx_fee().await {
+                Ok(ActualTxFee::Fixed(f)) => f,
+                // P2WSH transactions are measured in vbytes and are always equal to 153 for BTC,
+                // but since the UtxoTxBuilder in generate_funding_transaction uses the actual bytes size
+                // which is equal to 234, 234 will be used for now.
+                // TODO: after the hotfix for update_fee_and_check_completeness to calculate the tx_size in vbytes,
+                // the vbytes size can be used here for this to reduce fees and to be generic over any other coin
+                Ok(ActualTxFee::Dynamic(f)) => f * 234 / 1000,
+                Ok(ActualTxFee::FixedPerKb(f)) => f * 234 / 1000,
+                Err(e) => return MmError::err(OpenChannelError::RpcError(e.to_string())),
+            };
             let _utxo_lock = UTXO_LOCK.lock().await;
             let (unspents, _) = platform_coin
                 .ordered_mature_unspents(&platform_coin.as_ref().my_address)
                 .await?;
-            unspents.iter().fold(0, |sum, unspent| sum + unspent.value)
+            unspents.iter().fold(0, |sum, unspent| sum + unspent.value) - fee
         },
     };
 

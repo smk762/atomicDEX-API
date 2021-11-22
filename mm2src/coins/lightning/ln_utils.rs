@@ -16,7 +16,6 @@ cfg_native! {
                                    ElectrumNonce};
     use crate::utxo::utxo_common::UtxoTxBuilder;
     use crate::utxo::{sign_tx, FeePolicy, UtxoCommonOps, UtxoTxGenerationOps, UTXO_LOCK};
-    use crate::MarketCoinOps;
     use bitcoin::blockdata::block::BlockHeader;
     use bitcoin::blockdata::constants::genesis_block;
     use bitcoin::blockdata::script::Script;
@@ -27,9 +26,10 @@ cfg_native! {
     use chain::TransactionOutput;
     use common::executor::{spawn, Timer};
     use common::ip_addr::fetch_external_ip;
-    use common::log;
+    use common::{block_on, log};
     use common::log::LogState;
     use futures::compat::Future01CompatExt;
+    use futures::lock::Mutex as AsyncMutex;
     use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager};
     use lightning::chain::transaction::OutPoint;
     use lightning::chain::{chainmonitor, Access, BestBlock, Confirm, Filter, Watch, WatchedOutput};
@@ -64,7 +64,7 @@ cfg_native! {
 #[cfg(not(target_arch = "wasm32"))]
 type ChainMonitor = chainmonitor::ChainMonitor<
     InMemorySigner,
-    Arc<UtxoStandardCoin>,
+    Arc<PlatformFields>,
     Arc<UtxoStandardCoin>,
     Arc<UtxoStandardCoin>,
     Arc<LogState>,
@@ -122,7 +122,7 @@ pub fn last_request_id_path(ctx: &MmArc, ticker: &str) -> PathBuf {
 
 // TODO: Implement all the cases
 #[cfg(not(target_arch = "wasm32"))]
-async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, coin: Arc<UtxoStandardCoin>) {
+async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, filter: Arc<PlatformFields>) {
     match event.clone() {
         Event::FundingGenerationReady {
             temporary_channel_id,
@@ -130,25 +130,30 @@ async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, c
             output_script,
             user_channel_id: _,
         } => {
-            let funding_tx =
-                match generate_funding_transaction(channel_value_satoshis, output_script.clone(), coin.clone()).await {
-                    Ok(tx) => tx,
-                    Err(e) => {
-                        log::error!(
-                            "Error generating funding transaction for temporary channel id {:?}: {}",
-                            temporary_channel_id,
-                            e.to_string()
-                        );
-                        // TODO: use issue_channel_close_events here when implementing channel closure this will push a Event::DiscardFunding
-                        // event for the other peer
-                        return;
-                    },
-                };
+            let funding_tx = match generate_funding_transaction(
+                channel_value_satoshis,
+                output_script.clone(),
+                filter.platform_coin.clone(),
+            )
+            .await
+            {
+                Ok(tx) => tx,
+                Err(e) => {
+                    log::error!(
+                        "Error generating funding transaction for temporary channel id {:?}: {}",
+                        temporary_channel_id,
+                        e.to_string()
+                    );
+                    // TODO: use issue_channel_close_events here when implementing channel closure this will push a Event::DiscardFunding
+                    // event for the other peer
+                    return;
+                },
+            };
             // Give the funding transaction back to LDK for opening the channel.
             match channel_manager.funding_transaction_generated(&temporary_channel_id, funding_tx.clone()) {
                 Ok(_) => {
                     let txid = funding_tx.txid();
-                    coin.register_tx(&txid, &output_script);
+                    filter.register_tx(&txid, &output_script);
                     let output_to_be_registered = TxOut {
                         value: channel_value_satoshis,
                         script_pubkey: output_script.clone(),
@@ -158,7 +163,7 @@ async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, c
                         .iter()
                         .position(|tx_out| tx_out == &output_to_be_registered)
                         .expect("Output to register should be found in the transaction output");
-                    coin.register_output(WatchedOutput {
+                    filter.register_output(WatchedOutput {
                         block_hash: None,
                         outpoint: OutPoint {
                             txid,
@@ -233,8 +238,13 @@ pub async fn start_lightning(
         .to_string();
     let persister = Arc::new(FilesystemPersister::new(ln_data_dir.clone()));
 
-    // Initialize the Filter. UtxoStandardCoin implements the Filter trait, so it'll act as our filter.
-    let filter = Some(Arc::new(platform_coin.clone()));
+    // Initialize the Filter. PlatformFields implements the Filter trait, so it'll act as our filter.
+    let platform_fields = Arc::new(PlatformFields {
+        platform_coin,
+        registered_txs: AsyncMutex::new(HashMap::new()),
+        registered_outputs: AsyncMutex::new(Vec::new()),
+    });
+    let filter = Some(platform_fields.clone());
 
     // Initialize the ChainMonitor
     let chain_monitor: Arc<ChainMonitor> = Arc::new(chainmonitor::ChainMonitor::new(
@@ -275,8 +285,8 @@ pub async fn start_lightning(
         .force_announced_channel_preference = false;
 
     let mut restarting_node = true;
-    let rpc_client = match &platform_coin.as_ref().rpc_client {
-        UtxoRpcClientEnum::Electrum(c) => c,
+    let rpc_client = match &filter.clone().unwrap().platform_coin.as_ref().rpc_client {
+        UtxoRpcClientEnum::Electrum(c) => c.clone(),
         UtxoRpcClientEnum::Native(_) => {
             return MmError::err(EnableLightningError::UnsupportedMode(
                 "Lightning network".into(),
@@ -447,7 +457,7 @@ pub async fn start_lightning(
     ));
 
     Ok(LightningCoin {
-        platform_coin,
+        platform_fields,
         conf: Arc::new(LightningCoinConf { ticker }),
         peer_manager,
         background_processor: Arc::new(background_processor),
@@ -515,7 +525,7 @@ fn cmp_txs_for_spending(spent_tx: &Transaction, spending_tx: &Transaction) -> Or
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn process_txs_confirmations(
-    filter: Arc<UtxoStandardCoin>,
+    filter: Arc<PlatformFields>,
     client: ElectrumClient,
     chain_monitor: Arc<ChainMonitor>,
     channel_manager: Arc<ChannelManager>,
@@ -527,7 +537,7 @@ async fn process_txs_confirmations(
 
     for txid in channel_manager_relevant_txids {
         if filter
-            .as_ref()
+            .platform_coin
             .as_ref()
             .rpc_client
             .get_transaction_bytes(H256::from(txid.as_hash().into_inner()).reversed())
@@ -544,7 +554,7 @@ async fn process_txs_confirmations(
 
     for txid in chain_monitor_relevant_txids {
         if filter
-            .as_ref()
+            .platform_coin
             .as_ref()
             .rpc_client
             .get_transaction_bytes(H256::from(txid.as_hash().into_inner()).reversed())
@@ -556,11 +566,11 @@ async fn process_txs_confirmations(
         }
     }
 
-    let mut ln_registry = filter.as_ref().as_ref().ln_registry.lock().await;
+    let mut registered_txs = filter.registered_txs.lock().await;
     let mut transactions_to_confirm = Vec::new();
-    for (txid, scripts) in ln_registry.registered_txs.clone() {
+    for (txid, scripts) in registered_txs.clone() {
         match filter
-            .as_ref()
+            .platform_coin
             .as_ref()
             .rpc_client
             .get_transaction_bytes(H256::from(txid.as_hash().into_inner()).reversed())
@@ -599,7 +609,7 @@ async fn process_txs_confirmations(
                                         item.height.try_into().expect("Convertion to u32 should not fail"),
                                     );
                                     transactions_to_confirm.push(confirmed_transaction_info);
-                                    ln_registry.registered_txs.remove(&txid);
+                                    registered_txs.remove(&txid);
                                 }
                             }
                         }
@@ -613,17 +623,22 @@ async fn process_txs_confirmations(
         };
     }
 
-    for output in ln_registry.registered_outputs.clone() {
-        let result = ln_rpc::find_watched_output_spend_with_header(&filter.as_ref(), output.0.clone()).await;
+    let mut registered_outputs = filter.registered_outputs.lock().await;
+    registered_outputs.retain(|output| {
+        let result = block_on(ln_rpc::find_watched_output_spend_with_header(
+            &filter.platform_coin,
+            output.clone(),
+        ));
         if let Some((header, index, tx, height)) = result {
             if !transactions_to_confirm.iter().any(|info| info.txid == tx.txid()) {
                 let confirmed_transaction_info =
-                    ConfirmedTransactionInfo::new(tx.txid(), header, index, tx.clone(), height as u32);
+                    ConfirmedTransactionInfo::new(tx.txid(), header, index, tx, height as u32);
                 transactions_to_confirm.push(confirmed_transaction_info);
-                ln_registry.registered_outputs.remove(&output);
+                return false;
             }
         }
-    }
+        true
+    });
 
     transactions_to_confirm.sort_by(|a, b| a.height.cmp(&b.height));
     // If a transaction spends another in the same block, the spent transaction should be confirmed first
@@ -712,7 +727,7 @@ async fn update_best_block(
 #[cfg(not(target_arch = "wasm32"))]
 async fn ln_best_block_update_loop(
     ctx: MmArc,
-    filter: Arc<UtxoStandardCoin>,
+    filter: Arc<PlatformFields>,
     chain_monitor: Arc<ChainMonitor>,
     channel_manager: Arc<ChannelManager>,
     best_header_listener: ElectrumClient,
@@ -957,40 +972,20 @@ pub fn open_ln_channel(
 async fn generate_funding_transaction(
     channel_value_satoshis: u64,
     output_script: Script,
-    coin: Arc<UtxoStandardCoin>,
+    coin: UtxoStandardCoin,
 ) -> OpenChannelResult<Transaction> {
-    let coin = coin.as_ref();
-
-    let decimals = coin.as_ref().decimals;
-    let balance = coin.my_spendable_balance().compat().await?;
-    let balance_in_sat = sat_from_big_decimal(&balance, decimals)?;
-    if balance_in_sat < channel_value_satoshis {
-        return MmError::err(OpenChannelError::BalanceError(format!(
-            "Not enough balance to open channel, Current balance: {}",
-            balance
-        )));
-    }
-
     let outputs = vec![TransactionOutput {
         value: channel_value_satoshis,
         script_pubkey: output_script.to_bytes().into(),
     }];
 
-    let fee_policy = if channel_value_satoshis == balance_in_sat {
-        // TODO: fix the problem when opening the channel with max amount as the channel_value_satoshis
-        // will change in the output after deducting the fee
-        FeePolicy::DeductFromOutput(0)
-    } else {
-        FeePolicy::SendExact
-    };
-
     let _utxo_lock = UTXO_LOCK.lock().await;
     let (unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
 
-    let mut tx_builder = UtxoTxBuilder::new(coin)
+    let mut tx_builder = UtxoTxBuilder::new(&coin)
         .add_available_inputs(unspents)
         .add_outputs(outputs)
-        .with_fee_policy(fee_policy);
+        .with_fee_policy(FeePolicy::SendExact);
 
     let fee = coin
         .get_tx_fee()

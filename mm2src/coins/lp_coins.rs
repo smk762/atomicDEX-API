@@ -1227,7 +1227,7 @@ pub trait CoinActivationOps: Into<MmCoinEnum> {
     fn activate_token(&self, ticker: &str, conf: &Json) -> Result<MmCoinEnum, MmError<TokenCreationError>>;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum MmCoinEnum {
     UtxoCoin(UtxoStandardCoin),
     QtumCoin(QtumCoin),

@@ -1,7 +1,7 @@
+use super::*;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use crate::utxo::rpc_clients::{BlockHashOrHeight, EstimateFeeMethod};
-use crate::utxo::utxo_common;
 use crate::utxo::utxo_standard::UtxoStandardCoin;
 use crate::{MarketCoinOps, MmCoin};
 #[cfg(not(target_arch = "wasm32"))]
@@ -131,22 +131,20 @@ pub async fn find_watched_output_spend_with_header(
     }
 }
 
-impl Filter for UtxoStandardCoin {
+impl Filter for PlatformFields {
     // Watches for this transaction on-chain
-    fn register_tx(&self, txid: &Txid, script_pubkey: &Script) {
-        block_on(utxo_common::register_tx(&self.as_ref(), txid, script_pubkey));
-    }
+    fn register_tx(&self, txid: &Txid, script_pubkey: &Script) { block_on(self.add_tx(txid, script_pubkey)); }
 
     // Watches for any transactions that spend this output on-chain
     fn register_output(&self, output: WatchedOutput) -> Option<(usize, Transaction)> {
-        block_on(utxo_common::register_output(&self.as_ref(), output.clone()));
+        block_on(self.add_output(output.clone()));
 
         let block_hash = match output.block_hash {
             Some(h) => H256Json::from(h.as_hash().into_inner()),
             None => return None,
         };
 
-        let client = &self.as_ref().rpc_client;
+        let client = &self.platform_coin.as_ref().rpc_client;
         // Although this works for both native and electrum clients as the block hash is available,
         // the filter interface which includes register_output and register_tx should be used for electrum clients only,
         // this is the reason for initializing the filter as an option in the start_lightning function as it will be None

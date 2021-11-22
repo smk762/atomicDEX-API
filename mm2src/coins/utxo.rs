@@ -35,8 +35,6 @@ pub mod utxo_standard;
 
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
-use bitcoin::blockdata::script::Script as BTCScript;
-use bitcoin::hash_types::Txid;
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
 use chain::{OutPoint, TransactionInput, TransactionOutput, TxHashAlgo};
 use common::executor::{spawn, Timer};
@@ -57,7 +55,6 @@ use futures01::Future;
 use keys::bytes::Bytes;
 pub use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHashEnum, KeyPair, Private, Public, Secret,
                Type as ScriptType};
-use lightning::chain::WatchedOutput;
 #[cfg(test)] use mocktopus::macros::*;
 use num_traits::ToPrimitive;
 use primitives::hash::{H256, H264, H512};
@@ -68,8 +65,7 @@ use serde_json::{self as json, Value as Json};
 use serialization::{serialize, serialize_with_flags, SERIALIZE_TRANSACTION_WITNESS};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
-use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::num::NonZeroU64;
 use std::ops::Deref;
 #[cfg(not(target_arch = "wasm32"))] use std::path::Path;
@@ -357,69 +353,6 @@ impl RecentlySpentOutPoints {
     }
 }
 
-#[derive(Clone)]
-pub struct LnWatchedOutput(pub WatchedOutput);
-
-impl PartialEq for LnWatchedOutput {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.block_hash == other.0.block_hash
-            && self.0.outpoint == other.0.outpoint
-            && self.0.script_pubkey == other.0.script_pubkey
-    }
-}
-
-impl Eq for LnWatchedOutput {}
-
-impl Hash for LnWatchedOutput {
-    fn hash<H: Hasher>(&self, state: &mut H) { self.0.hash(state); }
-}
-
-impl Deref for LnWatchedOutput {
-    type Target = WatchedOutput;
-
-    fn deref(&self) -> &WatchedOutput { &self.0 }
-}
-
-impl fmt::Debug for LnWatchedOutput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WatchedOutput")
-            .field("block_hash", &self.0.block_hash)
-            .field("outpoint", &self.0.outpoint)
-            .field("script_pubkey", &self.0.script_pubkey)
-            .finish()
-    }
-}
-
-#[derive(Debug)]
-pub struct LnRegistry {
-    pub registered_txs: HashMap<Txid, HashSet<BTCScript>>,
-    pub registered_outputs: HashSet<LnWatchedOutput>,
-}
-
-impl LnRegistry {
-    fn new() -> Self {
-        LnRegistry {
-            registered_txs: HashMap::new(),
-            registered_outputs: HashSet::new(),
-        }
-    }
-
-    fn add_tx(&mut self, txid: &Txid, script_pubkey: &BTCScript) {
-        match self.registered_txs.get_mut(txid) {
-            Some(h) => {
-                h.insert(script_pubkey.clone());
-            },
-            None => {
-                let mut script_pubkeys = HashSet::new();
-                script_pubkeys.insert(script_pubkey.clone());
-                self.registered_txs.insert(*txid, script_pubkeys);
-            },
-        }
-    }
-
-    fn add_output(&mut self, output: WatchedOutput) { self.registered_outputs.insert(LnWatchedOutput(output)); }
-}
-
 #[derive(Debug, Deserialize)]
 pub enum BlockchainNetwork {
     #[serde(rename = "mainnet")]
@@ -531,8 +464,6 @@ pub struct UtxoCoinFields {
     /// This cache helps to prevent UTXO reuse in such cases
     pub recently_spent_outpoints: AsyncMutex<RecentlySpentOutPoints>,
     pub tx_hash_algo: TxHashAlgo,
-    // This cache stores both the transactions and the outputs that the LN node has interest in.
-    pub ln_registry: AsyncMutex<LnRegistry>,
 }
 
 #[derive(Debug, Display)]
@@ -1421,7 +1352,6 @@ pub trait UtxoCoinBuilder {
             recently_spent_outpoints: AsyncMutex::new(RecentlySpentOutPoints::new(my_script_pubkey)),
             tx_fee,
             tx_hash_algo,
-            ln_registry: AsyncMutex::new(LnRegistry::new()),
         };
         Ok(coin)
     }
