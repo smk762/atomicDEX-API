@@ -36,7 +36,7 @@ impl HttpStatusCode for EnableLightningError {
     fn status_code(&self) -> StatusCode {
         match self {
             EnableLightningError::InvalidRequest(_) | EnableLightningError::RpcError(_) => StatusCode::BAD_REQUEST,
-            EnableLightningError::UnsupportedMode(_, _) => StatusCode::METHOD_NOT_ALLOWED,
+            EnableLightningError::UnsupportedMode(_, _) => StatusCode::NOT_IMPLEMENTED,
             EnableLightningError::InvalidAddress(_)
             | EnableLightningError::InvalidPath(_)
             | EnableLightningError::SystemTimeError(_)
@@ -68,9 +68,10 @@ impl HttpStatusCode for ConnectToNodeError {
     fn status_code(&self) -> StatusCode {
         match self {
             ConnectToNodeError::UnsupportedCoin(_) => StatusCode::BAD_REQUEST,
-            ConnectToNodeError::UnsupportedMode(_, _) => StatusCode::METHOD_NOT_ALLOWED,
-            ConnectToNodeError::ParseError(_) | ConnectToNodeError::IOError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            ConnectToNodeError::ConnectionError(_) => StatusCode::REQUEST_TIMEOUT,
+            ConnectToNodeError::UnsupportedMode(_, _) => StatusCode::NOT_IMPLEMENTED,
+            ConnectToNodeError::ParseError(_)
+            | ConnectToNodeError::IOError(_)
+            | ConnectToNodeError::ConnectionError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ConnectToNodeError::NoSuchCoin(_) => StatusCode::PRECONDITION_REQUIRED,
         }
     }
@@ -114,19 +115,22 @@ pub enum OpenChannelError {
     NoSuchCoin(String),
     #[display(fmt = "Generate Tx Error {}", _0)]
     GenerateTxErr(String),
+    #[display(fmt = "Error converting transaction: {}", _0)]
+    ConvertTxErr(String),
 }
 
 impl HttpStatusCode for OpenChannelError {
     fn status_code(&self) -> StatusCode {
         match self {
             OpenChannelError::UnsupportedCoin(_) | OpenChannelError::RpcError(_) => StatusCode::BAD_REQUEST,
-            OpenChannelError::UnsupportedMode(_, _) => StatusCode::METHOD_NOT_ALLOWED,
+            OpenChannelError::UnsupportedMode(_, _) => StatusCode::NOT_IMPLEMENTED,
             OpenChannelError::FailureToOpenChannel(_, _)
             | OpenChannelError::ConnectToNodeError(_)
             | OpenChannelError::InternalError(_)
             | OpenChannelError::GenerateTxErr(_)
             | OpenChannelError::IOError(_)
-            | OpenChannelError::InvalidPath(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            | OpenChannelError::InvalidPath(_)
+            | OpenChannelError::ConvertTxErr(_) => StatusCode::INTERNAL_SERVER_ERROR,
             OpenChannelError::NoSuchCoin(_) | OpenChannelError::BalanceError(_) => StatusCode::PRECONDITION_REQUIRED,
         }
     }

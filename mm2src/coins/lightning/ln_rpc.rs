@@ -18,6 +18,7 @@ use keys::hash::H256;
 use lightning::chain::{chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator},
                        Filter, WatchedOutput};
 use rpc::v1::types::H256 as H256Json;
+use std::convert::TryFrom;
 
 impl FeeEstimator for UtxoStandardCoin {
     // Gets estimated satoshis of fee required per 1000 Weight-Units.
@@ -112,23 +113,26 @@ pub async fn find_watched_output_spend_with_header(
         _ => return None,
     };
 
-    match output_spend.spent_in_block {
-        BlockHashOrHeight::Height(height) => {
-            match electrum_client.blockchain_block_header(height as u64).compat().await {
-                Ok(header) => {
-                    let header = encode::deserialize(&header).expect("Can't deserialize block header");
-                    Some((
-                        header,
-                        output_spend.input_index,
-                        output_spend.spending_tx.into(),
-                        height as u64,
-                    ))
+    if let BlockHashOrHeight::Height(height) = output_spend.spent_in_block {
+        if let Ok(header) = electrum_client.blockchain_block_header(height as u64).compat().await {
+            match encode::deserialize(&header) {
+                Ok(h) => {
+                    let spending_tx = match Transaction::try_from(output_spend.spending_tx) {
+                        Ok(tx) => tx,
+                        Err(e) => {
+                            log::error!("Can't convert transaction error: {}", e.to_string());
+                            return None;
+                        },
+                    };
+                    return Some((h, output_spend.input_index, spending_tx, height as u64));
                 },
-                Err(_) => None,
+                Err(e) => {
+                    log::error!("Can't deserialize block header error: {}", e.to_string());
+                },
             }
-        },
-        BlockHashOrHeight::Hash(_) => None,
+        }
     }
+    None
 }
 
 impl Filter for PlatformFields {
@@ -157,7 +161,16 @@ impl Filter for PlatformFields {
         );
 
         match block_on(output_spend_fut.compat()) {
-            Ok(Some(spent_output_info)) => Some((spent_output_info.input_index, spent_output_info.spending_tx.into())),
+            Ok(Some(spent_output_info)) => {
+                let spending_tx = match Transaction::try_from(spent_output_info.spending_tx) {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        log::error!("Can't convert transaction error: {}", e.to_string());
+                        return None;
+                    },
+                };
+                Some((spent_output_info.input_index, spending_tx))
+            },
             Ok(None) => None,
             Err(e) => {
                 log::error!("Error when calling register_output: {}", e);

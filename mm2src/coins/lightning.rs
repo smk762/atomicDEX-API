@@ -2,7 +2,7 @@
 use super::{lp_coinfind_or_err, MmCoinEnum};
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::utxo::{sat_from_big_decimal, UtxoCommonOps, UtxoTxGenerationOps, UTXO_LOCK};
+use crate::utxo::{sat_from_big_decimal, UtxoCommonOps, UtxoTxGenerationOps};
 use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
             NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageFut, TradePreimageValue, TransactionEnum,
             TransactionFut, UtxoStandardCoin, ValidateAddressResult, WithdrawFut, WithdrawRequest};
@@ -535,7 +535,6 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
                 Ok(ActualTxFee::FixedPerKb(f)) => f * 234 / 1000,
                 Err(e) => return MmError::err(OpenChannelError::RpcError(e.to_string())),
             };
-            let _utxo_lock = UTXO_LOCK.lock().await;
             let (unspents, _) = platform_coin
                 .ordered_mature_unspents(&platform_coin.as_ref().my_address)
                 .await?;

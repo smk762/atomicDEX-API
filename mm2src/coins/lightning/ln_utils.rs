@@ -15,7 +15,7 @@ cfg_native! {
     use crate::utxo::rpc_clients::{electrum_script_hash, BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient,
                                    ElectrumNonce};
     use crate::utxo::utxo_common::UtxoTxBuilder;
-    use crate::utxo::{sign_tx, FeePolicy, UtxoCommonOps, UtxoTxGenerationOps, UTXO_LOCK};
+    use crate::utxo::{sign_tx, FeePolicy, UtxoCommonOps, UtxoTxGenerationOps};
     use bitcoin::blockdata::block::BlockHeader;
     use bitcoin::blockdata::constants::genesis_block;
     use bitcoin::blockdata::script::Script;
@@ -48,7 +48,7 @@ cfg_native! {
     use rpc::v1::types::H256;
     use script::{Builder, SignatureVersion};
     use std::cmp::Ordering;
-    use std::convert::TryInto;
+    use std::convert::{TryFrom, TryInto};
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
     use std::time::SystemTime;
@@ -979,7 +979,6 @@ async fn generate_funding_transaction(
         script_pubkey: output_script.to_bytes().into(),
     }];
 
-    let _utxo_lock = UTXO_LOCK.lock().await;
     let (unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
 
     let mut tx_builder = UtxoTxBuilder::new(&coin)
@@ -1004,7 +1003,7 @@ async fn generate_funding_transaction(
     )
     .map_to_mm(OpenChannelError::InternalError)?;
 
-    Ok(signed.into())
+    Transaction::try_from(signed).map_to_mm(|e| OpenChannelError::ConvertTxErr(e.to_string()))
 }
 
 pub fn save_last_request_id_to_file(path: &Path, last_request_id: u64) -> OpenChannelResult<()> {
