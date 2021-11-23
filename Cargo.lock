@@ -4052,28 +4052,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "protoc"
-version = "2.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ace5c4ea0e4b0381eb37837e070182b7ab491445e2d5ea2201d861f2b2f94f82"
-dependencies = [
- "log 0.4.11",
- "which",
-]
-
-[[package]]
-name = "protoc-rust"
-version = "2.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dea89f44bc43e185497171242ec4f0d3a79f98010a858f45981775a706d60652"
-dependencies = [
- "protobuf",
- "protobuf-codegen",
- "protoc",
- "tempfile",
-]
-
-[[package]]
 name = "quanta"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5789,7 +5767,6 @@ dependencies = [
  "hw_common",
  "js-sys",
  "protobuf",
- "protoc-rust",
  "rand 0.7.3",
  "rpc_task",
  "serde",

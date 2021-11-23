@@ -1710,7 +1710,7 @@ pub trait UtxoCoinBuilder {
                     Ok(UtxoRpcClientEnum::Native(native))
                 }
             },
-                UtxoRpcMode::Electrum { servers } => {
+            UtxoRpcMode::Electrum { servers } => {
                 let electrum = self.electrum_client(ElectrumBuilderArgs::default(), servers).await?;
                 Ok(UtxoRpcClientEnum::Electrum(electrum))
             },
