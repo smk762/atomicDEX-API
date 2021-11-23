@@ -9,7 +9,6 @@ import init, {
     mm2_main,
     mm2_main_status,
     mm2_rpc,
-    test_trezor,
     LogLevel,
     Mm2MainErr,
     MainStatus,
@@ -155,10 +154,5 @@ init_wasm().then(function () {
         }
 
         await rpc_request(request_js);
-    });
-
-    const test_trezor_button = document.getElementById("wid_test_trezor");
-    test_trezor_button.addEventListener('click', async () => {
-        await test_trezor();
     });
 });

@@ -5,7 +5,7 @@ use futures::channel::{mpsc, oneshot};
 #[cfg(target_arch = "wasm32")]
 pub use webusb_driver::WebUsbError;
 
-#[cfg(not(target_arch = "wasm32"))] pub mod hid_driver;
+// #[cfg(not(target_arch = "wasm32"))] pub mod hid_driver;
 #[cfg(not(target_arch = "wasm32"))] pub mod libusb;
 #[cfg(not(target_arch = "wasm32"))] pub use libusb::UsbError;
 
