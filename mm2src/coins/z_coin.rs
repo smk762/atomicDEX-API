@@ -580,7 +580,7 @@ async fn z_coin_from_conf_and_params_with_z_key(
     z_spending_key: ExtendedSpendingKey,
 ) -> Result<ZCoin, MmError<ZCoinBuildError>> {
     let builder = UtxoArcBuilder::new(ctx, ticker, conf, params, PrivKeyBuildPolicy::PrivKey(secp_priv_key));
-    let utxo_arc = builder.build().await.map_to_mm(ZCoinBuildError::UtxoBuilderError)?;
+    let utxo_arc = builder.build().await?;
     let db_name = format!("{}_CACHE.db", ticker);
 
     db_dir_path.push(&db_name);
@@ -763,11 +763,12 @@ impl SwapOps for ZCoin {
         _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let tx = try_fus!(ZTransaction::read(taker_payment_tx));
+        let key_pair = try_fus!(self.utxo_arc.priv_key_policy.key_pair_or_err());
         let redeem_script = payment_script(
             time_lock,
             &*dhash160(secret),
             &try_fus!(Public::from_slice(taker_pub)),
-            self.utxo_arc.key_pair.public(),
+            key_pair.public(),
         );
         let script_data = ScriptBuilder::default()
             .push_data(secret)
@@ -791,11 +792,12 @@ impl SwapOps for ZCoin {
         _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let tx = try_fus!(ZTransaction::read(maker_payment_tx));
+        let key_pair = try_fus!(self.utxo_arc.priv_key_policy.key_pair_or_err());
         let redeem_script = payment_script(
             time_lock,
             &*dhash160(secret),
             &try_fus!(Public::from_slice(maker_pub)),
-            self.utxo_arc.key_pair.public(),
+            key_pair.public(),
         );
         let script_data = ScriptBuilder::default()
             .push_data(secret)
@@ -819,10 +821,11 @@ impl SwapOps for ZCoin {
         _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let tx = try_fus!(ZTransaction::read(taker_payment_tx));
+        let key_pair = try_fus!(self.utxo_arc.priv_key_policy.key_pair_or_err());
         let redeem_script = payment_script(
             time_lock,
             secret_hash,
-            self.utxo_arc.key_pair.public(),
+            key_pair.public(),
             &try_fus!(Public::from_slice(maker_pub)),
         );
         let script_data = ScriptBuilder::default().push_opcode(Opcode::OP_1).into_script();
@@ -844,10 +847,11 @@ impl SwapOps for ZCoin {
         _swap_contract_address: &Option<BytesJson>,
     ) -> TransactionFut {
         let tx = try_fus!(ZTransaction::read(maker_payment_tx));
+        let key_pair = try_fus!(self.utxo_arc.priv_key_policy.key_pair_or_err());
         let redeem_script = payment_script(
             time_lock,
             secret_hash,
-            self.utxo_arc.key_pair.public(),
+            key_pair.public(),
             &try_fus!(Public::from_slice(taker_pub)),
         );
         let script_data = ScriptBuilder::default().push_opcode(Opcode::OP_1).into_script();
@@ -1308,7 +1312,7 @@ impl UtxoCommonOps for ZCoin {
             conf.pub_t_addr_prefix,
             conf.checksum_type,
             conf.bech32_hrp.clone(),
-            self.utxo_arc.my_address.addr_format.clone(),
+            self.utxo_arc.address_mode.address_format().clone(),
         )
     }
 }
