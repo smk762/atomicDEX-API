@@ -289,7 +289,7 @@ pub fn fill_qrc20_address(coin: &Qrc20Coin, amount: BigDecimal, timeout: u64) {
     };
 
     let from_addr = get_address_by_label(coin, QTUM_ADDRESS_LABEL);
-    let to_addr = coin.my_addr_as_contract_addr();
+    let to_addr = coin.my_addr_as_contract_addr().unwrap();
     let satoshis = sat_from_big_decimal(&amount, coin.as_ref().decimals).expect("!sat_from_big_decimal");
 
     let hash = client

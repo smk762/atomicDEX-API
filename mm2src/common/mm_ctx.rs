@@ -81,8 +81,6 @@ pub struct MmCtx {
     pub dispatcher_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
     pub message_service_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
     pub p2p_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
-    /// The context belonging to the `lightning` mod: `LightningContext`.
-    pub lightning_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
     pub peer_id: Constructible<String>,
     /// The context belonging to the `coins` crate: `CoinsContext`.
     pub coins_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
@@ -124,7 +122,6 @@ impl MmCtx {
             dispatcher_ctx: Mutex::new(None),
             message_service_ctx: Mutex::new(None),
             p2p_ctx: Mutex::new(None),
-            lightning_ctx: Mutex::new(None),
             peer_id: Constructible::default(),
             coins_ctx: Mutex::new(None),
             rmd160: Constructible::default(),

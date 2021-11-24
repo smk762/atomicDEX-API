@@ -467,15 +467,10 @@ pub async fn connect_to_lightning_node(ctx: MmArc, req: ConnectToNodeRequest) ->
     Ok(res.to_string())
 }
 
-mod named_unit_variant {
-    named_unit_variant!(max);
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(untagged)]
+#[serde(tag = "type", content = "value")]
 pub enum ChannelOpenAmount {
     Exact(BigDecimal),
-    #[serde(with = "named_unit_variant::max")]
     Max,
 }
 
@@ -574,47 +569,4 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
         "Initiated opening channel with temporary ID: {:?} with node: {} and request id: {}",
         temporary_channel_id, req.node_id, request_id
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::{self as json};
-
-    #[test]
-    fn test_deserialize_open_channel_request() {
-        let req = json!({
-            "coin":"test",
-            "node_id": "pubkey@ip",
-            "amount": 0.1,
-        });
-
-        let expected = OpenChannelRequest {
-            coin: "test".into(),
-            node_id: "pubkey@ip".into(),
-            amount: ChannelOpenAmount::Exact(0.1.into()),
-            announce_channel: true,
-        };
-
-        let actual: OpenChannelRequest = json::from_value(req).unwrap();
-
-        assert_eq!(expected, actual);
-
-        let req = json!({
-            "coin":"test",
-            "node_id": "pubkey@ip",
-            "amount": "max",
-        });
-
-        let expected = OpenChannelRequest {
-            coin: "test".into(),
-            node_id: "pubkey@ip".into(),
-            amount: ChannelOpenAmount::Max,
-            announce_channel: true,
-        };
-
-        let actual: OpenChannelRequest = json::from_value(req).unwrap();
-
-        assert_eq!(expected, actual);
-    }
 }

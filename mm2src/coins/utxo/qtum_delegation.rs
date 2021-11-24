@@ -129,7 +129,7 @@ impl QtumCoin {
             },
             UtxoRpcClientEnum::Electrum(electrum) => electrum,
         };
-        let v = contract_addr_from_utxo_addr(utxo.my_address.clone());
+        let v = contract_addr_from_utxo_addr(utxo.my_address.clone()).map_to_mm(StakingInfosError::Internal)?;
         let address = contract_addr_into_rpc_format(&v);
         let add_delegation_history = client
             .blockchain_contract_event_get_history(&address, &contract_address, QTUM_ADD_DELEGATION_TOPIC)
@@ -225,7 +225,8 @@ impl QtumCoin {
             Address::from_str(request.address.as_str()).map_to_mm(|e| DelegationError::AddressError(e.to_string()))?;
         let fee = request.fee.unwrap_or(QTUM_DELEGATION_STANDARD_FEE);
         let _utxo_lock = UTXO_LOCK.lock();
-        let staker_address_hex = qtum::contract_addr_from_utxo_addr(to_addr.clone());
+        let staker_address_hex =
+            qtum::contract_addr_from_utxo_addr(to_addr.clone()).map_to_mm(DelegationError::AddressError)?;
         let delegation_output = self.add_delegation_output(
             staker_address_hex,
             to_addr.hash,
