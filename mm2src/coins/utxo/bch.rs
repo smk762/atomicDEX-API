@@ -21,7 +21,7 @@ pub struct BchActivationRequest {
     allow_slp_unsafe_conf: bool,
     bchd_urls: Vec<String>,
     #[serde(flatten)]
-    utxo_params: UtxoActivationParams,
+    pub utxo_params: UtxoActivationParams,
 }
 
 #[derive(Debug, Display)]

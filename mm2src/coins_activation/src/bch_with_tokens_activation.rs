@@ -98,6 +98,10 @@ pub struct BchWithTokensActivationRequest {
     slp_tokens_requests: Vec<TokenActivationRequest<SlpActivationRequest>>,
 }
 
+impl TxHistoryEnabled for BchWithTokensActivationRequest {
+    fn tx_history_enabled(&self) -> bool { self.platform_request.utxo_params.tx_history }
+}
+
 pub struct BchProtocolInfo {
     slp_prefix: String,
 }
@@ -226,4 +230,6 @@ impl PlatformWithTokensActivationOps for BchCoin {
         });
         Ok(result)
     }
+
+    fn start_history_background_fetching(&self) { todo!() }
 }

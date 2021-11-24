@@ -127,7 +127,7 @@ where
 
 #[async_trait]
 pub trait PlatformWithTokensActivationOps: Into<MmCoinEnum> {
-    type ActivationRequest: Clone + Send + Sync;
+    type ActivationRequest: Clone + Send + Sync + TxHistoryEnabled;
     type PlatformProtocolInfo: TryFromCoinProtocol;
     type ActivationResult;
     type ActivationError: NotMmError;
@@ -147,6 +147,8 @@ pub trait PlatformWithTokensActivationOps: Into<MmCoinEnum> {
     ) -> Vec<Box<dyn TokenAsMmCoinInitializer<PlatformCoin = Self, ActivationRequest = Self::ActivationRequest>>>;
 
     async fn get_activation_result(&self) -> Result<Self::ActivationResult, MmError<Self::ActivationError>>;
+
+    fn start_history_background_fetching(&self);
 }
 
 #[derive(Debug, Deserialize)]
@@ -280,6 +282,10 @@ where
     }
 
     let activation_result = platform_coin.get_activation_result().await?;
+    if req.request.tx_history_enabled() {
+        platform_coin.start_history_background_fetching();
+    }
+
     let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
     coins_ctx
         .add_platform_with_tokens(platform_coin.into(), mm_tokens)

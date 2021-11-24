@@ -1792,20 +1792,6 @@ where
                             updated = true;
                         }
                     }
-                    // TODO uncomment this when `update_kmd_rewards` works correctly
-                    // if e.get().should_update_kmd_rewards() && e.get().block_height > 0 {
-                    //     mm_counter!(ctx.metrics, "tx.history.update.kmd_rewards", 1);
-                    //     match coin.update_kmd_rewards(e.get_mut(), &mut input_transactions).await {
-                    //         Ok(()) => updated = true,
-                    //         Err(e) => log_tag!(
-                    //             ctx,
-                    //             "😟",
-                    //             "tx_history",
-                    //             "coin" => coin.as_ref().conf.ticker;
-                    //             fmt = "Error {:?} on updating the KMD rewards of {:?}, skipping the tx", e, txid
-                    //         ),
-                    //     }
-                    // }
                 },
             }
             if updated {

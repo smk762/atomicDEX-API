@@ -968,7 +968,7 @@ pub struct UtxoActivationParams {
     mode: UtxoRpcMode,
     utxo_merge_params: Option<UtxoMergeParams>,
     #[serde(default)]
-    tx_history: bool,
+    pub tx_history: bool,
     required_confirmations: Option<u64>,
     requires_notarization: Option<bool>,
     address_format: Option<UtxoAddressFormat>,

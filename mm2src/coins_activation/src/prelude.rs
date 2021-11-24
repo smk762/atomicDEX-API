@@ -5,6 +5,10 @@ use serde_derive::Serialize;
 use serde_json::{self as json, Value as Json};
 use std::collections::HashMap;
 
+pub trait TxHistoryEnabled {
+    fn tx_history_enabled(&self) -> bool;
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", content = "data")]
 pub enum DerivationMethod {
