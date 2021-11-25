@@ -9,10 +9,11 @@ use crate::utxo::utxo_common::{self, big_decimal_from_sat_unsigned, payment_scri
 use crate::utxo::{generate_and_send_tx, sat_from_big_decimal, ActualTxFee, AdditionalTxData, BroadcastTxErr,
                   FeePolicy, GenerateTxError, RecentlySpentOutPoints, UtxoCoinConf, UtxoCoinFields, UtxoCommonOps,
                   UtxoTx, UtxoTxBroadcastOps, UtxoTxGenerationOps};
-use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
-            NegotiateSwapContractAddrErr, NumConversError, PrivKeyNotAllowed, SwapOps, TradeFee, TradePreimageError,
-            TradePreimageFut, TradePreimageValue, TransactionDetails, TransactionEnum, TransactionFut, TxFeeDetails,
-            ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest};
+use crate::{BalanceFut, CoinBalance, DerivationMethodNotSupported, FeeApproxStage, FoundSwapTxSpend, HistorySyncState,
+            MarketCoinOps, MmCoin, NegotiateSwapContractAddrErr, NumConversError, PrivKeyNotAllowed, SwapOps,
+            TradeFee, TradePreimageError, TradePreimageFut, TradePreimageValue, TransactionDetails, TransactionEnum,
+            TransactionFut, TxFeeDetails, ValidateAddressResult, WithdrawError, WithdrawFee, WithdrawFut,
+            WithdrawRequest};
 
 use async_trait::async_trait;
 use bitcrypto::dhash160;
@@ -105,7 +106,7 @@ enum ValidateHtlcError {
     InvalidSlpUtxo(ValidateSlpUtxosErr),
     NumConversionErr(NumConversError),
     ValidatePaymentError(String),
-    PrivKeyNotAllowed(PrivKeyNotAllowed),
+    DerivationMethodNotSupported(DerivationMethodNotSupported),
 }
 
 impl From<NumConversError> for ValidateHtlcError {
@@ -120,8 +121,8 @@ impl From<ValidateSlpUtxosErr> for ValidateHtlcError {
     fn from(err: ValidateSlpUtxosErr) -> Self { ValidateHtlcError::InvalidSlpUtxo(err) }
 }
 
-impl From<PrivKeyNotAllowed> for ValidateHtlcError {
-    fn from(e: PrivKeyNotAllowed) -> Self { ValidateHtlcError::PrivKeyNotAllowed(e) }
+impl From<DerivationMethodNotSupported> for ValidateHtlcError {
+    fn from(e: DerivationMethodNotSupported) -> Self { ValidateHtlcError::DerivationMethodNotSupported(e) }
 }
 
 #[derive(Debug, Display)]
@@ -149,6 +150,7 @@ pub enum SpendP2SHError {
     Rpc(UtxoRpcError),
     SignTxErr(UtxoSignWithKeyPairError),
     PrivKeyNotAllowed(PrivKeyNotAllowed),
+    DerivationMethodNotSupported(DerivationMethodNotSupported),
     String(String),
 }
 
@@ -168,6 +170,10 @@ impl From<PrivKeyNotAllowed> for SpendP2SHError {
     fn from(e: PrivKeyNotAllowed) -> Self { SpendP2SHError::PrivKeyNotAllowed(e) }
 }
 
+impl From<DerivationMethodNotSupported> for SpendP2SHError {
+    fn from(e: DerivationMethodNotSupported) -> Self { SpendP2SHError::DerivationMethodNotSupported(e) }
+}
+
 impl From<String> for SpendP2SHError {
     fn from(err: String) -> SpendP2SHError { SpendP2SHError::String(err) }
 }
@@ -185,11 +191,11 @@ pub enum SpendHtlcError {
     #[allow(clippy::upper_case_acronyms)]
     SpendP2SHErr(SpendP2SHError),
     OpReturnParseError(ParseSlpScriptError),
-    PrivKeyNotAllowed(PrivKeyNotAllowed),
+    DerivationMethodNotSupported(DerivationMethodNotSupported),
 }
 
-impl From<PrivKeyNotAllowed> for SpendHtlcError {
-    fn from(e: PrivKeyNotAllowed) -> Self { SpendHtlcError::PrivKeyNotAllowed(e) }
+impl From<DerivationMethodNotSupported> for SpendHtlcError {
+    fn from(e: DerivationMethodNotSupported) -> Self { SpendHtlcError::DerivationMethodNotSupported(e) }
 }
 
 impl From<NumConversError> for SpendHtlcError {
@@ -981,8 +987,8 @@ impl From<ValidateSlpUtxosErr> for GenSlpSpendErr {
     fn from(err: ValidateSlpUtxosErr) -> GenSlpSpendErr { GenSlpSpendErr::InvalidSlpUtxos(err) }
 }
 
-impl From<PrivKeyNotAllowed> for GenSlpSpendErr {
-    fn from(e: PrivKeyNotAllowed) -> Self { GenSlpSpendErr::Internal(e.to_string()) }
+impl From<DerivationMethodNotSupported> for GenSlpSpendErr {
+    fn from(e: DerivationMethodNotSupported) -> Self { GenSlpSpendErr::Internal(e.to_string()) }
 }
 
 impl From<GenSlpSpendErr> for WithdrawError {
@@ -1044,7 +1050,7 @@ impl MarketCoinOps for SlpToken {
     fn ticker(&self) -> &str { &self.conf.ticker }
 
     fn my_address(&self) -> Result<String, String> {
-        let my_platform_address = try_s!(self.platform_coin.as_ref().address_mode.certain_or_err());
+        let my_platform_address = try_s!(self.platform_coin.as_ref().derivation_method.iguana_or_err());
         let slp_address = try_s!(self.slp_address(my_platform_address));
         slp_address.encode()
     }
@@ -1432,7 +1438,7 @@ impl MmCoin for SlpToken {
     fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut {
         let coin = self.clone();
         let fut = async move {
-            let my_address = coin.platform_coin.as_ref().address_mode.certain_or_err()?;
+            let my_address = coin.platform_coin.as_ref().derivation_method.iguana_or_err()?;
             let key_pair = coin.platform_coin.as_ref().priv_key_policy.key_pair_or_err()?;
 
             let address = CashAddress::decode(&req.to).map_to_mm(WithdrawError::InvalidAddress)?;
@@ -1910,7 +1916,7 @@ mod slp_tests {
         let token_id = H256::from("bb309e48930671582bea508f9a1d9b491e49b69be3d6f372dc08da2ac6e90eb7");
         let fusd = SlpToken::new(4, "FUSD".into(), token_id, bch.clone(), 0);
 
-        let bch_address = bch.as_ref().address_mode.unwrap_certain();
+        let bch_address = bch.as_ref().derivation_method.unwrap_iguana();
         let (unspents, recently_spent) = block_on(bch.list_unspent_ordered(bch_address)).unwrap();
 
         let secret_hash = hex::decode("5d9e149ad9ccb20e9f931a69b605df2ffde60242").unwrap();

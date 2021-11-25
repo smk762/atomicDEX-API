@@ -8,7 +8,7 @@ use coins::utxo::bch::{bch_coin_from_conf_and_params, BchActivationRequest, BchC
 use coins::utxo::rpc_clients::UtxoRpcError;
 use coins::utxo::slp::{SlpProtocolConf, SlpToken};
 use coins::utxo::UtxoCommonOps;
-use coins::{AddressModeNotSupported, CoinBalance, CoinProtocol, MarketCoinOps, MmCoin, PrivKeyNotAllowed};
+use coins::{CoinBalance, CoinProtocol, DerivationMethodNotSupported, MarketCoinOps, MmCoin, PrivKeyNotAllowed};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::Future01CompatExt;
@@ -88,8 +88,8 @@ impl From<BchWithTokensActivationError> for EnablePlatformCoinWithTokensError {
             BchWithTokensActivationError::PrivKeyNotAllowed(e) => {
                 EnablePlatformCoinWithTokensError::PrivKeyNotAllowed(e)
             },
-            BchWithTokensActivationError::AddressModeNotSupported(e) => {
-                EnablePlatformCoinWithTokensError::AddressModeNotSupported(e)
+            BchWithTokensActivationError::DerivationMethodNotSupported(e) => {
+                EnablePlatformCoinWithTokensError::DerivationMethodNotSupported(e)
             },
             BchWithTokensActivationError::Transport(e) => EnablePlatformCoinWithTokensError::Transport(e),
             BchWithTokensActivationError::Internal(e) => EnablePlatformCoinWithTokensError::Internal(e),
@@ -139,7 +139,7 @@ pub enum BchWithTokensActivationError {
         error: String,
     },
     PrivKeyNotAllowed(String),
-    AddressModeNotSupported(String),
+    DerivationMethodNotSupported(String),
     Transport(String),
     Internal(String),
 }
@@ -148,8 +148,10 @@ impl From<UtxoRpcError> for BchWithTokensActivationError {
     fn from(err: UtxoRpcError) -> Self { BchWithTokensActivationError::Transport(err.to_string()) }
 }
 
-impl From<AddressModeNotSupported> for BchWithTokensActivationError {
-    fn from(e: AddressModeNotSupported) -> Self { BchWithTokensActivationError::AddressModeNotSupported(e.to_string()) }
+impl From<DerivationMethodNotSupported> for BchWithTokensActivationError {
+    fn from(e: DerivationMethodNotSupported) -> Self {
+        BchWithTokensActivationError::DerivationMethodNotSupported(e.to_string())
+    }
 }
 
 impl From<PrivKeyNotAllowed> for BchWithTokensActivationError {
@@ -203,7 +205,7 @@ impl PlatformWithTokensActivationOps for BchCoin {
     async fn get_activation_result(
         &self,
     ) -> Result<BchWithTokensActivationResult, MmError<BchWithTokensActivationError>> {
-        let my_address = self.as_ref().address_mode.certain_or_err()?;
+        let my_address = self.as_ref().derivation_method.iguana_or_err()?;
         let my_slp_address = self
             .get_my_slp_address()
             .map_to_mm(BchWithTokensActivationError::Internal)?

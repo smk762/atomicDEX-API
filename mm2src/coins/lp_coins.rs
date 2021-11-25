@@ -169,7 +169,7 @@ pub enum PrivKeyNotAllowed {
 }
 
 #[derive(Debug, Display, PartialEq)]
-pub enum AddressModeNotSupported {
+pub enum DerivationMethodNotSupported {
     #[display(fmt = "HD wallets are not supported")]
     HdWalletNotSupported,
 }
@@ -717,8 +717,8 @@ impl From<NumConversError> for TradePreimageError {
     fn from(e: NumConversError) -> Self { TradePreimageError::InternalError(e.to_string()) }
 }
 
-impl From<AddressModeNotSupported> for TradePreimageError {
-    fn from(e: AddressModeNotSupported) -> Self { TradePreimageError::InternalError(e.to_string()) }
+impl From<DerivationMethodNotSupported> for TradePreimageError {
+    fn from(e: DerivationMethodNotSupported) -> Self { TradePreimageError::InternalError(e.to_string()) }
 }
 
 impl TradePreimageError {
@@ -800,7 +800,7 @@ pub enum BalanceError {
     #[display(fmt = "Invalid response: {}", _0)]
     InvalidResponse(String),
     #[display(fmt = "{}", _0)]
-    AddressModeNotSupported(AddressModeNotSupported),
+    DerivationMethodNotSupported(DerivationMethodNotSupported),
     #[display(fmt = "Internal: {}", _0)]
     Internal(String),
 }
@@ -821,8 +821,8 @@ impl From<NumConversError> for BalanceError {
     fn from(e: NumConversError) -> Self { BalanceError::Internal(e.to_string()) }
 }
 
-impl From<AddressModeNotSupported> for BalanceError {
-    fn from(e: AddressModeNotSupported) -> Self { BalanceError::AddressModeNotSupported(e) }
+impl From<DerivationMethodNotSupported> for BalanceError {
+    fn from(e: DerivationMethodNotSupported) -> Self { BalanceError::DerivationMethodNotSupported(e) }
 }
 
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
@@ -832,8 +832,8 @@ pub enum StakingInfosError {
     CoinDoesntSupportStakingInfos { coin: String },
     #[display(fmt = "No such coin {}", coin)]
     NoSuchCoin { coin: String },
-    #[display(fmt = "Address mode not supported: {}", _0)]
-    AddressModeNotSupported(String),
+    #[display(fmt = "Derivation method is not supported: {}", _0)]
+    DerivationMethodNotSupported(String),
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[display(fmt = "Internal error: {}", _0)]
@@ -852,8 +852,8 @@ impl From<UtxoRpcError> for StakingInfosError {
     }
 }
 
-impl From<AddressModeNotSupported> for StakingInfosError {
-    fn from(e: AddressModeNotSupported) -> Self { StakingInfosError::AddressModeNotSupported(e.to_string()) }
+impl From<DerivationMethodNotSupported> for StakingInfosError {
+    fn from(e: DerivationMethodNotSupported) -> Self { StakingInfosError::DerivationMethodNotSupported(e.to_string()) }
 }
 
 impl HttpStatusCode for StakingInfosError {
@@ -861,7 +861,7 @@ impl HttpStatusCode for StakingInfosError {
         match self {
             StakingInfosError::NoSuchCoin { .. }
             | StakingInfosError::CoinDoesntSupportStakingInfos { .. }
-            | StakingInfosError::AddressModeNotSupported(_) => StatusCode::BAD_REQUEST,
+            | StakingInfosError::DerivationMethodNotSupported(_) => StatusCode::BAD_REQUEST,
             StakingInfosError::Transport(_) | StakingInfosError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -929,7 +929,9 @@ impl From<StakingInfosError> for DelegationError {
             },
             StakingInfosError::NoSuchCoin { coin } => DelegationError::NoSuchCoin { coin },
             StakingInfosError::Transport(e) => DelegationError::Transport(e),
-            StakingInfosError::AddressModeNotSupported(reason) => DelegationError::DelegationOpsNotSupported { reason },
+            StakingInfosError::DerivationMethodNotSupported(reason) => {
+                DelegationError::DelegationOpsNotSupported { reason }
+            },
             StakingInfosError::Internal(e) => DelegationError::InternalError(e),
         }
     }
@@ -947,7 +949,7 @@ impl From<BalanceError> for DelegationError {
     fn from(e: BalanceError) -> Self {
         match e {
             BalanceError::Transport(error) | BalanceError::InvalidResponse(error) => DelegationError::Transport(error),
-            BalanceError::AddressModeNotSupported(e) => {
+            BalanceError::DerivationMethodNotSupported(e) => {
                 DelegationError::DelegationOpsNotSupported { reason: e.to_string() }
             },
             BalanceError::Internal(internal) => DelegationError::InternalError(internal),
@@ -966,8 +968,10 @@ impl From<PrivKeyNotAllowed> for DelegationError {
     fn from(e: PrivKeyNotAllowed) -> Self { DelegationError::DelegationOpsNotSupported { reason: e.to_string() } }
 }
 
-impl From<AddressModeNotSupported> for DelegationError {
-    fn from(e: AddressModeNotSupported) -> Self { DelegationError::DelegationOpsNotSupported { reason: e.to_string() } }
+impl From<DerivationMethodNotSupported> for DelegationError {
+    fn from(e: DerivationMethodNotSupported) -> Self {
+        DelegationError::DelegationOpsNotSupported { reason: e.to_string() }
+    }
 }
 
 impl HttpStatusCode for DelegationError {
@@ -1111,7 +1115,7 @@ impl From<BalanceError> for WithdrawError {
     fn from(e: BalanceError) -> Self {
         match e {
             BalanceError::Transport(error) | BalanceError::InvalidResponse(error) => WithdrawError::Transport(error),
-            BalanceError::AddressModeNotSupported(e) => WithdrawError::from(e),
+            BalanceError::DerivationMethodNotSupported(e) => WithdrawError::from(e),
             BalanceError::Internal(internal) => WithdrawError::InternalError(internal),
         }
     }
@@ -1136,8 +1140,8 @@ impl From<UtxoSignWithKeyPairError> for WithdrawError {
     }
 }
 
-impl From<AddressModeNotSupported> for WithdrawError {
-    fn from(e: AddressModeNotSupported) -> Self { WithdrawError::InternalError(e.to_string()) }
+impl From<DerivationMethodNotSupported> for WithdrawError {
+    fn from(e: DerivationMethodNotSupported) -> Self { WithdrawError::InternalError(e.to_string()) }
 }
 
 impl From<PrivKeyNotAllowed> for WithdrawError {
@@ -1423,6 +1427,51 @@ impl CoinsContext {
     async fn tx_history_db(&self) -> TxHistoryResult<TxHistoryDbLocked<'_>> {
         Ok(self.tx_history_db.get_or_initialize().await?)
     }
+}
+
+#[derive(Debug)]
+pub enum PrivKeyPolicy<T> {
+    KeyPair(T),
+    HardwareWallet,
+}
+
+impl<T> PrivKeyPolicy<T> {
+    pub fn key_pair(&self) -> Option<&T> {
+        match self {
+            PrivKeyPolicy::KeyPair(key_pair) => Some(key_pair),
+            PrivKeyPolicy::HardwareWallet => None,
+        }
+    }
+
+    pub fn key_pair_or_err(&self) -> Result<&T, MmError<PrivKeyNotAllowed>> {
+        self.key_pair()
+            .or_mm_err(|| PrivKeyNotAllowed::HardwareWalletNotSupported)
+    }
+}
+
+#[derive(Debug)]
+pub enum DerivationMethod<Address, HDWallet> {
+    Iguana(Address),
+    HDWallet(HDWallet),
+}
+
+impl<Address, HDWallet> DerivationMethod<Address, HDWallet> {
+    pub fn iguana(&self) -> Option<&Address> {
+        match self {
+            DerivationMethod::Iguana(my_address) => Some(my_address),
+            DerivationMethod::HDWallet(_) => None,
+        }
+    }
+
+    pub fn iguana_or_err(&self) -> Result<&Address, MmError<DerivationMethodNotSupported>> {
+        self.iguana()
+            .or_mm_err(|| DerivationMethodNotSupported::HdWalletNotSupported)
+    }
+
+    /// # Panic
+    ///
+    /// Panic if the address mode is [`DerivationMethod::HDWallet`].
+    pub fn unwrap_iguana(&self) -> &Address { self.iguana_or_err().unwrap() }
 }
 
 #[allow(clippy::upper_case_acronyms)]

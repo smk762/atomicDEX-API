@@ -80,7 +80,7 @@ fn utxo_coin_fields_for_test(
     let my_script_pubkey = Builder::build_p2pkh(&my_address.hash).to_bytes();
 
     let priv_key_policy = PrivKeyPolicy::KeyPair(key_pair);
-    let address = AddressMode::Certain(my_address);
+    let derivation_method = DerivationMethod::Iguana(my_address);
 
     let bech32_hrp = if is_segwit_coin {
         Some(TEST_COIN_HRP.to_string())
@@ -127,7 +127,7 @@ fn utxo_coin_fields_for_test(
         tx_fee: TxFee::Fixed(1000),
         rpc_client,
         priv_key_policy,
-        address_mode: address,
+        derivation_method,
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         tx_cache_directory: None,
         recently_spent_outpoints: AsyncMutex::new(RecentlySpentOutPoints::new(my_script_pubkey)),
@@ -213,7 +213,7 @@ fn test_generate_transaction() {
     }];
 
     let outputs = vec![TransactionOutput {
-        script_pubkey: Builder::build_p2pkh(&coin.as_ref().address_mode.unwrap_certain().hash).to_bytes(),
+        script_pubkey: Builder::build_p2pkh(&coin.as_ref().derivation_method.unwrap_iguana().hash).to_bytes(),
         value: 100000,
     }];
 
@@ -886,7 +886,7 @@ fn test_utxo_lock() {
     let coin = utxo_coin_for_test(client.into(), None, false);
     let output = TransactionOutput {
         value: 1000000,
-        script_pubkey: Builder::build_p2pkh(&coin.as_ref().address_mode.unwrap_certain().hash).to_bytes(),
+        script_pubkey: Builder::build_p2pkh(&coin.as_ref().derivation_method.unwrap_iguana().hash).to_bytes(),
     };
     let mut futures = vec![];
     for _ in 0..5 {
@@ -1442,7 +1442,7 @@ fn test_spam_rick() {
 
     let output = TransactionOutput {
         value: 1000000,
-        script_pubkey: Builder::build_p2pkh(&coin.as_ref().address_mode.unwrap_certain().hash).to_bytes(),
+        script_pubkey: Builder::build_p2pkh(&coin.as_ref().derivation_method.unwrap_iguana().hash).to_bytes(),
     };
     let mut futures = vec![];
     for _ in 0..5 {
@@ -2859,7 +2859,7 @@ fn test_tx_details_kmd_rewards() {
     ]);
     let mut fields = utxo_coin_fields_for_test(electrum.into(), None, false);
     fields.conf.ticker = "KMD".to_owned();
-    fields.address_mode = AddressMode::Certain(Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"));
+    fields.derivation_method = DerivationMethod::Iguana(Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"));
     let coin = utxo_coin_from_fields(fields);
 
     let mut input_transactions = HistoryUtxoTxMap::new();
@@ -2892,7 +2892,7 @@ fn test_tx_details_kmd_rewards_claimed_by_other() {
     ]);
     let mut fields = utxo_coin_fields_for_test(electrum.into(), None, false);
     fields.conf.ticker = "KMD".to_owned();
-    fields.address_mode = AddressMode::Certain(Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"));
+    fields.derivation_method = DerivationMethod::Iguana(Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"));
     let coin = utxo_coin_from_fields(fields);
 
     let mut input_transactions = HistoryUtxoTxMap::new();
@@ -2945,7 +2945,7 @@ fn test_update_kmd_rewards() {
     ]);
     let mut fields = utxo_coin_fields_for_test(electrum.into(), None, false);
     fields.conf.ticker = "KMD".to_owned();
-    fields.address_mode = AddressMode::Certain(Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"));
+    fields.derivation_method = DerivationMethod::Iguana(Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"));
     let coin = utxo_coin_from_fields(fields);
 
     let mut input_transactions = HistoryUtxoTxMap::default();
@@ -2976,7 +2976,7 @@ fn test_update_kmd_rewards_claimed_not_by_me() {
     ]);
     let mut fields = utxo_coin_fields_for_test(electrum.into(), None, false);
     fields.conf.ticker = "KMD".to_owned();
-    fields.address_mode = AddressMode::Certain(Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"));
+    fields.derivation_method = DerivationMethod::Iguana(Address::from("RMGJ9tRST45RnwEKHPGgBLuY3moSYP7Mhk"));
     let coin = utxo_coin_from_fields(fields);
 
     let mut input_transactions = HistoryUtxoTxMap::default();
@@ -3038,9 +3038,9 @@ fn test_withdraw_to_p2pkh() {
     // Create a p2pkh address for the test coin
     let p2pkh_address = Address {
         prefix: coin.as_ref().conf.pub_addr_prefix,
-        hash: coin.as_ref().address_mode.unwrap_certain().hash.clone(),
+        hash: coin.as_ref().derivation_method.unwrap_iguana().hash.clone(),
         t_addr_prefix: coin.as_ref().conf.pub_t_addr_prefix,
-        checksum_type: coin.as_ref().address_mode.unwrap_certain().checksum_type,
+        checksum_type: coin.as_ref().derivation_method.unwrap_iguana().checksum_type,
         hrp: coin.as_ref().conf.bech32_hrp.clone(),
         addr_format: UtxoAddressFormat::Standard,
     };
@@ -3085,9 +3085,9 @@ fn test_withdraw_to_p2sh() {
     // Create a p2sh address for the test coin
     let p2sh_address = Address {
         prefix: coin.as_ref().conf.p2sh_addr_prefix,
-        hash: coin.as_ref().address_mode.unwrap_certain().hash.clone(),
+        hash: coin.as_ref().derivation_method.unwrap_iguana().hash.clone(),
         t_addr_prefix: coin.as_ref().conf.p2sh_t_addr_prefix,
-        checksum_type: coin.as_ref().address_mode.unwrap_certain().checksum_type,
+        checksum_type: coin.as_ref().derivation_method.unwrap_iguana().checksum_type,
         hrp: coin.as_ref().conf.bech32_hrp.clone(),
         addr_format: UtxoAddressFormat::Standard,
     };
@@ -3132,9 +3132,9 @@ fn test_withdraw_to_p2wpkh() {
     // Create a p2wpkh address for the test coin
     let p2wpkh_address = Address {
         prefix: coin.as_ref().conf.pub_addr_prefix,
-        hash: coin.as_ref().address_mode.unwrap_certain().hash.clone(),
+        hash: coin.as_ref().derivation_method.unwrap_iguana().hash.clone(),
         t_addr_prefix: coin.as_ref().conf.pub_t_addr_prefix,
-        checksum_type: coin.as_ref().address_mode.unwrap_certain().checksum_type,
+        checksum_type: coin.as_ref().derivation_method.unwrap_iguana().checksum_type,
         hrp: coin.as_ref().conf.bech32_hrp.clone(),
         addr_format: UtxoAddressFormat::Segwit,
     };

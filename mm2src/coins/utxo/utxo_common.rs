@@ -285,13 +285,20 @@ pub fn address_from_str_unchecked(coin: &UtxoCoinFields, address: &str) -> Resul
     return ERR!("Invalid address: {}", address);
 }
 
-pub fn my_public_key(coin: &UtxoCoinFields) -> Result<&Public, MmError<PrivKeyNotAllowed>> {
-    coin.priv_key_policy.key_pair_or_err().map(|key_pair| key_pair.public())
+pub fn my_public_key(coin: &UtxoCoinFields) -> Result<&Public, MmError<DerivationMethodNotSupported>> {
+    match coin.priv_key_policy {
+        PrivKeyPolicy::KeyPair(ref key_pair) => Ok(key_pair.public()),
+        // As of now, Hardware Wallets requires BIP39/BIP44 derivation path to extract a public key
+        PrivKeyPolicy::HardwareWallet => MmError::err(DerivationMethodNotSupported::HdWalletNotSupported),
+    }
 }
 
-pub fn checked_address_from_str(coin: &UtxoCoinFields, address: &str) -> Result<Address, String> {
-    let addr = try_s!(address_from_str_unchecked(coin, address));
-    try_s!(coin.check_withdraw_address_supported(&addr));
+pub fn checked_address_from_str<T>(coin: &T, address: &str) -> Result<Address, String>
+where
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
+{
+    let addr = try_s!(address_from_str_unchecked(coin.as_ref(), address));
+    try_s!(check_withdraw_address_supported(coin, &addr));
     Ok(addr)
 }
 
@@ -333,7 +340,7 @@ impl<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> UtxoTxBuilder<'a, T> {
         UtxoTxBuilder {
             tx: coin.as_ref().transaction_preimage(),
             coin,
-            from: coin.as_ref().address_mode.certain().cloned(),
+            from: coin.as_ref().derivation_method.iguana().cloned(),
             available_inputs: vec![],
             fee_policy: FeePolicy::SendExact,
             fee: None,
@@ -752,7 +759,7 @@ where
         coin.as_ref().conf.pub_t_addr_prefix,
         coin.as_ref().conf.checksum_type,
         coin.as_ref().conf.bech32_hrp.clone(),
-        coin.as_ref().address_mode.address_format().clone(),
+        coin.addr_format().clone(),
     ));
     let amount = try_fus!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
     let output = TransactionOutput {
@@ -843,7 +850,7 @@ where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let key_pair = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err());
-    let my_address = try_fus!(coin.as_ref().address_mode.certain_or_err()).clone();
+    let my_address = try_fus!(coin.as_ref().derivation_method.iguana_or_err()).clone();
 
     let mut prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
@@ -893,7 +900,7 @@ where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let key_pair = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err());
-    let my_address = try_fus!(coin.as_ref().address_mode.certain_or_err()).clone();
+    let my_address = try_fus!(coin.as_ref().derivation_method.iguana_or_err()).clone();
 
     let mut prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
@@ -943,7 +950,7 @@ where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let key_pair = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err());
-    let my_address = try_fus!(coin.as_ref().address_mode.certain_or_err()).clone();
+    let my_address = try_fus!(coin.as_ref().derivation_method.iguana_or_err()).clone();
 
     let mut prev_tx: UtxoTx = try_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
@@ -990,7 +997,7 @@ where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let key_pair = try_fus!(coin.as_ref().priv_key_policy.key_pair_or_err());
-    let my_address = try_fus!(coin.as_ref().address_mode.certain_or_err()).clone();
+    let my_address = try_fus!(coin.as_ref().derivation_method.iguana_or_err()).clone();
 
     let mut prev_tx: UtxoTx = try_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
@@ -1120,7 +1127,7 @@ pub fn validate_fee<T>(
     fee_addr: &[u8],
 ) -> Box<dyn Future<Item = (), Error = String> + Send>
 where
-    T: AsRef<UtxoCoinFields> + Send + Sync + 'static,
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps + Send + Sync + 'static,
 {
     let amount = amount.clone();
     let address = try_fus!(address_from_raw_pubkey(
@@ -1129,7 +1136,7 @@ where
         coin.as_ref().conf.pub_t_addr_prefix,
         coin.as_ref().conf.checksum_type,
         coin.as_ref().conf.bech32_hrp.clone(),
-        coin.as_ref().address_mode.address_format().clone(),
+        coin.addr_format().clone(),
     ));
 
     if !try_fus!(check_all_inputs_signed_by_pub(&tx, sender_pubkey)) {
@@ -1283,7 +1290,7 @@ where
                     hash,
                     checksum_type: coin.as_ref().conf.checksum_type,
                     hrp: coin.as_ref().conf.bech32_hrp.clone(),
-                    addr_format: coin.as_ref().address_mode.address_format().clone(),
+                    addr_format: coin.addr_format().clone(),
                 };
                 let target_addr = target_addr.to_string();
                 let is_imported = try_s!(client.is_address_imported(&target_addr).await);
@@ -1395,14 +1402,14 @@ pub fn my_address<T>(coin: &T) -> Result<String, String>
 where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps,
 {
-    match coin.as_ref().address_mode {
-        AddressMode::Certain(ref my_address) => my_address.display_address(),
-        AddressMode::Derived(_) => ERR!("'my_address' is deprecated for HD wallets"),
+    match coin.as_ref().derivation_method {
+        DerivationMethod::Iguana(ref my_address) => my_address.display_address(),
+        DerivationMethod::HDWallet(_) => ERR!("'my_address' is deprecated for HD wallets"),
     }
 }
 
 pub fn my_balance(coin: &UtxoCoinFields) -> BalanceFut<CoinBalance> {
-    let my_address = try_f!(coin.address_mode.certain_or_err().mm_err(BalanceError::from)).clone();
+    let my_address = try_f!(coin.derivation_method.iguana_or_err().mm_err(BalanceError::from)).clone();
     Box::new(
         coin.rpc_client
             .display_balance(my_address, coin.decimals)
@@ -1873,7 +1880,7 @@ where
                 .collect()
         },
         UtxoRpcClientEnum::Electrum(client) => {
-            let my_address = match coin.as_ref().address_mode.certain_or_err() {
+            let my_address = match coin.as_ref().derivation_method.iguana_or_err() {
                 Ok(my_address) => my_address,
                 Err(e) => return RequestTxHistoryResult::UnknownError(e.to_string()),
             };
@@ -1936,7 +1943,7 @@ where
     let verbose_tx = try_s!(coin.as_ref().rpc_client.get_verbose_transaction(&hash).compat().await);
     let mut tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
-    let my_address = try_s!(coin.as_ref().address_mode.certain_or_err());
+    let my_address = try_s!(coin.as_ref().derivation_method.iguana_or_err());
 
     input_transactions.insert(hash, HistoryUtxoTx {
         tx: tx.clone(),
@@ -2223,7 +2230,7 @@ where
     let tx_fee = coin.get_tx_fee().await?;
     // [`FeePolicy::DeductFromOutput`] is used if the value is [`TradePreimageValue::UpperBound`] only
     let is_amount_upper_bound = matches!(fee_policy, FeePolicy::DeductFromOutput(_));
-    let my_address = coin.as_ref().address_mode.certain_or_err()?;
+    let my_address = coin.as_ref().derivation_method.iguana_or_err()?;
 
     match tx_fee {
         ActualTxFee::Fixed(fee_amount) => {
@@ -2400,14 +2407,14 @@ pub fn set_requires_notarization(coin: &UtxoCoinFields, requires_nota: bool) {
         .store(requires_nota, AtomicOrdering::Relaxed);
 }
 
-pub fn coin_protocol_info(coin: &UtxoCoinFields) -> Vec<u8> {
-    rmp_serde::to_vec(coin.address_mode.address_format()).expect("Serialization should not fail")
+pub fn coin_protocol_info(coin: &dyn UtxoCommonOps) -> Vec<u8> {
+    rmp_serde::to_vec(coin.addr_format()).expect("Serialization should not fail")
 }
 
-pub fn is_coin_protocol_supported(coin: &UtxoCoinFields, info: &Option<Vec<u8>>) -> bool {
+pub fn is_coin_protocol_supported(coin: &dyn UtxoCommonOps, info: &Option<Vec<u8>>) -> bool {
     match info {
         Some(format) => rmp_serde::from_read_ref::<_, UtxoAddressFormat>(format).is_ok(),
-        None => !coin.address_mode.address_format().is_segwit(),
+        None => !coin.addr_format().is_segwit(),
     }
 }
 
@@ -2562,7 +2569,7 @@ where
     T: AsRef<UtxoCoinFields> + UtxoCommonOps + MarketCoinOps + ?Sized,
 {
     let mut attempts = 0i32;
-    let my_address = coin.as_ref().address_mode.certain_or_err()?;
+    let my_address = coin.as_ref().derivation_method.iguana_or_err()?;
     loop {
         let (mature_unspents, _) = coin.ordered_mature_unspents(my_address).await?;
         let spendable_balance = mature_unspents.iter().fold(BigDecimal::zero(), |acc, x| {
@@ -2944,9 +2951,9 @@ async fn merge_utxo_loop<T>(
             None => break,
         };
 
-        let my_address = match coin.as_ref().address_mode {
-            AddressMode::Certain(ref my_address) => my_address,
-            AddressMode::Derived(_) => {
+        let my_address = match coin.as_ref().derivation_method {
+            DerivationMethod::Iguana(ref my_address) => my_address,
+            DerivationMethod::HDWallet(_) => {
                 warn!("'merge_utxo_loop' is currently not used for HD wallets");
                 return;
             },
@@ -3019,10 +3026,64 @@ where
     Ok(lock_time.max(htlc_locktime))
 }
 
+pub fn addr_format(coin: &dyn AsRef<UtxoCoinFields>) -> &UtxoAddressFormat {
+    match coin.as_ref().derivation_method {
+        DerivationMethod::Iguana(ref my_address) => &my_address.addr_format,
+        DerivationMethod::HDWallet(HDWalletInfo { ref address_format, .. }) => address_format,
+    }
+}
+
 pub fn addr_format_for_standard_scripts(coin: &dyn AsRef<UtxoCoinFields>) -> UtxoAddressFormat {
     match &coin.as_ref().conf.default_address_format {
         UtxoAddressFormat::Segwit => UtxoAddressFormat::Standard,
         format @ (UtxoAddressFormat::Standard | UtxoAddressFormat::CashAddress { .. }) => format.clone(),
+    }
+}
+
+fn check_withdraw_address_supported<T>(coin: &T, addr: &Address) -> Result<(), MmError<UnsupportedAddr>>
+where
+    T: AsRef<UtxoCoinFields> + UtxoCommonOps,
+{
+    let conf = &coin.as_ref().conf;
+
+    match addr.addr_format {
+        // Considering that legacy is supported with any configured formats
+        // This can be changed depending on the coins implementation
+        UtxoAddressFormat::Standard => {
+            let is_p2pkh = addr.prefix == conf.pub_addr_prefix && addr.t_addr_prefix == conf.pub_t_addr_prefix;
+            let is_p2sh =
+                addr.prefix == conf.p2sh_addr_prefix && addr.t_addr_prefix == conf.p2sh_t_addr_prefix && conf.segwit;
+            if !is_p2pkh && !is_p2sh {
+                MmError::err(UnsupportedAddr::PrefixError(conf.ticker.clone()))
+            } else {
+                Ok(())
+            }
+        },
+        UtxoAddressFormat::Segwit => {
+            if !conf.segwit {
+                return MmError::err(UnsupportedAddr::SegwitNotActivated(conf.ticker.clone()));
+            }
+
+            if addr.hrp != conf.bech32_hrp {
+                MmError::err(UnsupportedAddr::HrpError {
+                    ticker: conf.ticker.clone(),
+                    hrp: addr.hrp.clone().unwrap_or_default(),
+                })
+            } else {
+                Ok(())
+            }
+        },
+        UtxoAddressFormat::CashAddress { .. } => {
+            if addr.addr_format == conf.default_address_format || addr.addr_format == *coin.addr_format() {
+                Ok(())
+            } else {
+                MmError::err(UnsupportedAddr::FormatMismatch {
+                    ticker: conf.ticker.clone(),
+                    activated_format: coin.addr_format().to_string(),
+                    used_format: addr.addr_format.to_string(),
+                })
+            }
+        },
     }
 }
 

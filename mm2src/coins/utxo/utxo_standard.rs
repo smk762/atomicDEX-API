@@ -86,10 +86,12 @@ impl UtxoCommonOps for UtxoStandardCoin {
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo_arc, satoshi) }
 
-    fn my_public_key(&self) -> Result<&Public, MmError<PrivKeyNotAllowed>> { utxo_common::my_public_key(self.as_ref()) }
+    fn my_public_key(&self) -> Result<&Public, MmError<DerivationMethodNotSupported>> {
+        utxo_common::my_public_key(self.as_ref())
+    }
 
     fn address_from_str(&self, address: &str) -> Result<Address, String> {
-        utxo_common::checked_address_from_str(&self.utxo_arc, address)
+        utxo_common::checked_address_from_str(self, address)
     }
 
     async fn get_current_mtp(&self) -> UtxoRpcResult<u32> {
@@ -175,6 +177,8 @@ impl UtxoCommonOps for UtxoStandardCoin {
         utxo_common::p2sh_tx_locktime(self, &self.utxo_arc.conf.ticker, htlc_locktime).await
     }
 
+    fn addr_format(&self) -> &UtxoAddressFormat { utxo_common::addr_format(self) }
+
     fn addr_format_for_standard_scripts(&self) -> UtxoAddressFormat {
         utxo_common::addr_format_for_standard_scripts(self)
     }
@@ -187,7 +191,7 @@ impl UtxoCommonOps for UtxoStandardCoin {
             conf.pub_t_addr_prefix,
             conf.checksum_type,
             conf.bech32_hrp.clone(),
-            self.utxo_arc.address_mode.address_format().clone(),
+            self.addr_format().clone(),
         )
     }
 }
@@ -530,10 +534,10 @@ impl MmCoin for UtxoStandardCoin {
 
     fn mature_confirmations(&self) -> Option<u32> { Some(self.utxo_arc.conf.mature_confirmations) }
 
-    fn coin_protocol_info(&self) -> Vec<u8> { utxo_common::coin_protocol_info(&self.utxo_arc) }
+    fn coin_protocol_info(&self) -> Vec<u8> { utxo_common::coin_protocol_info(self) }
 
     fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
-        utxo_common::is_coin_protocol_supported(&self.utxo_arc, info)
+        utxo_common::is_coin_protocol_supported(self, info)
     }
 }
 

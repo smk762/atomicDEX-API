@@ -20,6 +20,12 @@ pub type UtxoSignTxResult<T> = Result<T, MmError<UtxoSignTxError>>;
 
 type Signature = Bytes;
 
+pub enum TxProviderError {
+    Transport(String),
+    InvalidResponse(String),
+    Internal(String),
+}
+
 #[derive(Debug, Display)]
 pub enum UtxoSignTxError {
     #[display(fmt = "Coin '{}' is not supported with Trezor", coin)]
@@ -85,11 +91,22 @@ impl From<keys::Error> for UtxoSignTxError {
     fn from(e: keys::Error) -> Self { UtxoSignTxError::ErrorSigning(e) }
 }
 
+impl From<TxProviderError> for UtxoSignTxError {
+    fn from(e: TxProviderError) -> Self {
+        match e {
+            TxProviderError::Transport(transport) | TxProviderError::InvalidResponse(transport) => {
+                UtxoSignTxError::Transport(transport)
+            },
+            TxProviderError::Internal(internal) => UtxoSignTxError::Internal(internal),
+        }
+    }
+}
+
 /// The trait declares a transaction getter.
 /// The provider can use cache or RPC client.
 #[async_trait]
 pub trait TxProvider {
-    async fn get_rpc_transaction(&self, tx_hash: &H256Json) -> UtxoSignTxResult<RpcTransaction>;
+    async fn get_rpc_transaction(&self, tx_hash: &H256Json) -> Result<RpcTransaction, MmError<TxProviderError>>;
 }
 
 pub enum SignPolicy<'a> {

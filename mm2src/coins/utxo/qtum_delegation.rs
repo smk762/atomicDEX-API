@@ -116,7 +116,7 @@ impl QtumDelegationOps for QtumCoin {
 
 impl QtumCoin {
     async fn remove_delegation_impl(&self) -> DelegationResult {
-        if self.as_ref().address_mode.address_format().is_segwit() {
+        if self.addr_format().is_segwit() {
             return MmError::err(DelegationError::DelegationOpsNotSupported {
                 reason: "Qtum doesn't support delegation for segwit".to_string(),
             });
@@ -202,7 +202,7 @@ impl QtumCoin {
 
     async fn get_delegation_infos_impl(&self) -> StakingInfosResult {
         let coin = self.as_ref();
-        let my_address = coin.address_mode.certain_or_err()?;
+        let my_address = coin.derivation_method.iguana_or_err()?;
 
         let staker = self.am_i_currently_staking().await?;
         let (unspents, _) = utxo_common::list_unspent_ordered(self, my_address).await?;
@@ -229,7 +229,7 @@ impl QtumCoin {
     }
 
     async fn add_delegation_impl(&self, request: QtumDelegationRequest) -> DelegationResult {
-        if self.as_ref().address_mode.address_format().is_segwit() {
+        if self.addr_format().is_segwit() {
             return MmError::err(DelegationError::DelegationOpsNotSupported {
                 reason: "Qtum doesn't support delegation for segwit".to_string(),
             });
@@ -272,7 +272,7 @@ impl QtumCoin {
         let utxo = self.as_ref();
 
         let key_pair = utxo.priv_key_policy.key_pair_or_err()?;
-        let my_address = utxo.address_mode.certain_or_err()?;
+        let my_address = utxo.derivation_method.iguana_or_err()?;
 
         let (unspents, _) = self.ordered_mature_unspents(my_address).await?;
         let mut gas_fee = 0;

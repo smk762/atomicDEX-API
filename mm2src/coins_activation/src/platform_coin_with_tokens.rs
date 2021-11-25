@@ -191,8 +191,8 @@ pub enum EnablePlatformCoinWithTokensError {
     },
     #[display(fmt = "Private key is not allowed: {}", _0)]
     PrivKeyNotAllowed(String),
-    #[display(fmt = "Address mode is not supported: {}", _0)]
-    AddressModeNotSupported(String),
+    #[display(fmt = "Derivation method is not supported: {}", _0)]
+    DerivationMethodNotSupported(String),
     Transport(String),
     Internal(String),
 }
@@ -239,7 +239,7 @@ impl HttpStatusCode for EnablePlatformCoinWithTokensError {
             | EnablePlatformCoinWithTokensError::TokenProtocolParseError { .. }
             | EnablePlatformCoinWithTokensError::PlatformCoinCreationError { .. }
             | EnablePlatformCoinWithTokensError::PrivKeyNotAllowed(_)
-            | EnablePlatformCoinWithTokensError::AddressModeNotSupported(_)
+            | EnablePlatformCoinWithTokensError::DerivationMethodNotSupported(_)
             | EnablePlatformCoinWithTokensError::Transport(_)
             | EnablePlatformCoinWithTokensError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             EnablePlatformCoinWithTokensError::PlatformIsAlreadyActivated(_)

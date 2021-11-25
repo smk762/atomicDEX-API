@@ -199,7 +199,7 @@ where
         let fee_details = UtxoFeeDetails {
             amount: big_decimal_from_sat(fee_amount as i64, decimals),
         };
-        let tx_hex = match coin.as_ref().address_mode.address_format() {
+        let tx_hex = match coin.addr_format() {
             UtxoAddressFormat::Segwit => serialize_with_flags(&signed, SERIALIZE_TRANSACTION_WITNESS).into(),
             _ => serialize(&signed).into(),
         };
@@ -342,7 +342,7 @@ where
         task_handle: &'a WithdrawTaskHandle,
     ) -> Result<InitUtxoWithdraw<'a, Coin>, MmError<WithdrawError>> {
         let from_pubkey = *coin.my_public_key()?;
-        let from_address = coin.as_ref().address_mode.certain_or_err()?.clone();
+        let from_address = coin.as_ref().derivation_method.iguana_or_err()?.clone();
         let from_address_string = coin.my_address().map_to_mm(WithdrawError::InternalError)?;
         Ok(InitUtxoWithdraw {
             coin,
@@ -446,7 +446,7 @@ where
     Coin: AsRef<UtxoCoinFields> + MarketCoinOps,
 {
     pub fn init(coin: Coin, req: WithdrawRequest) -> Result<Self, MmError<WithdrawError>> {
-        let my_address = coin.as_ref().address_mode.certain_or_err()?.clone();
+        let my_address = coin.as_ref().derivation_method.iguana_or_err()?.clone();
         let my_address_string = coin.my_address().map_to_mm(WithdrawError::InternalError)?;
         Ok(StandardUtxoWithdraw {
             coin,

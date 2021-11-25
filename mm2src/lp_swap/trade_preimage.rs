@@ -260,7 +260,7 @@ impl From<BalanceError> for TradePreimageRpcError {
             BalanceError::Transport(transport) | BalanceError::InvalidResponse(transport) => {
                 TradePreimageRpcError::Transport(transport)
             },
-            e @ BalanceError::AddressModeNotSupported(_) => TradePreimageRpcError::InternalError(e.to_string()),
+            e @ BalanceError::DerivationMethodNotSupported(_) => TradePreimageRpcError::InternalError(e.to_string()),
             BalanceError::Internal(internal) => TradePreimageRpcError::InternalError(internal),
         }
     }

@@ -112,7 +112,7 @@ fn test_validate_maker_payment() {
     let (_ctx, coin) = qrc20_coin_for_test(&priv_key, None);
 
     assert_eq!(
-        *coin.utxo.address_mode.unwrap_certain(),
+        *coin.utxo.derivation_method.unwrap_iguana(),
         "qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf".into()
     );
 
@@ -208,7 +208,7 @@ fn test_wait_for_confirmations_excepted() {
     let (_ctx, coin) = qrc20_coin_for_test(&priv_key, None);
 
     assert_eq!(
-        *coin.utxo.address_mode.unwrap_certain(),
+        *coin.utxo.derivation_method.unwrap_iguana(),
         "qUX9FGHubczidVjWPCUWuwCUJWpkAtGCgf".into()
     );
 

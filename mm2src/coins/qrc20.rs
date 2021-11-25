@@ -10,7 +10,7 @@ use crate::utxo::{qtum, ActualTxFee, AdditionalTxData, BroadcastTxErr, FeePolicy
                   UtxoAddressFormat, UtxoCoinBuildError, UtxoCoinBuildResult, UtxoCoinBuilder, UtxoCoinFields,
                   UtxoCommonOps, UtxoFromLegacyReqErr, UtxoTx, UtxoTxBroadcastOps, UtxoTxGenerationOps,
                   VerboseTransactionFrom, UTXO_LOCK};
-use crate::{AddressModeNotSupported, BalanceError, BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend,
+use crate::{BalanceError, BalanceFut, CoinBalance, DerivationMethodNotSupported, FeeApproxStage, FoundSwapTxSpend,
             HistorySyncState, MarketCoinOps, MmCoin, NegotiateSwapContractAddrErr, PrivKeyNotAllowed, SwapOps,
             TradeFee, TradePreimageError, TradePreimageFut, TradePreimageResult, TradePreimageValue,
             TransactionDetails, TransactionEnum, TransactionFut, TransactionType, ValidateAddressResult,
@@ -74,7 +74,7 @@ pub enum Qrc20GenTxError {
     ErrorGeneratingUtxoTx(GenerateTxError),
     ErrorSigningTx(UtxoSignWithKeyPairError),
     PrivKeyNotAllowed(PrivKeyNotAllowed),
-    AddressModeNotSupported(AddressModeNotSupported),
+    DerivationMethodNotSupported(DerivationMethodNotSupported),
 }
 
 impl From<GenerateTxError> for Qrc20GenTxError {
@@ -89,8 +89,8 @@ impl From<PrivKeyNotAllowed> for Qrc20GenTxError {
     fn from(e: PrivKeyNotAllowed) -> Self { Qrc20GenTxError::PrivKeyNotAllowed(e) }
 }
 
-impl From<AddressModeNotSupported> for Qrc20GenTxError {
-    fn from(e: AddressModeNotSupported) -> Self { Qrc20GenTxError::AddressModeNotSupported(e) }
+impl From<DerivationMethodNotSupported> for Qrc20GenTxError {
+    fn from(e: DerivationMethodNotSupported) -> Self { Qrc20GenTxError::DerivationMethodNotSupported(e) }
 }
 
 impl From<UtxoRpcError> for Qrc20GenTxError {
@@ -105,7 +105,9 @@ impl Qrc20GenTxError {
             },
             Qrc20GenTxError::ErrorSigningTx(sign_err) => WithdrawError::InternalError(sign_err.to_string()),
             Qrc20GenTxError::PrivKeyNotAllowed(priv_err) => WithdrawError::InternalError(priv_err.to_string()),
-            Qrc20GenTxError::AddressModeNotSupported(addr_err) => WithdrawError::InternalError(addr_err.to_string()),
+            Qrc20GenTxError::DerivationMethodNotSupported(addr_err) => {
+                WithdrawError::InternalError(addr_err.to_string())
+            },
         }
     }
 }
@@ -453,7 +455,7 @@ impl Qrc20Coin {
         &self,
         contract_outputs: Vec<ContractCallOutput>,
     ) -> Result<GenerateQrc20TxResult, MmError<Qrc20GenTxError>> {
-        let my_address = self.utxo.address_mode.certain_or_err()?;
+        let my_address = self.utxo.derivation_method.iguana_or_err()?;
         let (unspents, _) = self.ordered_mature_unspents(my_address).await?;
 
         let mut gas_fee = 0;
@@ -470,7 +472,7 @@ impl Qrc20Coin {
             .build()
             .await?;
 
-        let my_address = self.utxo.address_mode.certain_or_err()?;
+        let my_address = self.utxo.derivation_method.iguana_or_err()?;
         let key_pair = self.utxo.priv_key_policy.key_pair_or_err()?;
 
         let prev_script = ScriptBuilder::build_p2pkh(&my_address.hash);
@@ -570,10 +572,12 @@ impl UtxoCommonOps for Qrc20Coin {
 
     fn denominate_satoshis(&self, satoshi: i64) -> f64 { utxo_common::denominate_satoshis(&self.utxo, satoshi) }
 
-    fn my_public_key(&self) -> Result<&Public, MmError<PrivKeyNotAllowed>> { utxo_common::my_public_key(self.as_ref()) }
+    fn my_public_key(&self) -> Result<&Public, MmError<DerivationMethodNotSupported>> {
+        utxo_common::my_public_key(self.as_ref())
+    }
 
     fn address_from_str(&self, address: &str) -> Result<UtxoAddress, String> {
-        utxo_common::checked_address_from_str(&self.utxo, address)
+        utxo_common::checked_address_from_str(self, address)
     }
 
     async fn get_current_mtp(&self) -> UtxoRpcResult<u32> {
@@ -663,6 +667,8 @@ impl UtxoCommonOps for Qrc20Coin {
         utxo_common::p2sh_tx_locktime(self, &self.utxo.conf.ticker, htlc_locktime).await
     }
 
+    fn addr_format(&self) -> &UtxoAddressFormat { utxo_common::addr_format(self) }
+
     fn addr_format_for_standard_scripts(&self) -> UtxoAddressFormat {
         utxo_common::addr_format_for_standard_scripts(self)
     }
@@ -675,7 +681,7 @@ impl UtxoCommonOps for Qrc20Coin {
             conf.pub_t_addr_prefix,
             conf.checksum_type,
             conf.bech32_hrp.clone(),
-            self.utxo.address_mode.address_format().clone(),
+            self.addr_format().clone(),
         )
     }
 }
@@ -1259,10 +1265,10 @@ impl MmCoin for Qrc20Coin {
 
     fn mature_confirmations(&self) -> Option<u32> { Some(self.utxo.conf.mature_confirmations) }
 
-    fn coin_protocol_info(&self) -> Vec<u8> { utxo_common::coin_protocol_info(&self.utxo) }
+    fn coin_protocol_info(&self) -> Vec<u8> { utxo_common::coin_protocol_info(self) }
 
     fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
-        utxo_common::is_coin_protocol_supported(&self.utxo, info)
+        utxo_common::is_coin_protocol_supported(self, info)
     }
 }
 
@@ -1352,7 +1358,7 @@ async fn qrc20_withdraw(coin: Qrc20Coin, req: WithdrawRequest) -> WithdrawResult
         .await
         .mm_err(|gen_tx_error| gen_tx_error.into_withdraw_error(coin.platform.clone(), coin.utxo.decimals))?;
 
-    let my_address = coin.utxo.address_mode.certain_or_err()?;
+    let my_address = coin.utxo.derivation_method.iguana_or_err()?;
     let received_by_me = if to_addr == *my_address {
         qrc20_amount.clone()
     } else {
