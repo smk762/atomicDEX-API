@@ -103,7 +103,7 @@ pub struct MmCtx {
     #[cfg(not(target_arch = "wasm32"))]
     pub ln_background_processor: Constructible<BackgroundProcessor>,
     #[cfg(not(target_arch = "wasm32"))]
-    pub sqlite_connection: Constructible<Mutex<Connection>>,
+    pub sqlite_connection: Constructible<Arc<Mutex<Connection>>>,
     pub mm_version: String,
     #[cfg(target_arch = "wasm32")]
     pub db_namespace: DbNamespaceId,
@@ -268,7 +268,7 @@ impl MmCtx {
         let sqlite_file_path = self.dbdir().join("MM2.db");
         log::debug!("Trying to open SQLite database file {}", sqlite_file_path.display());
         let connection = try_s!(Connection::open(sqlite_file_path));
-        try_s!(self.sqlite_connection.pin(Mutex::new(connection)));
+        try_s!(self.sqlite_connection.pin(Arc::new(Mutex::new(connection))));
         Ok(())
     }
 

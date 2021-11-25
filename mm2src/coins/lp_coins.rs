@@ -98,6 +98,8 @@ use qrc20::{qrc20_coin_from_conf_and_params, Qrc20Coin, Qrc20FeeDetails};
 
 pub mod lightning;
 
+pub mod sql_tx_history_storage;
+
 #[doc(hidden)]
 #[allow(unused_variables)]
 pub mod test_coin;
@@ -2228,4 +2230,43 @@ where
         Ok(())
     };
     Box::new(fut.boxed().compat())
+}
+
+#[derive(Debug)]
+pub enum RemoveTxResult {
+    TxRemoved,
+    TxDidNotExist,
+}
+
+impl RemoveTxResult {
+    pub fn tx_existed(&self) -> bool { matches!(self, RemoveTxResult::TxRemoved) }
+}
+
+#[async_trait]
+pub trait TxHistoryStorage {
+    type Error: std::fmt::Debug + NotMmError;
+
+    /// Initializes a collection/table using a specified collection_id
+    async fn init_collection(&self, collection_id: &str) -> Result<(), MmError<Self::Error>>;
+
+    /// Adds a transaction to the selected collection in the storage
+    async fn add_transaction(
+        &self,
+        collection_id: &str,
+        transaction: TransactionDetails,
+    ) -> Result<(), MmError<Self::Error>>;
+
+    /// Removes the transaction by internal_id from the selected collection in the storage
+    async fn remove_transaction(
+        &self,
+        collection_id: &str,
+        tx_internal_id: &str,
+    ) -> Result<RemoveTxResult, MmError<Self::Error>>;
+
+    /// Gets the transaction by internal_id from the selected collection in the storage
+    async fn get_transaction(
+        &self,
+        collection_id: &str,
+        tx_internal_id: &str,
+    ) -> Result<Option<TransactionDetails>, MmError<Self::Error>>;
 }

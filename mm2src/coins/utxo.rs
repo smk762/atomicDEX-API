@@ -20,11 +20,12 @@
 //
 
 pub mod bch;
-pub mod bchd_grpc;
+pub mod bch_and_slp_tx_history;
+mod bchd_grpc;
 #[allow(clippy::large_enum_variant)]
 #[rustfmt::skip]
 #[path = "utxo/pb.rs"]
-pub mod bchd_pb;
+mod bchd_pb;
 pub mod qtum;
 pub mod rpc_clients;
 pub mod slp;

@@ -5,12 +5,15 @@ use crate::prelude::*;
 use crate::slp_token_activation::SlpActivationRequest;
 use async_trait::async_trait;
 use coins::utxo::bch::{bch_coin_from_conf_and_params, BchActivationRequest, BchCoin, CashAddrPrefix};
+use coins::utxo::bch_and_slp_tx_history::bch_and_slp_history_loop;
 use coins::utxo::rpc_clients::UtxoRpcError;
 use coins::utxo::slp::{SlpProtocolConf, SlpToken};
 use coins::utxo::UtxoCommonOps;
-use coins::{CoinBalance, CoinProtocol, MarketCoinOps, MmCoin};
+use coins::{CoinBalance, CoinProtocol, MarketCoinOps, MmCoin, TxHistoryStorage};
+use common::executor::spawn;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
+use common::mm_metrics::MetricsArc;
 use common::Future01CompatExt;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value as Json;
@@ -231,5 +234,7 @@ impl PlatformWithTokensActivationOps for BchCoin {
         Ok(result)
     }
 
-    fn start_history_background_fetching(&self) { todo!() }
+    fn start_history_background_fetching(&self, metrics: MetricsArc, storage: impl TxHistoryStorage + Send + 'static) {
+        spawn(bch_and_slp_history_loop(self.clone(), storage, metrics))
+    }
 }

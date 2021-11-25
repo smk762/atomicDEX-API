@@ -1,8 +1,10 @@
 use crate::prelude::*;
 use async_trait::async_trait;
-use coins::{lp_coinfind, CoinProtocol, CoinsContext, MmCoinEnum};
+use coins::sql_tx_history_storage::SqliteTxHistoryStorage;
+use coins::{lp_coinfind, CoinProtocol, CoinsContext, MmCoinEnum, TxHistoryStorage};
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
+use common::mm_metrics::MetricsArc;
 use common::{HttpStatusCode, NotSame, StatusCode};
 use derive_more::Display;
 use ser_error_derive::SerializeErrorType;
@@ -148,7 +150,7 @@ pub trait PlatformWithTokensActivationOps: Into<MmCoinEnum> {
 
     async fn get_activation_result(&self) -> Result<Self::ActivationResult, MmError<Self::ActivationError>>;
 
-    fn start_history_background_fetching(&self);
+    fn start_history_background_fetching(&self, metrics: MetricsArc, storage: impl TxHistoryStorage + Send + 'static);
 }
 
 #[derive(Debug, Deserialize)]
@@ -283,7 +285,10 @@ where
 
     let activation_result = platform_coin.get_activation_result().await?;
     if req.request.tx_history_enabled() {
-        platform_coin.start_history_background_fetching();
+        platform_coin.start_history_background_fetching(
+            ctx.metrics.clone(),
+            SqliteTxHistoryStorage(ctx.sqlite_connection.as_option().unwrap().clone()),
+        );
     }
 
     let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
