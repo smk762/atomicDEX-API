@@ -35,9 +35,15 @@ use std::convert::TryInto;
 use std::fmt;
 use std::sync::Arc;
 
-mod ln_errors;
+pub mod ln_errors;
 mod ln_rpc;
 pub mod ln_utils;
+
+#[derive(Debug)]
+pub struct LightningProtocolConf {
+    pub platform_coin_ticker: String,
+    pub network: String,
+}
 
 #[derive(Debug)]
 pub struct PlatformFields {
@@ -361,7 +367,7 @@ pub struct LightningActivationParams {
 
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
-pub enum LightningFromLegacyReqErr {
+pub enum LightningFromReqErr {
     #[display(fmt = "Platform coin {} activated in {} mode", _0, _1)]
     UnexpectedMethod(String, String),
     #[display(fmt = "{} is only supported in {} mode", _0, _1)]
@@ -372,44 +378,51 @@ pub enum LightningFromLegacyReqErr {
     InvalidAddress(String),
 }
 
-impl From<serde_json::Error> for LightningFromLegacyReqErr {
-    fn from(e: serde_json::Error) -> Self { LightningFromLegacyReqErr::InvalidRequest(e.to_string()) }
+impl From<serde_json::Error> for LightningFromReqErr {
+    fn from(e: serde_json::Error) -> Self { LightningFromReqErr::InvalidRequest(e.to_string()) }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct LightningActivationRequest {
+    // The listening port for the p2p LN node
+    pub listening_port: Option<u16>,
+    // Printable human-readable string to describe this node to other users.
+    pub name: String,
+    // Node's HEX color. This is used for showing the node in a network graph with the desired color.
+    pub color: Option<String>,
 }
 
 impl LightningActivationParams {
-    pub fn from_legacy_req(
-        platform_coin: UtxoStandardCoin,
-        req: &Json,
-    ) -> Result<Self, MmError<LightningFromLegacyReqErr>> {
+    pub fn from_legacy_req(platform_coin: UtxoStandardCoin, req: &Json) -> Result<Self, MmError<LightningFromReqErr>> {
         match (req["method"].as_str(), platform_coin.as_ref().rpc_client.clone()) {
             // TODO: Remove this error when Native mode is supported for lightning
             (Some("enable"), UtxoRpcClientEnum::Native(_)) => {
-                return MmError::err(LightningFromLegacyReqErr::UnsupportedMode(
+                return MmError::err(LightningFromReqErr::UnsupportedMode(
                     "For now lightning network".into(),
                     "electrum".into(),
                 ))
             },
             (Some("electrum"), UtxoRpcClientEnum::Electrum(_)) => (),
             (Some("enable"), UtxoRpcClientEnum::Electrum(_)) => {
-                return MmError::err(LightningFromLegacyReqErr::UnexpectedMethod(
+                return MmError::err(LightningFromReqErr::UnexpectedMethod(
                     platform_coin.ticker().to_string(),
                     "electrum".into(),
                 ))
             },
             (Some("electrum"), UtxoRpcClientEnum::Native(_)) => {
-                return MmError::err(LightningFromLegacyReqErr::UnexpectedMethod(
+                return MmError::err(LightningFromReqErr::UnexpectedMethod(
                     platform_coin.ticker().to_string(),
                     "native".into(),
                 ))
             },
-            _ => return MmError::err(LightningFromLegacyReqErr::UnexpectedMethod("".into(), "".into())),
+            _ => return MmError::err(LightningFromReqErr::UnexpectedMethod("".into(), "".into())),
         };
 
         // Channel funding transactions need to spend segwit outputs
         // and while the witness script can be generated from pubkey and be used
         // it's better for the coin to be enabled in segwit to check if balance is enough for funding transaction, etc...
         if !platform_coin.as_ref().my_address.addr_format.is_segwit() {
-            return MmError::err(LightningFromLegacyReqErr::UnsupportedMode(
+            return MmError::err(LightningFromReqErr::UnsupportedMode(
                 "Lightning network".into(),
                 "segwit".into(),
             ));
@@ -417,7 +430,7 @@ impl LightningActivationParams {
 
         let name: String = json::from_value(req["name"].clone())?;
         if name.len() > 32 {
-            return MmError::err(LightningFromLegacyReqErr::InvalidRequest(
+            return MmError::err(LightningFromReqErr::InvalidRequest(
                 "Node name length can't be more than 32 characters".into(),
             ));
         }
@@ -426,9 +439,46 @@ impl LightningActivationParams {
         let color: String = json::from_value(req["color"].clone()).unwrap_or_else(|_| "000000".into());
         let mut node_color = [0u8; 3];
         hex::decode_to_slice(color, &mut node_color as &mut [u8])
-            .map_to_mm(|_| LightningFromLegacyReqErr::InvalidRequest("Invalid Hex Color".into()))?;
+            .map_to_mm(|_| LightningFromReqErr::InvalidRequest("Invalid Hex Color".into()))?;
 
         let listening_port = json::from_value(req["port"].clone()).unwrap_or(9735);
+
+        Ok(LightningActivationParams {
+            listening_port,
+            node_name: node_name.as_bytes().try_into().expect("Node name has incorrect length"),
+            node_color,
+        })
+    }
+
+    pub fn from_activation_req(
+        platform_coin: UtxoStandardCoin,
+        req: LightningActivationRequest,
+    ) -> Result<Self, MmError<LightningFromReqErr>> {
+        // Channel funding transactions need to spend segwit outputs
+        // and while the witness script can be generated from pubkey and be used
+        // it's better for the coin to be enabled in segwit to check if balance is enough for funding transaction, etc...
+        if !platform_coin.as_ref().my_address.addr_format.is_segwit() {
+            return MmError::err(LightningFromReqErr::UnsupportedMode(
+                "Lightning network".into(),
+                "segwit".into(),
+            ));
+        }
+
+        if req.name.len() > 32 {
+            return MmError::err(LightningFromReqErr::InvalidRequest(
+                "Node name length can't be more than 32 characters".into(),
+            ));
+        }
+        let node_name = format!("{}{:width$}", req.name, " ", width = 32 - req.name.len());
+
+        let mut node_color = [0u8; 3];
+        hex::decode_to_slice(
+            req.color.unwrap_or_else(|| "000000".into()),
+            &mut node_color as &mut [u8],
+        )
+        .map_to_mm(|_| LightningFromReqErr::InvalidRequest("Invalid Hex Color".into()))?;
+
+        let listening_port = req.listening_port.unwrap_or(9735);
 
         Ok(LightningActivationParams {
             listening_port,
