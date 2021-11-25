@@ -3193,7 +3193,8 @@ mod docker_tests {
             .unwrap();
 
         thread::sleep(Duration::from_secs(2));
-        let (unspents, _) = block_on(coin.list_unspent_ordered(&coin.as_ref().derivation_method.unwrap_iguana())).unwrap();
+        let (unspents, _) =
+            block_on(coin.list_unspent_ordered(&coin.as_ref().derivation_method.unwrap_iguana())).unwrap();
         assert_eq!(unspents.len(), 1);
     }
 
@@ -3250,7 +3251,8 @@ mod docker_tests {
             .unwrap();
 
         thread::sleep(Duration::from_secs(2));
-        let (unspents, _) = block_on(coin.list_unspent_ordered(&coin.as_ref().derivation_method.unwrap_iguana())).unwrap();
+        let (unspents, _) =
+            block_on(coin.list_unspent_ordered(&coin.as_ref().derivation_method.unwrap_iguana())).unwrap();
         // 4 utxos are merged of 5 so the resulting unspents len must be 2
         assert_eq!(unspents.len(), 2);
     }
