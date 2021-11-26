@@ -18,18 +18,16 @@ pub struct PrevTxInput {
 
 impl PrevTxInput {
     fn to_proto(&self) -> proto_bitcoin::TxAckPrevInput {
-        let mut prev_input = proto_bitcoin::PrevInput::default();
-        prev_input.set_prev_hash(self.prev_hash.clone());
-        prev_input.set_prev_index(self.prev_index);
-        prev_input.set_script_sig(self.script_sig.clone());
-        prev_input.set_sequence(self.sequence);
+        let input = proto_bitcoin::PrevInput {
+            prev_hash: self.prev_hash.clone(),
+            prev_index: self.prev_index,
+            script_sig: self.script_sig.clone(),
+            sequence: self.sequence,
+            decred_tree: None,
+        };
 
-        let mut ack_prev_input_wrapper = proto_bitcoin::TxAckPrevInput_TxAckPrevInputWrapper::default();
-        ack_prev_input_wrapper.set_input(prev_input);
-
-        let mut ack_prev_input = proto_bitcoin::TxAckPrevInput::default();
-        ack_prev_input.set_tx(ack_prev_input_wrapper);
-        ack_prev_input
+        let tx = proto_bitcoin::tx_ack_prev_input::TxAckPrevInputWrapper { input };
+        proto_bitcoin::TxAckPrevInput { tx }
     }
 }
 
@@ -44,16 +42,14 @@ pub struct PrevTxOutput {
 
 impl PrevTxOutput {
     fn to_proto(&self) -> proto_bitcoin::TxAckPrevOutput {
-        let mut prev_output = proto_bitcoin::PrevOutput::default();
-        prev_output.set_amount(self.amount);
-        prev_output.set_script_pubkey(self.script_pubkey.clone());
+        let output = proto_bitcoin::PrevOutput {
+            amount: self.amount,
+            script_pubkey: self.script_pubkey.clone(),
+            decred_script_version: None,
+        };
 
-        let mut ack_prev_output_wrapper = proto_bitcoin::TxAckPrevOutput_TxAckPrevOutputWrapper::default();
-        ack_prev_output_wrapper.set_output(prev_output);
-
-        let mut ack_prev_output = proto_bitcoin::TxAckPrevOutput::default();
-        ack_prev_output.set_tx(ack_prev_output_wrapper);
-        ack_prev_output
+        let tx = proto_bitcoin::tx_ack_prev_output::TxAckPrevOutputWrapper { output };
+        proto_bitcoin::TxAckPrevOutput { tx }
     }
 }
 
@@ -81,22 +77,25 @@ pub struct PrevTx {
 
 impl PrevTx {
     pub(crate) fn meta_message(&self) -> proto_bitcoin::TxAckPrevMeta {
-        let mut prev = proto_bitcoin::PrevTx::default();
-        prev.set_version(self.version);
-        prev.set_lock_time(self.lock_time);
-        prev.set_inputs_count(self.inputs.len() as u32);
-        prev.set_outputs_count(self.outputs.len() as u32);
-        if let Some(version_group_id) = self.version_group_id {
-            prev.set_version_group_id(version_group_id);
-        }
-        if let Some(branch_id) = self.branch_id {
-            prev.set_branch_id(branch_id);
-        }
-        prev.set_extra_data_len(self.extra_data.len() as u32);
+        let extra_data_len = if self.extra_data.is_empty() {
+            None
+        } else {
+            Some(self.extra_data.len() as u32)
+        };
 
-        let mut ack_prev_meta = proto_bitcoin::TxAckPrevMeta::default();
-        ack_prev_meta.set_tx(prev);
-        ack_prev_meta
+        let tx = proto_bitcoin::PrevTx {
+            version: self.version,
+            lock_time: self.lock_time,
+            inputs_count: self.inputs.len() as u32,
+            outputs_count: self.outputs.len() as u32,
+            extra_data_len,
+            expiry: None,
+            version_group_id: self.version_group_id,
+            timestamp: None,
+            branch_id: self.branch_id,
+        };
+
+        proto_bitcoin::TxAckPrevMeta { tx }
     }
 
     pub(crate) fn input_message(&self, input_index: usize) -> TrezorResult<proto_bitcoin::TxAckPrevInput> {
@@ -143,11 +142,7 @@ impl PrevTx {
         }
         let extra_data_chunk = self.extra_data[offset..offset + len].to_vec();
 
-        let mut wrapper = proto_bitcoin::TxAckPrevExtraData_TxAckPrevExtraDataWrapper::new();
-        wrapper.set_extra_data_chunk(extra_data_chunk);
-
-        let mut ack_extra_data = proto_bitcoin::TxAckPrevExtraData::new();
-        ack_extra_data.set_tx(wrapper);
-        Ok(ack_extra_data)
+        let tx = proto_bitcoin::tx_ack_prev_extra_data::TxAckPrevExtraDataWrapper { extra_data_chunk };
+        Ok(proto_bitcoin::TxAckPrevExtraData { tx })
     }
 }

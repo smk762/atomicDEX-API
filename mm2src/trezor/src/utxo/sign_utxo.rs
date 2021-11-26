@@ -5,6 +5,12 @@ use crate::{TrezorClient, TrezorError, TrezorResponse, TrezorResult};
 use common::log::{debug, info};
 use common::mm_error::prelude::*;
 
+const NO_DETAILS_ERROR: &str = "'TxRequest::details' is expected to be set";
+const NO_REQUEST_INDEX_ERROR: &str = "'TxRequestDetailsType::request_index' is expected to be set";
+const NO_EXTRA_DATA_OFFSET_ERROR: &str = "'TxRequestDetailsType::extra_data_offset' is expected to be set";
+const NO_EXTRA_DATA_LEN_ERROR: &str = "'TxRequestDetailsType::extra_data_len' is expected to be set";
+const NO_SIGNATURE_INDEX_ERROR: &str = "'TxRequestSerializedType::signature_index' is expected to be set";
+
 pub struct TxSignResult {
     pub signatures: Vec<Signature>,
     pub serialized_tx: Vec<u8>,
@@ -27,7 +33,7 @@ impl TrezorClient {
     ///
     /// Currently, this method fails if a device requests a PIN.
     pub async fn sign_utxo_tx(&self, unsigned: UnsignedUtxoTx) -> TrezorResult<TxSignResult> {
-        use proto_bitcoin::TxRequest_RequestType as ProtoTxRequestType;
+        use proto_bitcoin::tx_request::RequestType as ProtoTxRequestType;
 
         let mut result = TxSignResult::new_with_inputs_count(unsigned.inputs.len());
         // Please note `tx_request` is changed within the following loop.
@@ -44,24 +50,39 @@ impl TrezorClient {
         loop {
             extract_serialized_data(&tx_request, &mut result)?;
 
-            let request_type = tx_request.get_request_type();
-            if request_type == ProtoTxRequestType::TXFINISHED {
-                return Ok(result);
-            }
+            let request_type = tx_request.request_type.and_then(ProtoTxRequestType::from_i32);
+            let request_type = match request_type {
+                Some(ProtoTxRequestType::Txfinished) => return Ok(result),
+                Some(req_type) => req_type,
+                None => {
+                    let error = format!(
+                        "Received unexpected 'TxRequest::request_type': {:?}",
+                        tx_request.request_type
+                    );
+                    return MmError::err(TrezorError::ProtocolError(error));
+                },
+            };
 
-            let tx_request_details = tx_request.get_details();
-            let is_prev = tx_request_details.has_tx_hash();
+            let tx_request_details = match tx_request.details {
+                Some(ref details) => details,
+                None => return MmError::err(TrezorError::ProtocolError(NO_DETAILS_ERROR.to_owned())),
+            };
 
+            let is_prev = tx_request_details.tx_hash.is_some();
             debug!("TxRequest: REQUEST_TYPE={:?} PREV={}", request_type, is_prev);
 
-            tx_request = match request_type {
-                ProtoTxRequestType::TXINPUT if is_prev => self.send_prev_input(&unsigned, tx_request_details).await?,
-                ProtoTxRequestType::TXINPUT => self.send_input(&unsigned, tx_request_details).await?,
-                ProtoTxRequestType::TXOUTPUT if is_prev => self.send_prev_output(&unsigned, tx_request_details).await?,
-                ProtoTxRequestType::TXOUTPUT => self.send_output(&unsigned, tx_request_details).await?,
-                ProtoTxRequestType::TXMETA if is_prev => self.send_prev_tx_meta(&unsigned, tx_request_details).await?,
-                ProtoTxRequestType::TXEXTRADATA if is_prev => {
-                    self.send_extra_data(&unsigned, tx_request_details).await?
+            tx_request = match (request_type, &tx_request_details.tx_hash) {
+                (ProtoTxRequestType::Txinput, Some(prev_hash)) => {
+                    self.send_prev_input(&unsigned, tx_request_details, prev_hash).await?
+                },
+                (ProtoTxRequestType::Txinput, None) => self.send_input(&unsigned, tx_request_details).await?,
+                (ProtoTxRequestType::Txoutput, Some(prev_hash)) => {
+                    self.send_prev_output(&unsigned, tx_request_details, prev_hash).await?
+                },
+                (ProtoTxRequestType::Txoutput, None) => self.send_output(&unsigned, tx_request_details).await?,
+                (ProtoTxRequestType::Txmeta, Some(prev_hash)) => self.send_prev_tx_meta(&unsigned, prev_hash).await?,
+                (ProtoTxRequestType::Txextradata, Some(prev_hash)) => {
+                    self.send_extra_data(&unsigned, tx_request_details, prev_hash).await?
                 },
                 _ => {
                     let error = format!("Unexpected tx request: {:?}, is_prev: {}", request_type, is_prev);
@@ -74,9 +95,8 @@ impl TrezorClient {
     async fn send_prev_tx_meta(
         &self,
         unsigned: &UnsignedUtxoTx,
-        request_details: &proto_bitcoin::TxRequest_TxRequestDetailsType,
+        prev_tx_hash: &[u8],
     ) -> TrezorResult<proto_bitcoin::TxRequest> {
-        let prev_tx_hash = request_details.get_tx_hash();
         let prev_tx = unsigned.prev_tx(prev_tx_hash)?;
         let req = prev_tx.meta_message();
 
@@ -87,10 +107,13 @@ impl TrezorClient {
     async fn send_prev_input(
         &self,
         unsigned: &UnsignedUtxoTx,
-        request_details: &proto_bitcoin::TxRequest_TxRequestDetailsType,
+        request_details: &proto_bitcoin::tx_request::TxRequestDetailsType,
+        prev_tx_hash: &[u8],
     ) -> TrezorResult<proto_bitcoin::TxRequest> {
-        let prev_tx_hash = request_details.get_tx_hash();
-        let prev_input_index = request_details.get_request_index() as usize;
+        let prev_input_index = request_details
+            .request_index
+            .or_mm_err(|| TrezorError::ProtocolError(NO_REQUEST_INDEX_ERROR.to_owned()))?
+            as usize;
 
         let prev_tx = unsigned.prev_tx(prev_tx_hash)?;
         let req = prev_tx.input_message(prev_input_index)?;
@@ -102,10 +125,13 @@ impl TrezorClient {
     async fn send_prev_output(
         &self,
         unsigned: &UnsignedUtxoTx,
-        request_details: &proto_bitcoin::TxRequest_TxRequestDetailsType,
+        request_details: &proto_bitcoin::tx_request::TxRequestDetailsType,
+        prev_tx_hash: &[u8],
     ) -> TrezorResult<proto_bitcoin::TxRequest> {
-        let prev_tx_hash = request_details.get_tx_hash();
-        let prev_output_index = request_details.get_request_index() as usize;
+        let prev_output_index = request_details
+            .request_index
+            .or_mm_err(|| TrezorError::ProtocolError(NO_REQUEST_INDEX_ERROR.to_owned()))?
+            as usize;
 
         let prev_tx = unsigned.prev_tx(prev_tx_hash)?;
         let req = prev_tx.output_message(prev_output_index)?;
@@ -117,9 +143,12 @@ impl TrezorClient {
     async fn send_input(
         &self,
         unsigned: &UnsignedUtxoTx,
-        request_details: &proto_bitcoin::TxRequest_TxRequestDetailsType,
+        request_details: &proto_bitcoin::tx_request::TxRequestDetailsType,
     ) -> TrezorResult<proto_bitcoin::TxRequest> {
-        let input_index = request_details.get_request_index() as usize;
+        let input_index = request_details
+            .request_index
+            .or_mm_err(|| TrezorError::ProtocolError(NO_REQUEST_INDEX_ERROR.to_owned()))?
+            as usize;
         let req = unsigned.input_message(input_index)?;
 
         let result_handler = Box::new(Ok);
@@ -129,9 +158,12 @@ impl TrezorClient {
     async fn send_output(
         &self,
         unsigned: &UnsignedUtxoTx,
-        request_details: &proto_bitcoin::TxRequest_TxRequestDetailsType,
+        request_details: &proto_bitcoin::tx_request::TxRequestDetailsType,
     ) -> TrezorResult<proto_bitcoin::TxRequest> {
-        let output_index = request_details.get_request_index() as usize;
+        let output_index = request_details
+            .request_index
+            .or_mm_err(|| TrezorError::ProtocolError(NO_REQUEST_INDEX_ERROR.to_owned()))?
+            as usize;
         let req = unsigned.output_message(output_index)?;
 
         let result_handler = Box::new(Ok);
@@ -141,11 +173,16 @@ impl TrezorClient {
     async fn send_extra_data(
         &self,
         unsigned: &UnsignedUtxoTx,
-        request_details: &proto_bitcoin::TxRequest_TxRequestDetailsType,
+        request_details: &proto_bitcoin::tx_request::TxRequestDetailsType,
+        prev_tx_hash: &[u8],
     ) -> TrezorResult<proto_bitcoin::TxRequest> {
-        let offset = request_details.get_extra_data_offset() as usize;
-        let len = request_details.get_extra_data_len() as usize;
-        let prev_tx_hash = request_details.get_tx_hash();
+        let offset = request_details
+            .extra_data_offset
+            .or_mm_err(|| TrezorError::ProtocolError(NO_EXTRA_DATA_OFFSET_ERROR.to_owned()))?
+            as usize;
+        let len = request_details
+            .extra_data_len
+            .or_mm_err(|| TrezorError::ProtocolError(NO_EXTRA_DATA_LEN_ERROR.to_owned()))? as usize;
 
         let prev_tx = unsigned.prev_tx(prev_tx_hash)?;
         let req = prev_tx.extra_data_message(offset, len)?;
@@ -161,13 +198,16 @@ impl TrezorClient {
 }
 
 fn extract_serialized_data(tx_request: &proto_bitcoin::TxRequest, result: &mut TxSignResult) -> TrezorResult<()> {
-    if !tx_request.has_serialized() {
-        return Ok(());
-    }
-    let serialized = tx_request.get_serialized();
+    let serialized = match tx_request.serialized {
+        Some(ref serialized) => serialized,
+        None => return Ok(()),
+    };
 
-    if serialized.has_signature() && serialized.has_signature_index() {
-        let input_index = serialized.get_signature_index() as usize;
+    if let Some(signature) = serialized.signature.clone() {
+        let input_index = serialized
+            .signature_index
+            .or_mm_err(|| TrezorError::ProtocolError(NO_SIGNATURE_INDEX_ERROR.to_owned()))?
+            as usize;
         if input_index >= result.signatures.len() {
             let error = format!(
                 "Received a signature of unknown Transaction Input: {}. Number of inputs: {}",
@@ -177,11 +217,11 @@ fn extract_serialized_data(tx_request: &proto_bitcoin::TxRequest, result: &mut T
             return MmError::err(TrezorError::ProtocolError(error));
         }
 
-        result.signatures[input_index] = serialized.get_signature().to_vec();
+        result.signatures[input_index] = signature;
     }
 
-    if serialized.has_serialized_tx() {
-        result.serialized_tx.extend_from_slice(serialized.get_serialized_tx());
+    if let Some(serialized_tx) = serialized.serialized_tx.as_ref() {
+        result.serialized_tx.extend_from_slice(serialized_tx);
     }
 
     Ok(())

@@ -23,11 +23,11 @@ pub enum TrezorInputScriptType {
 impl From<TrezorInputScriptType> for proto_bitcoin::InputScriptType {
     fn from(script: TrezorInputScriptType) -> Self {
         match script {
-            TrezorInputScriptType::SpendAddress => proto_bitcoin::InputScriptType::SPENDADDRESS,
-            TrezorInputScriptType::SpendMultiSig => proto_bitcoin::InputScriptType::SPENDMULTISIG,
-            TrezorInputScriptType::External => proto_bitcoin::InputScriptType::EXTERNAL,
-            TrezorInputScriptType::SpendWitness => proto_bitcoin::InputScriptType::SPENDWITNESS,
-            TrezorInputScriptType::SpendP2SHWitness => proto_bitcoin::InputScriptType::SPENDP2SHWITNESS,
+            TrezorInputScriptType::SpendAddress => proto_bitcoin::InputScriptType::Spendaddress,
+            TrezorInputScriptType::SpendMultiSig => proto_bitcoin::InputScriptType::Spendmultisig,
+            TrezorInputScriptType::External => proto_bitcoin::InputScriptType::External,
+            TrezorInputScriptType::SpendWitness => proto_bitcoin::InputScriptType::Spendwitness,
+            TrezorInputScriptType::SpendP2SHWitness => proto_bitcoin::InputScriptType::Spendp2shwitness,
         }
     }
 }
@@ -43,8 +43,8 @@ pub enum TrezorOutputScriptType {
 impl From<TrezorOutputScriptType> for proto_bitcoin::OutputScriptType {
     fn from(script: TrezorOutputScriptType) -> Self {
         match script {
-            TrezorOutputScriptType::PayToAddress => proto_bitcoin::OutputScriptType::PAYTOADDRESS,
-            TrezorOutputScriptType::PayToOpReturn => proto_bitcoin::OutputScriptType::PAYTOOPRETURN,
+            TrezorOutputScriptType::PayToAddress => proto_bitcoin::OutputScriptType::Paytoaddress,
+            TrezorOutputScriptType::PayToOpReturn => proto_bitcoin::OutputScriptType::Paytoopreturn,
         }
     }
 }
@@ -79,22 +79,30 @@ pub struct UnsignedTxInput {
 
 impl UnsignedTxInput {
     fn to_proto(&self) -> proto_bitcoin::TxAckInput {
-        let mut input = proto_bitcoin::TxInput::default();
-        if let Some(ref address_derivation_path) = self.address_derivation_path {
-            input.set_address_n(serialize_derivation_path(address_derivation_path));
-        }
-        input.set_prev_hash(self.prev_hash.clone());
-        input.set_prev_index(self.prev_index);
-        input.set_sequence(self.sequence);
-        input.set_script_type(self.input_script_type.into());
-        input.set_amount(self.amount);
+        let address_n = match self.address_derivation_path {
+            Some(ref address_n) => serialize_derivation_path(address_n),
+            None => Vec::new(),
+        };
+        let input = proto_bitcoin::TxInput {
+            address_n,
+            prev_hash: self.prev_hash.clone(),
+            prev_index: self.prev_index,
+            script_sig: None,
+            sequence: Some(self.sequence),
+            script_type: Some(proto_bitcoin::InputScriptType::from(self.input_script_type) as i32),
+            multisig: None,
+            amount: self.amount,
+            decred_tree: None,
+            witness: None,
+            ownership_proof: None,
+            commitment_data: None,
+            orig_hash: None,
+            orig_index: None,
+            decred_staking_spend: None,
+        };
 
-        let mut input_ack_wrapper = proto_bitcoin::TxAckInput_TxAckInputWrapper::default();
-        input_ack_wrapper.set_input(input);
-
-        let mut input_ack = proto_bitcoin::TxAckInput::default();
-        input_ack.set_tx(input_ack_wrapper);
-        input_ack
+        let tx = proto_bitcoin::tx_ack_input::TxAckInputWrapper { input };
+        proto_bitcoin::TxAckInput { tx }
     }
 }
 
@@ -115,17 +123,19 @@ pub struct TxOutput {
 
 impl TxOutput {
     fn to_proto(&self) -> proto_bitcoin::TxAckOutput {
-        let mut output = proto_bitcoin::TxOutput::default();
-        output.set_address(self.address.clone());
-        output.set_amount(self.amount);
-        output.set_script_type(proto_bitcoin::OutputScriptType::from(self.script_type));
+        let output = proto_bitcoin::TxOutput {
+            address: Some(self.address.clone()),
+            address_n: Vec::new(),
+            amount: self.amount,
+            script_type: Some(proto_bitcoin::OutputScriptType::from(self.script_type) as i32),
+            multisig: None,
+            op_return_data: None,
+            orig_hash: None,
+            orig_index: None,
+        };
 
-        let mut ack_output_wrapper = proto_bitcoin::TxAckOutput_TxAckOutputWrapper::new();
-        ack_output_wrapper.set_output(output);
-
-        let mut ack_output = proto_bitcoin::TxAckOutput::new();
-        ack_output.set_tx(ack_output_wrapper);
-        ack_output
+        let tx = proto_bitcoin::tx_ack_output::TxAckOutputWrapper { output };
+        proto_bitcoin::TxAckOutput { tx }
     }
 }
 
@@ -152,19 +162,21 @@ pub struct UnsignedUtxoTx {
 
 impl UnsignedUtxoTx {
     pub(crate) fn sign_tx_message(&self) -> proto_bitcoin::SignTx {
-        let mut input = proto_bitcoin::SignTx::default();
-        input.set_coin_name(self.coin.to_string());
-        input.set_inputs_count(self.inputs.len() as u32);
-        input.set_outputs_count(self.outputs.len() as u32);
-        input.set_version(self.version);
-        input.set_lock_time(self.lock_time);
-        if let Some(version_group_id) = self.version_group_id {
-            input.set_version_group_id(version_group_id);
+        #[allow(deprecated)]
+        proto_bitcoin::SignTx {
+            outputs_count: self.outputs.len() as u32,
+            inputs_count: self.inputs.len() as u32,
+            coin_name: Some(self.coin.to_string()),
+            version: Some(self.version),
+            lock_time: Some(self.lock_time),
+            expiry: None,
+            overwintered: None,
+            version_group_id: self.version_group_id,
+            timestamp: None,
+            branch_id: self.branch_id,
+            amount_unit: None,
+            decred_staking_ticket: None,
         }
-        if let Some(branch_id) = self.branch_id {
-            input.set_branch_id(branch_id);
-        }
-        input
     }
 
     pub(crate) fn prev_tx(&self, hash: &[u8]) -> TrezorResult<&PrevTx> {

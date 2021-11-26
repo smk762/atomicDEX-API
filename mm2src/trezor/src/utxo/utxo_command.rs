@@ -18,12 +18,16 @@ impl TrezorClient {
         let trezor = self.clone();
         let (response_tx, response_rx, shutdown_rx) = trezor_response_channel();
         let fut = async move {
-            let mut req = proto_bitcoin::GetAddress::default();
-            req.set_address_n(serialize_derivation_path(&path));
-            req.set_coin_name(coin.to_string());
-            req.set_show_display(show_display);
+            let req = proto_bitcoin::GetAddress {
+                address_n: serialize_derivation_path(&path),
+                coin_name: Some(coin.to_string()),
+                show_display: Some(show_display),
+                multisig: None,
+                script_type: None,
+                ignore_xpub_magic: None,
+            };
 
-            let result_handler = Box::new(|m: proto_bitcoin::Address| Ok(m.get_address().to_string()));
+            let result_handler = Box::new(|m: proto_bitcoin::Address| Ok(m.address));
             let result = trezor.call(req, result_handler).await;
             response_loop(response_tx, result).await;
         }
@@ -43,12 +47,16 @@ impl TrezorClient {
         let trezor = self.clone();
         let (response_tx, response_rx, shutdown_rx) = trezor_response_channel();
         let fut = async move {
-            let mut req = proto_bitcoin::GetPublicKey::default();
-            req.set_address_n(serialize_derivation_path(&path));
-            req.set_coin_name(coin.to_string());
-            req.set_ecdsa_curve_name(ecdsa_curve_to_string(ecdsa_curve));
+            let req = proto_bitcoin::GetPublicKey {
+                address_n: serialize_derivation_path(&path),
+                ecdsa_curve_name: Some(ecdsa_curve_to_string(ecdsa_curve)),
+                show_display: None,
+                coin_name: Some(coin.to_string()),
+                script_type: None,
+                ignore_xpub_magic: None,
+            };
 
-            let result_handler = Box::new(|m: proto_bitcoin::PublicKey| Ok(m.get_xpub().to_string()));
+            let result_handler = Box::new(|m: proto_bitcoin::PublicKey| Ok(m.xpub));
             let result = trezor.call(req, result_handler).await;
             response_loop(response_tx, result).await;
         }

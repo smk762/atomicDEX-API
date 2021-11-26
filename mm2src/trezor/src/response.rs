@@ -8,8 +8,8 @@ use futures::FutureExt;
 use std::fmt;
 use std::future::Future;
 
-pub use crate::proto::messages_common::ButtonRequest_ButtonRequestType as ButtonRequestType;
-pub use crate::proto::messages_common::PinMatrixRequest_PinMatrixRequestType as PinMatrixRequestType;
+pub use crate::proto::messages_common::button_request::ButtonRequestType;
+pub use crate::proto::messages_common::pin_matrix_request::PinMatrixRequestType;
 
 type CancelHandlerFuture = dyn Future<Output = ()> + Unpin + Send;
 type ButtonHandlerFuture<T> = dyn Future<Output = TrezorResult<TrezorResponse<T>>> + Unpin + Send;
@@ -129,7 +129,7 @@ impl<T> fmt::Debug for PinMatrixRequest<T> {
 
 impl<T: 'static> ButtonRequest<T> {
     /// The type of button request.
-    pub fn request_type(&self) -> ButtonRequestType { self.message.get_code() }
+    pub fn request_type(&self) -> Option<ButtonRequestType> { self.message.code.and_then(ButtonRequestType::from_i32) }
 
     /// Ack the request and get the next message from the device.
     pub async fn ack(self) -> TrezorResult<TrezorResponse<T>> { self.button_handler.await }
@@ -143,7 +143,7 @@ impl<T: 'static> ButtonRequest<T> {
         client: TrezorClient,
         result_handler: ResultHandler<T, R>,
     ) -> TrezorResult<TrezorResponse<T>> {
-        let req = proto_common::ButtonAck::new();
+        let req = proto_common::ButtonAck {};
         client.call(req, result_handler).await
     }
 
@@ -157,7 +157,9 @@ impl<T: 'static> ButtonRequest<T> {
 
 impl<T: 'static> PinMatrixRequest<T> {
     /// The type of PIN matrix request.
-    pub fn request_type(&self) -> PinMatrixRequestType { self.message.get_field_type() }
+    pub fn request_type(&self) -> Option<PinMatrixRequestType> {
+        self.message.r#type.and_then(PinMatrixRequestType::from_i32)
+    }
 
     /// Ack the request with a PIN and get the next message from the device.
     pub async fn ack_pin(self, pin: String) -> TrezorResult<TrezorResponse<T>> { (self.pin_handler)(pin).await }
@@ -169,8 +171,7 @@ impl<T: 'static> PinMatrixRequest<T> {
         result_handler: ResultHandler<T, R>,
         pin: String,
     ) -> TrezorResult<TrezorResponse<T>> {
-        let mut req = proto_common::PinMatrixAck::new();
-        req.set_pin(pin);
+        let req = proto_common::PinMatrixAck { pin };
         client.call(req, result_handler).await
     }
 

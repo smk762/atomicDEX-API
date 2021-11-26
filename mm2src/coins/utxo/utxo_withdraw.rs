@@ -7,6 +7,7 @@ use crate::{MarketCoinOps, TransactionDetails, WithdrawError, WithdrawFee, Withd
 use async_trait::async_trait;
 use bip32::ExtendedPublicKey;
 use chain::TransactionOutput;
+use common::log::info;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::now_ms;
@@ -251,6 +252,18 @@ where
     fn request(&self) -> &WithdrawRequest { &self.req }
 
     fn on_generating_transaction(&self) -> Result<(), MmError<WithdrawError>> {
+        let amount_display = if self.req.max {
+            "MAX".to_owned()
+        } else {
+            self.req.amount.to_string()
+        };
+
+        // Display the address from which we are trying to withdraw funds.
+        info!(
+            "Trying to withdraw '{}' {} from '{}' to '{}'",
+            amount_display, self.req.coin, self.from_address_string, self.req.to,
+        );
+
         Ok(self
             .task_handle
             .update_in_progress_status(WithdrawInProgressStatus::GeneratingTransaction)?)

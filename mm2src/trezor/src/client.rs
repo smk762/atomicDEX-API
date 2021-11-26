@@ -54,11 +54,11 @@ impl TrezorClient {
                 let resp_msg = resp.into_message()?;
                 Ok(TrezorResponse::Ok(result_handler(resp_msg)?))
             },
-            MessageType::MessageType_Failure => {
+            MessageType::Failure => {
                 let fail_msg: proto_common::Failure = resp.into_message()?;
                 MmError::err(TrezorError::Failure(OperationFailure::from(fail_msg)))
             },
-            MessageType::MessageType_ButtonRequest => {
+            MessageType::ButtonRequest => {
                 let req_msg = resp.into_message()?;
                 // trace!("Received ButtonRequest: {:?}", req_msg);
                 Ok(TrezorResponse::new_button_request(
@@ -67,7 +67,7 @@ impl TrezorClient {
                     result_handler,
                 ))
             },
-            MessageType::MessageType_PinMatrixRequest => {
+            MessageType::PinMatrixRequest => {
                 let req_msg = resp.into_message()?;
                 Ok(TrezorResponse::new_pin_matrix_request(
                     req_msg,
@@ -82,7 +82,10 @@ impl TrezorClient {
     /// Sends a message and returns the raw ProtoMessage struct that was
     /// responded by the device.
     async fn call_raw<S: TrezorMessage>(&self, message: S) -> TrezorResult<ProtoMessage> {
-        let proto_msg = ProtoMessage::new(S::message_type(), message.write_to_bytes()?);
+        let mut buf = Vec::with_capacity(message.encoded_len());
+        message.encode(&mut buf)?;
+
+        let proto_msg = ProtoMessage::new(S::message_type(), buf);
         let mut transport = self.transport.lock().await;
         transport.write_message(proto_msg).await?;
         transport.read_message().await
@@ -100,14 +103,14 @@ impl TrezorClient {
     async fn initialize_device(&self) -> TrezorResult<proto_management::Features> {
         // Don't set the session_id since currently there is no need to restore the previous session.
         // https://docs.trezor.io/trezor-firmware/common/communication/sessions.html#session-lifecycle
-        let req = proto_management::Initialize::new();
+        let req = proto_management::Initialize { session_id: None };
 
         let result_handler = Box::new(Ok);
         self.call(req, result_handler).await?.ok()
     }
 
     pub(crate) async fn cancel_last_op(&self) {
-        let req = proto_management::Cancel::new();
+        let req = proto_management::Cancel {};
         let result_handler = Box::new(|_m: proto_common::Failure| Ok(()));
         // Ignore result.
         self.call(req, result_handler).await.ok();

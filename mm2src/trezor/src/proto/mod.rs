@@ -1,12 +1,17 @@
 //! This file is inspired by https://github.com/tezedge/tezedge-client/blob/master/trezor_api/src/messages.rs
 //! In this module we implement the `message_type` getter for all protobuf message types.
 
-#[allow(clippy::all)] pub mod messages;
-#[allow(clippy::all)] pub mod messages_bitcoin;
-#[allow(clippy::all)] pub mod messages_common;
-#[allow(clippy::all)] pub mod messages_management;
+use prost::bytes::BytesMut;
 
-use messages::MessageType::{self, *};
+pub mod messages;
+pub mod messages_bitcoin;
+pub mod messages_common;
+pub mod messages_management;
+
+/// This is needed by generated protobuf modules.
+pub(crate) use messages_common as common;
+
+use messages::MessageType;
 use messages_bitcoin::*;
 use messages_common::*;
 use messages_management::*;
@@ -38,58 +43,58 @@ impl ProtoMessage {
     pub fn into_payload(self) -> Vec<u8> { self.payload }
 
     /// Take the payload from the ProtoMessage and parse it to a protobuf message.
-    pub fn into_message<M: protobuf::Message>(self) -> Result<M, protobuf::error::ProtobufError> {
-        protobuf::Message::parse_from_bytes(&self.into_payload())
+    pub fn into_message<M: prost::Message + Default>(self) -> Result<M, prost::DecodeError> {
+        let bytes = BytesMut::from(self.payload.as_slice());
+        prost::Message::decode(bytes)
     }
 }
 
 /// This trait extends the protobuf Message trait to also have a static getter for the message
 /// type code.
-pub trait TrezorMessage: protobuf::Message {
+pub trait TrezorMessage: prost::Message + Default + 'static {
     fn message_type() -> MessageType;
 }
 
 // Management
-trezor_message_impl!(Initialize, MessageType_Initialize);
-trezor_message_impl!(Ping, MessageType_Ping);
-trezor_message_impl!(ChangePin, MessageType_ChangePin);
-trezor_message_impl!(WipeDevice, MessageType_WipeDevice);
-trezor_message_impl!(GetEntropy, MessageType_GetEntropy);
-trezor_message_impl!(Entropy, MessageType_Entropy);
-trezor_message_impl!(LoadDevice, MessageType_LoadDevice);
-trezor_message_impl!(ResetDevice, MessageType_ResetDevice);
-trezor_message_impl!(Features, MessageType_Features);
-trezor_message_impl!(Cancel, MessageType_Cancel);
-trezor_message_impl!(EndSession, MessageType_EndSession);
-trezor_message_impl!(ApplySettings, MessageType_ApplySettings);
-trezor_message_impl!(ApplyFlags, MessageType_ApplyFlags);
-trezor_message_impl!(BackupDevice, MessageType_BackupDevice);
-trezor_message_impl!(EntropyRequest, MessageType_EntropyRequest);
-trezor_message_impl!(EntropyAck, MessageType_EntropyAck);
-trezor_message_impl!(RecoveryDevice, MessageType_RecoveryDevice);
-trezor_message_impl!(WordRequest, MessageType_WordRequest);
-trezor_message_impl!(WordAck, MessageType_WordAck);
-trezor_message_impl!(GetFeatures, MessageType_GetFeatures);
-trezor_message_impl!(SetU2FCounter, MessageType_SetU2FCounter);
+trezor_message_impl!(Initialize, MessageType::Initialize);
+trezor_message_impl!(Ping, MessageType::Ping);
+trezor_message_impl!(ChangePin, MessageType::ChangePin);
+trezor_message_impl!(WipeDevice, MessageType::WipeDevice);
+trezor_message_impl!(GetEntropy, MessageType::GetEntropy);
+trezor_message_impl!(Entropy, MessageType::Entropy);
+trezor_message_impl!(LoadDevice, MessageType::LoadDevice);
+trezor_message_impl!(ResetDevice, MessageType::ResetDevice);
+trezor_message_impl!(Features, MessageType::Features);
+trezor_message_impl!(Cancel, MessageType::Cancel);
+trezor_message_impl!(EndSession, MessageType::EndSession);
+trezor_message_impl!(ApplySettings, MessageType::ApplySettings);
+trezor_message_impl!(ApplyFlags, MessageType::ApplyFlags);
+trezor_message_impl!(BackupDevice, MessageType::BackupDevice);
+trezor_message_impl!(EntropyRequest, MessageType::EntropyRequest);
+trezor_message_impl!(EntropyAck, MessageType::EntropyAck);
+trezor_message_impl!(RecoveryDevice, MessageType::RecoveryDevice);
+trezor_message_impl!(WordRequest, MessageType::WordRequest);
+trezor_message_impl!(WordAck, MessageType::WordAck);
+trezor_message_impl!(GetFeatures, MessageType::GetFeatures);
 // Common
-trezor_message_impl!(Success, MessageType_Success);
-trezor_message_impl!(Failure, MessageType_Failure);
-trezor_message_impl!(PinMatrixRequest, MessageType_PinMatrixRequest);
-trezor_message_impl!(PinMatrixAck, MessageType_PinMatrixAck);
-trezor_message_impl!(ButtonRequest, MessageType_ButtonRequest);
-trezor_message_impl!(ButtonAck, MessageType_ButtonAck);
+trezor_message_impl!(Success, MessageType::Success);
+trezor_message_impl!(Failure, MessageType::Failure);
+trezor_message_impl!(PinMatrixRequest, MessageType::PinMatrixRequest);
+trezor_message_impl!(PinMatrixAck, MessageType::PinMatrixAck);
+trezor_message_impl!(ButtonRequest, MessageType::ButtonRequest);
+trezor_message_impl!(ButtonAck, MessageType::ButtonAck);
 // Bitcoin
-trezor_message_impl!(GetAddress, MessageType_GetAddress);
-trezor_message_impl!(Address, MessageType_Address);
-trezor_message_impl!(GetPublicKey, MessageType_GetPublicKey);
-trezor_message_impl!(PublicKey, MessageType_PublicKey);
-trezor_message_impl!(SignTx, MessageType_SignTx);
-trezor_message_impl!(TxRequest, MessageType_TxRequest);
+trezor_message_impl!(GetAddress, MessageType::GetAddress);
+trezor_message_impl!(Address, MessageType::Address);
+trezor_message_impl!(GetPublicKey, MessageType::GetPublicKey);
+trezor_message_impl!(PublicKey, MessageType::PublicKey);
+trezor_message_impl!(SignTx, MessageType::SignTx);
+trezor_message_impl!(TxRequest, MessageType::TxRequest);
 
 // Bitcoin (compatible)
-trezor_message_impl!(TxAckOutput, MessageType_TxAck);
-trezor_message_impl!(TxAckInput, MessageType_TxAck);
-trezor_message_impl!(TxAckPrevMeta, MessageType_TxAck);
-trezor_message_impl!(TxAckPrevInput, MessageType_TxAck);
-trezor_message_impl!(TxAckPrevOutput, MessageType_TxAck);
-trezor_message_impl!(TxAckPrevExtraData, MessageType_TxAck);
+trezor_message_impl!(TxAckOutput, MessageType::TxAck);
+trezor_message_impl!(TxAckInput, MessageType::TxAck);
+trezor_message_impl!(TxAckPrevMeta, MessageType::TxAck);
+trezor_message_impl!(TxAckPrevInput, MessageType::TxAck);
+trezor_message_impl!(TxAckPrevOutput, MessageType::TxAck);
+trezor_message_impl!(TxAckPrevExtraData, MessageType::TxAck);

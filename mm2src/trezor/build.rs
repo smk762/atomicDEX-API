@@ -7,15 +7,5 @@ const PROTOS: [&str; 4] = [
 ];
 
 fn main() {
-    // for proto in PROTOS.iter() {
-    //     // rerun this build script if the given files changes
-    //     println!("cargo:rerun-if-changed={}", proto);
-    // }
-    //
-    // protoc_rust::Codegen::new()
-    //     .out_dir("src/proto")
-    //     .inputs(&PROTOS)
-    //     .include("proto")
-    //     .run()
-    //     .expect("protoc");
+    // prost_build::compile_protos(&PROTOS, &["proto"]).unwrap();
 }
