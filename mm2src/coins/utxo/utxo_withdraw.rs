@@ -260,7 +260,7 @@ where
 
         // Display the address from which we are trying to withdraw funds.
         info!(
-            "Trying to withdraw '{}' {} from '{}' to '{}'",
+            "Trying to withdraw {} {} from {} to {}",
             amount_display, self.req.coin, self.from_address_string, self.req.to,
         );
 
