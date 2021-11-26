@@ -108,8 +108,7 @@ pub use test_coin::TestCoin;
 #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
 pub mod z_coin;
 
-use crate::lightning::ln_utils::{network_from_string, start_lightning};
-use crate::lightning::{LightningActivationParams, LightningCoin};
+use crate::lightning::LightningCoin;
 use crate::qrc20::Qrc20ActivationParams;
 use crate::utxo::bch::{bch_coin_from_conf_and_params, BchActivationRequest, BchCoin};
 use crate::utxo::rpc_clients::UtxoRpcError;
@@ -1593,30 +1592,13 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             let token = SlpToken::new(*decimals, ticker.into(), token_id.clone().into(), platform_coin, confs);
             token.into()
         },
-        // Only BTC is supported for now
-        CoinProtocol::LIGHTNING { platform, network } => {
-            let network = network_from_string(network.to_string()).map_err(|e| ERRL!("{}", e))?;
-
-            let platform_coin = try_s!(lp_coinfind(ctx, &platform).await);
-            let platform_coin = match platform_coin {
-                Some(MmCoinEnum::UtxoCoin(coin)) => coin,
-                Some(_) => return ERR!("Platform coin {} is not UtxoCoin", platform),
-                None => return ERR!("Platform coin {} is not activated", platform),
-            };
-
-            let params =
-                LightningActivationParams::from_legacy_req(platform_coin.clone(), req).map_err(|e| ERRL!("{}", e))?;
-            let lightning_coin = start_lightning(ctx, platform_coin, ticker.into(), params, network)
-                .await
-                .map_err(|e| ERRL!("{}", e))?;
-            lightning_coin.into()
-        },
         #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
         CoinProtocol::ZHTLC => {
             let dbdir = ctx.dbdir();
             let params = try_s!(UtxoActivationParams::from_legacy_req(req));
             try_s!(z_coin_from_conf_and_params(ctx, ticker, &coins_en, params, secret, dbdir).await).into()
         },
+        proto => return ERR!("{:?} is not supported by lp_coininit", proto),
     };
 
     let block_count = try_s!(coin.current_block().compat().await);

@@ -29,7 +29,7 @@ use ln_utils::{connect_to_node, last_request_id_path, nodes_data_path, open_ln_c
                read_last_request_id_from_file, read_nodes_data_from_file, save_last_request_id_to_file,
                save_node_data_to_file, ChannelManager, PeerManager};
 use rpc::v1::types::Bytes as BytesJson;
-use serde_json::{self as json, Value as Json};
+use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::fmt;
@@ -393,63 +393,6 @@ pub struct LightningActivationRequest {
 }
 
 impl LightningActivationParams {
-    pub fn from_legacy_req(platform_coin: UtxoStandardCoin, req: &Json) -> Result<Self, MmError<LightningFromReqErr>> {
-        match (req["method"].as_str(), platform_coin.as_ref().rpc_client.clone()) {
-            // TODO: Remove this error when Native mode is supported for lightning
-            (Some("enable"), UtxoRpcClientEnum::Native(_)) => {
-                return MmError::err(LightningFromReqErr::UnsupportedMode(
-                    "For now lightning network".into(),
-                    "electrum".into(),
-                ))
-            },
-            (Some("electrum"), UtxoRpcClientEnum::Electrum(_)) => (),
-            (Some("enable"), UtxoRpcClientEnum::Electrum(_)) => {
-                return MmError::err(LightningFromReqErr::UnexpectedMethod(
-                    platform_coin.ticker().to_string(),
-                    "electrum".into(),
-                ))
-            },
-            (Some("electrum"), UtxoRpcClientEnum::Native(_)) => {
-                return MmError::err(LightningFromReqErr::UnexpectedMethod(
-                    platform_coin.ticker().to_string(),
-                    "native".into(),
-                ))
-            },
-            _ => return MmError::err(LightningFromReqErr::UnexpectedMethod("".into(), "".into())),
-        };
-
-        // Channel funding transactions need to spend segwit outputs
-        // and while the witness script can be generated from pubkey and be used
-        // it's better for the coin to be enabled in segwit to check if balance is enough for funding transaction, etc...
-        if !platform_coin.as_ref().my_address.addr_format.is_segwit() {
-            return MmError::err(LightningFromReqErr::UnsupportedMode(
-                "Lightning network".into(),
-                "segwit".into(),
-            ));
-        }
-
-        let name: String = json::from_value(req["name"].clone())?;
-        if name.len() > 32 {
-            return MmError::err(LightningFromReqErr::InvalidRequest(
-                "Node name length can't be more than 32 characters".into(),
-            ));
-        }
-        let node_name = format!("{}{:width$}", name, " ", width = 32 - name.len());
-
-        let color: String = json::from_value(req["color"].clone()).unwrap_or_else(|_| "000000".into());
-        let mut node_color = [0u8; 3];
-        hex::decode_to_slice(color, &mut node_color as &mut [u8])
-            .map_to_mm(|_| LightningFromReqErr::InvalidRequest("Invalid Hex Color".into()))?;
-
-        let listening_port = json::from_value(req["port"].clone()).unwrap_or(9735);
-
-        Ok(LightningActivationParams {
-            listening_port,
-            node_name: node_name.as_bytes().try_into().expect("Node name has incorrect length"),
-            node_color,
-        })
-    }
-
     pub fn from_activation_req(
         platform_coin: UtxoStandardCoin,
         req: LightningActivationRequest,
