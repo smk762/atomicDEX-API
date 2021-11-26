@@ -19,7 +19,6 @@
 
 #![allow(uncommon_codepoints)]
 #![feature(integer_atomics)]
-#![feature(associated_type_bounds)]
 #![feature(async_closure)]
 #![feature(hash_raw_entry)]
 
@@ -2243,8 +2242,8 @@ impl RemoveTxResult {
 }
 
 #[async_trait]
-pub trait TxHistoryStorage {
-    type Error: std::fmt::Debug + NotMmError;
+pub trait TxHistoryStorage: Send + Sync + 'static {
+    type Error: std::fmt::Debug + NotMmError + Send;
 
     /// Initializes a collection/table using a specified collection_id
     async fn init_collection(&self, collection_id: &str) -> Result<(), MmError<Self::Error>>;
@@ -2253,20 +2252,33 @@ pub trait TxHistoryStorage {
     async fn add_transaction(
         &self,
         collection_id: &str,
-        transaction: TransactionDetails,
+        transaction: &TransactionDetails,
     ) -> Result<(), MmError<Self::Error>>;
 
     /// Removes the transaction by internal_id from the selected collection in the storage
     async fn remove_transaction(
         &self,
         collection_id: &str,
-        tx_internal_id: &str,
+        internal_tx_id: &BytesJson,
     ) -> Result<RemoveTxResult, MmError<Self::Error>>;
 
     /// Gets the transaction by internal_id from the selected collection in the storage
     async fn get_transaction(
         &self,
         collection_id: &str,
-        tx_internal_id: &str,
+        internal_tx_id: &BytesJson,
     ) -> Result<Option<TransactionDetails>, MmError<Self::Error>>;
+
+    /// Gets the unconfirmed transactions from the collection
+    async fn get_unconfirmed_transactions(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<TransactionDetails>, MmError<Self::Error>>;
+
+    /// Updates transaction in the selected collection
+    async fn update_transaction(
+        &self,
+        collection_id: &str,
+        tx: &TransactionDetails,
+    ) -> Result<(), MmError<Self::Error>>;
 }
