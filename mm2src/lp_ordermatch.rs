@@ -4209,7 +4209,7 @@ pub async fn update_maker_order(ctx: &MmArc, req: MakerOrderUpdateReq) -> Result
         new_price
     ));
 
-    let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await.clone();
+    let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().await;
     match my_maker_orders.get_mut(&req.uuid) {
         None => ERR!("Order with UUID: {} has been deleted", req.uuid),
         Some(order) => {
@@ -4222,11 +4222,6 @@ pub async fn update_maker_order(ctx: &MmArc, req: MakerOrderUpdateReq) -> Result
             save_maker_order_on_update(ctx.clone(), order, new_change).await;
             update_msg.with_new_max_volume((new_volume - reserved_amount).into());
             maker_order_updated_p2p_notify(ctx.clone(), order.orderbook_topic(), update_msg).await;
-            ordermatch_ctx
-                .my_maker_orders
-                .lock()
-                .await
-                .insert(order.uuid, order.clone());
             Ok(order.clone())
         },
     }
