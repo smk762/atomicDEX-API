@@ -10,6 +10,7 @@ use std::task::{Context, Poll};
 const CHANNEL_BUF_SIZE: usize = 1024;
 
 type EventStream<T> = dyn Stream<Item = TrezorEvent<T>> + Unpin + Send;
+pub type ButtonAckResponseTx = oneshot::Sender<()>;
 pub type PinMatrixResponseTx = oneshot::Sender<TrezorPinMatrix3x3Response>;
 type ShutdownTx = oneshot::Sender<()>;
 type ShutdownRx = oneshot::Receiver<()>;
@@ -51,17 +52,23 @@ pub(crate) async fn response_loop<T>(
                 return;
             },
             TrezorResponse::ButtonRequest(button_request) => {
-                if response_tx.send(TrezorEvent::ButtonRequest).await.is_err() {
+                let (ack_response_tx, ack_response_rx) = oneshot::channel();
+                let button_event = TrezorEvent::button_request(ack_response_tx);
+                if response_tx.send(button_event).await.is_err() {
                     warn!("Receiver is dropped. Cancel Trezor button-request");
                     button_request.cancel().await;
                     return;
                 }
-                button_request.ack().await
+                match ack_response_rx.await {
+                    Ok(()) => button_request.ack().await,
+                    // Receiver has declined the button request. Stop the loop
+                    Err(_canceled) => return,
+                }
             },
             TrezorResponse::PinMatrixRequest(pin_request) => {
                 let (pin_response_tx, pin_response_rx) = oneshot::channel();
                 if response_tx
-                    .send(TrezorEvent::PinMatrix3x3Request { pin_response_tx })
+                    .send(TrezorEvent::pin_matrix_3x3_request(pin_response_tx))
                     .await
                     .is_err()
                 {
@@ -124,10 +131,8 @@ where
     {
         let stream = Box::new(self.stream.map(move |event| match event {
             TrezorEvent::Ready(t) => TrezorEvent::Ready(f(t)),
-            TrezorEvent::ButtonRequest => TrezorEvent::ButtonRequest,
-            TrezorEvent::PinMatrix3x3Request { pin_response_tx } => {
-                TrezorEvent::PinMatrix3x3Request { pin_response_tx }
-            },
+            TrezorEvent::ButtonRequest(button_ack) => TrezorEvent::ButtonRequest(button_ack),
+            TrezorEvent::PinMatrix3x3Request(pin_ack) => TrezorEvent::PinMatrix3x3Request(pin_ack),
         }));
 
         TrezorResponseReceiver {
@@ -140,9 +145,11 @@ where
         while let Some(event) = self.next().await {
             match event {
                 TrezorEvent::Ready(ready) => return Ok(ready),
-                // Continue getting events.
-                TrezorEvent::ButtonRequest => (),
-                TrezorEvent::PinMatrix3x3Request { .. } => {
+                TrezorEvent::ButtonRequest(button_ack) => {
+                    button_ack.ack()?;
+                    // Continue getting events.
+                },
+                TrezorEvent::PinMatrix3x3Request(_) => {
                     return MmError::err(TrezorError::UnexpectedInteractionRequest(
                         TrezorUserInteraction::PinMatrix3x3,
                     ))
@@ -174,10 +181,8 @@ where
                 let e2 = MmError::err_with_trace(E2::from(e1), trace);
                 TrezorEvent::Ready(e2)
             },
-            TrezorEvent::ButtonRequest => TrezorEvent::ButtonRequest,
-            TrezorEvent::PinMatrix3x3Request { pin_response_tx } => {
-                TrezorEvent::PinMatrix3x3Request { pin_response_tx }
-            },
+            TrezorEvent::ButtonRequest(button_ack) => TrezorEvent::ButtonRequest(button_ack),
+            TrezorEvent::PinMatrix3x3Request(pin_ack) => TrezorEvent::PinMatrix3x3Request(pin_ack),
         }));
 
         TrezorResponseReceiver {
@@ -187,8 +192,54 @@ where
     }
 }
 
+pub struct ButtonAck {
+    ack_response_tx: ButtonAckResponseTx,
+}
+
+impl ButtonAck {
+    pub fn new(ack_response_tx: ButtonAckResponseTx) -> ButtonAck { ButtonAck { ack_response_tx } }
+
+    pub fn ack(self) -> TrezorResult<()> {
+        self.ack_response_tx
+            .send(())
+            // Internal error since `response_loop` is expected to wait for the response.
+            .map_to_mm(|_| TrezorError::Internal("'ButtonAck' response receiver is closed unexpectedly".to_owned()))
+    }
+
+    /// Drop the [`ButtonAck::ack_response_tx`] channel sender.
+    pub fn decline(self) {}
+}
+
+pub struct PinMatrixAck {
+    pin_response_tx: PinMatrixResponseTx,
+}
+
+impl PinMatrixAck {
+    pub fn new(pin_response_tx: PinMatrixResponseTx) -> PinMatrixAck { PinMatrixAck { pin_response_tx } }
+
+    pub fn enter_pin(self, pin: TrezorPinMatrix3x3Response) -> TrezorResult<()> {
+        self.pin_response_tx
+            .send(pin)
+            // Internal error since `response_loop` is expected to wait for the response.
+            .map_to_mm(|_| TrezorError::Internal("'ButtonAck' response receiver is closed unexpectedly".to_owned()))
+    }
+
+    /// Drop the [`ButtonAck::ack_response_tx`] channel sender.
+    pub fn decline(self) {}
+}
+
 pub enum TrezorEvent<T> {
     Ready(T),
-    ButtonRequest,
-    PinMatrix3x3Request { pin_response_tx: PinMatrixResponseTx },
+    ButtonRequest(ButtonAck),
+    PinMatrix3x3Request(PinMatrixAck),
+}
+
+impl<T> TrezorEvent<T> {
+    pub fn button_request(ack_response_tx: ButtonAckResponseTx) -> Self {
+        TrezorEvent::ButtonRequest(ButtonAck::new(ack_response_tx))
+    }
+
+    pub fn pin_matrix_3x3_request(pin_response_tx: PinMatrixResponseTx) -> Self {
+        TrezorEvent::PinMatrix3x3Request(PinMatrixAck::new(pin_response_tx))
+    }
 }

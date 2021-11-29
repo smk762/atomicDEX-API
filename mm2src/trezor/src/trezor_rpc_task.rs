@@ -75,17 +75,18 @@ where
             while let Some(trezor_event) = self.next().await {
                 match trezor_event {
                     TrezorEvent::Ready(result) => return Ok(result),
-                    TrezorEvent::ButtonRequest => {
+                    TrezorEvent::ButtonRequest(button_ack) => {
+                        button_ack.ack()?;
                         // Notify the user should accept/decline the operation on his Trezor.
                         task_handle.update_in_progress_status(on_button_request.clone())?;
                     },
-                    TrezorEvent::PinMatrix3x3Request { pin_response_tx } => {
+                    TrezorEvent::PinMatrix3x3Request(pin_ack) => {
                         // Notify the user should enter a pin and wait until he sends it.
                         let user_action = task_handle
                             .wait_for_user_action(timeout, on_pin_request.clone())
                             .await?;
                         let pin_response: TrezorPinMatrix3x3Response = user_action.try_into()?;
-                        pin_response_tx.send(pin_response).ok();
+                        pin_ack.enter_pin(pin_response)?;
                     },
                 }
             }
