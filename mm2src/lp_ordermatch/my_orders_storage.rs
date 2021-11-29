@@ -65,21 +65,22 @@ pub async fn save_my_new_taker_order(ctx: MmArc, order: &TakerOrder) {
     }
 }
 
-pub async fn save_maker_order_on_update(ctx: MmArc, order: &mut MakerOrder, new_change: HistoricalOrder) {
+pub async fn save_maker_order_on_update(ctx: MmArc, order: MakerOrder, new_change: HistoricalOrder) {
+    let mut order = order.clone();
     let storage = MyOrdersStorage::new(ctx);
     if let Ok(old_order) = storage.load_active_maker_order(order.uuid).await {
         order.changes_history = old_order.changes_history;
         order.changes_history.get_or_insert(Vec::new()).push(new_change);
     }
     storage
-        .update_active_maker_order(order)
+        .update_active_maker_order(&order)
         .await
         .error_log_with_msg("!update_active_maker_order");
     order.changes_history = None;
 
     if order.save_in_history {
         storage
-            .update_maker_order_in_filtering_history(order)
+            .update_maker_order_in_filtering_history(&order)
             .await
             .error_log_with_msg("!update_maker_order_in_filtering_history");
     }

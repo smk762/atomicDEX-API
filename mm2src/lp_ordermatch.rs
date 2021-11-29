@@ -4219,9 +4219,13 @@ pub async fn update_maker_order(ctx: &MmArc, req: MakerOrderUpdateReq) -> Result
 
             let new_change = HistoricalOrder::build(&update_msg, order);
             order.apply_updated(&update_msg);
-            save_maker_order_on_update(ctx.clone(), order, new_change).await;
+            spawn(save_maker_order_on_update(ctx.clone(), order.clone(), new_change));
             update_msg.with_new_max_volume((new_volume - reserved_amount).into());
-            maker_order_updated_p2p_notify(ctx.clone(), order.orderbook_topic(), update_msg).await;
+            spawn(maker_order_updated_p2p_notify(
+                ctx.clone(),
+                order.orderbook_topic(),
+                update_msg,
+            ));
             Ok(order.clone())
         },
     }
