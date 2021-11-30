@@ -1720,7 +1720,7 @@ where
                 }));
                 break;
             },
-            RequestTxHistoryResult::UnknownError(e) => {
+            RequestTxHistoryResult::CriticalError(e) => {
                 log_tag!(
                     ctx,
                     "",
@@ -1844,7 +1844,10 @@ where
     let my_address = match coin.my_address() {
         Ok(addr) => addr,
         Err(e) => {
-            return RequestTxHistoryResult::UnknownError(ERRL!("Error on getting self address: {}. Stop tx history", e))
+            return RequestTxHistoryResult::CriticalError(ERRL!(
+                "Error on getting self address: {}. Stop tx history",
+                e
+            ))
         },
     };
 

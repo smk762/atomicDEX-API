@@ -27,6 +27,7 @@ fn create_tx_history_table_sql(table_name: &str) -> Result<String, MmError<SqlEr
         tx_hash VARCHAR(255) NOT NULL,
         internal_id VARCHAR(255) NOT NULL UNIQUE,
         block_height INTEGER NOT NULL,
+        confirmation_status INTEGER NOT NULL,
         details_json TEXT
     );";
 
@@ -38,7 +39,7 @@ fn insert_tx_into_table_sql(table_name: &str) -> Result<String, MmError<SqlError
 
     let sql = "INSERT INTO ".to_owned()
         + table_name
-        + " (tx_hash, internal_id, block_height, details_json) VALUES (?1, ?2, ?3, ?4);";
+        + " (tx_hash, internal_id, block_height, confirmation_status, details_json) VALUES (?1, ?2, ?3, ?4, ?5);";
 
     Ok(sql)
 }
@@ -62,7 +63,9 @@ fn select_tx_from_table_by_internal_id_sql(table_name: &str) -> Result<String, M
 fn update_tx_in_table_by_internal_id_sql(table_name: &str) -> Result<String, MmError<SqlError>> {
     validate_table_name(table_name)?;
 
-    let sql = "UPDATE ".to_owned() + table_name + " SET block_height = ?1, details_json = ?2 WHERE internal_id=?3;";
+    let sql = "UPDATE ".to_owned()
+        + table_name
+        + " SET block_height = ?1, confirmation_status = ?2, details_json = ?3 WHERE internal_id=?4;";
 
     Ok(sql)
 }
@@ -93,9 +96,16 @@ impl TxHistoryStorage for SqliteTxHistoryStorage {
         let conn = self.0.lock().unwrap();
         let tx_hash = format!("{:02x}", transaction.tx_hash);
         let internal_id = format!("{:02x}", transaction.internal_id);
+        let confirmation_status = if transaction.block_height > 0 { 1 } else { 0 };
         let tx_json = json::to_string(&transaction).unwrap();
 
-        let params = [tx_hash, internal_id, transaction.block_height.to_string(), tx_json];
+        let params = [
+            tx_hash,
+            internal_id,
+            transaction.block_height.to_string(),
+            confirmation_status.to_string(),
+            tx_json,
+        ];
         conn.execute(&insert_tx_into_table_sql(collection_id)?, params)
             .map(|_| ())
             .map_err(MmError::new)
@@ -140,6 +150,10 @@ impl TxHistoryStorage for SqliteTxHistoryStorage {
         Ok(Some(json::from_str(&json_string).unwrap()))
     }
 
+    async fn contains_unconfirmed_transactions(&self, collection_id: &str) -> Result<bool, MmError<Self::Error>> {
+        todo!()
+    }
+
     async fn get_unconfirmed_transactions(
         &self,
         collection_id: &str,
@@ -154,10 +168,11 @@ impl TxHistoryStorage for SqliteTxHistoryStorage {
     ) -> Result<(), MmError<Self::Error>> {
         let conn = self.0.lock().unwrap();
         let block_height = tx.block_height.to_string();
+        let confirmation_status = if tx.block_height > 0 { 1 } else { 0 };
         let json_details = json::to_string(tx).unwrap();
         let internal_id = format!("{:02x}", tx.internal_id);
 
-        let params = [block_height, json_details, internal_id];
+        let params = [block_height, confirmation_status.to_string(), json_details, internal_id];
         let sql = update_tx_in_table_by_internal_id_sql(collection_id)?;
         conn.execute(&sql, params).map(|_| ()).map_err(MmError::new)
     }

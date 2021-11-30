@@ -146,7 +146,7 @@ impl Qrc20Coin {
                     }));
                     break;
                 },
-                RequestTxHistoryResult::UnknownError(e) => {
+                RequestTxHistoryResult::CriticalError(e) => {
                     ctx.log.log(
                         "😟",
                         &[&"tx_history", &self.utxo.conf.ticker],

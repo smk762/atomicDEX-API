@@ -648,6 +648,10 @@ pub struct CoinBalance {
     pub unspendable: BigDecimal,
 }
 
+impl CoinBalance {
+    pub fn into_total(self) -> BigDecimal { self.spendable + self.unspendable }
+}
+
 /// The approximation is needed to cover the dynamic miner fee changing during a swap.
 #[derive(Clone, Debug)]
 pub enum FeeApproxStage {
@@ -2268,6 +2272,9 @@ pub trait TxHistoryStorage: Send + Sync + 'static {
         collection_id: &str,
         internal_tx_id: &BytesJson,
     ) -> Result<Option<TransactionDetails>, MmError<Self::Error>>;
+
+    /// Returns whether the collection contains unconfirmed transactions
+    async fn contains_unconfirmed_transactions(&self, collection_id: &str) -> Result<bool, MmError<Self::Error>>;
 
     /// Gets the unconfirmed transactions from the collection
     async fn get_unconfirmed_transactions(

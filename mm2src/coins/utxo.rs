@@ -803,7 +803,7 @@ pub enum RequestTxHistoryResult {
     Ok(Vec<(H256Json, u64)>),
     Retry { error: String },
     HistoryTooLarge,
-    UnknownError(String),
+    CriticalError(String),
 }
 
 pub enum VerboseTransactionFrom {
