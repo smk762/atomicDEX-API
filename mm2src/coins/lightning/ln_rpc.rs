@@ -1,7 +1,7 @@
 use super::*;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use crate::utxo::rpc_clients::{BlockHashOrHeight, EstimateFeeMethod};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::utxo::rpc_clients::{ElectrumClient, UtxoRpcClientEnum};
 use crate::utxo::utxo_standard::UtxoStandardCoin;
 use crate::{MarketCoinOps, MmCoin};
 #[cfg(not(target_arch = "wasm32"))]
@@ -75,36 +75,17 @@ impl BroadcasterInterface for UtxoStandardCoin {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn find_watched_output_spend_with_header(
-    coin: &UtxoStandardCoin,
+    electrum_client: &ElectrumClient,
     output: WatchedOutput,
 ) -> Option<(BlockHeader, usize, Transaction, u64)> {
-    let client = &coin.as_ref().rpc_client;
-
-    // For native clients LDK uses the Listen interface instead of the filter and confirm interfaces which are used for electrum clients.
-    // That's why find_watched_output_spend_with_header should be used only with electrum clients
-    // https://docs.rs/lightning/0.0.103/lightning/chain/trait.Confirm.html
-    // https://docs.rs/lightning/0.0.103/lightning/chain/trait.Listen.html
-    let electrum_client = match client {
-        UtxoRpcClientEnum::Electrum(e) => e,
-        UtxoRpcClientEnum::Native(_) => {
-            log::error!("find_watched_output_spend_with_header should be used only with electrum clients!");
-            return None;
-        },
-    };
-
-    let block_hash = output.block_hash.map(|h| H256Json::from(h.as_hash().into_inner()));
-
     // from_block parameter is not used in find_output_spend for electrum clients
-    // That's why its not a problem if the block hash is none in WatchedOutput
-    // the block hash parameter in WatchedOutput is used by LDK only to indicate for the implementation of register_output
-    // if to look for if the output is spent or not, thus removing the need for doing an unnecessary call while implementing
-    // register_output. LDK assigns block hash a value or not depending on where it's used in LDK code.
-    let output_spend = match client
+    let utxo_client: UtxoRpcClientEnum = electrum_client.clone().into();
+    let output_spend = match utxo_client
         .find_output_spend(
             H256::from(output.outpoint.txid.as_hash().into_inner()).reversed(),
             output.script_pubkey.as_ref(),
             output.outpoint.index.into(),
-            BlockHashOrHeight::Hash(block_hash.unwrap_or_default()),
+            BlockHashOrHeight::Hash(Default::default()),
         )
         .compat()
         .await

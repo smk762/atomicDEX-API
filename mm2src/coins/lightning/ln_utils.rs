@@ -123,7 +123,7 @@ pub fn last_request_id_path(ctx: &MmArc, ticker: &str) -> PathBuf {
 // TODO: Implement all the cases
 #[cfg(not(target_arch = "wasm32"))]
 async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, filter: Arc<PlatformFields>) {
-    match event.clone() {
+    match event {
         Event::FundingGenerationReady {
             temporary_channel_id,
             channel_value_satoshis,
@@ -131,7 +131,7 @@ async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, f
             user_channel_id: _,
         } => {
             let funding_tx = match generate_funding_transaction(
-                channel_value_satoshis,
+                *channel_value_satoshis,
                 output_script.clone(),
                 filter.platform_coin.clone(),
             )
@@ -155,21 +155,30 @@ async fn handle_ln_events(event: &Event, channel_manager: Arc<ChannelManager>, f
                     let txid = funding_tx.txid();
                     filter.register_tx(&txid, &output_script);
                     let output_to_be_registered = TxOut {
-                        value: channel_value_satoshis,
+                        value: *channel_value_satoshis,
                         script_pubkey: output_script.clone(),
                     };
-                    let output_index = funding_tx
+                    let output_index = match funding_tx
                         .output
                         .iter()
                         .position(|tx_out| tx_out == &output_to_be_registered)
-                        .expect("Output to register should be found in the transaction output");
+                    {
+                        Some(i) => i,
+                        None => {
+                            log::error!(
+                                "Output to register is not found in the output of the transaction: {}",
+                                txid
+                            );
+                            return;
+                        },
+                    };
                     filter.register_output(WatchedOutput {
                         block_hash: None,
                         outpoint: OutPoint {
                             txid,
                             index: output_index as u16,
                         },
-                        script_pubkey: output_script,
+                        script_pubkey: output_script.clone(),
                     });
                 },
                 // When transaction is unconfirmed by process_txs_confirmations LDK will try to rebroadcast the tx
@@ -285,6 +294,8 @@ pub async fn start_lightning(
         .force_announced_channel_preference = false;
 
     let mut restarting_node = true;
+    // TODO: when implementing Native client for lightning whenever filter is used
+    // the code will be a part of the electrum client implementation only
     let rpc_client = match &filter.clone().unwrap().platform_coin.as_ref().rpc_client {
         UtxoRpcClientEnum::Electrum(c) => c.clone(),
         UtxoRpcClientEnum::Native(_) => {
@@ -294,7 +305,7 @@ pub async fn start_lightning(
             ))
         },
     };
-    let best_header = get_best_header(rpc_client.clone()).await?;
+    let best_header = get_best_header(&rpc_client).await?;
     let best_block = RpcBestBlock::from(best_header.clone());
     let best_block_hash = BlockHash::from_hash(
         sha256d::Hash::from_slice(&best_block.hash.0).map_to_mm(|e| EnableLightningError::HashError(e.to_string()))?,
@@ -569,16 +580,23 @@ async fn process_txs_confirmations(
     let mut registered_txs = filter.registered_txs.lock().await;
     let mut transactions_to_confirm = Vec::new();
     for (txid, scripts) in registered_txs.clone() {
+        let rpc_txid = H256::from(txid.as_hash().into_inner()).reversed();
         match filter
             .platform_coin
             .as_ref()
             .rpc_client
-            .get_transaction_bytes(H256::from(txid.as_hash().into_inner()).reversed())
+            .get_transaction_bytes(rpc_txid.clone())
             .compat()
             .await
         {
             Ok(bytes) => {
-                let transaction: Transaction = deserialize(&bytes.into_vec()).expect("Can't deserialize transaction");
+                let transaction: Transaction = match deserialize(&bytes.into_vec()) {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        log::error!("Transaction deserialization error: {}", e.to_string());
+                        continue;
+                    },
+                };
                 for (index, vout) in transaction.output.iter().enumerate() {
                     if scripts.contains(&vout.script_pubkey) {
                         let script_hash = hex::encode(electrum_script_hash(vout.script_pubkey.as_ref()));
@@ -588,17 +606,24 @@ async fn process_txs_confirmations(
                             .await
                             .unwrap_or_default();
                         for item in history {
-                            if item.tx_hash == H256::from(txid.as_hash().into_inner()).reversed() {
+                            if item.tx_hash == rpc_txid {
                                 // If a new block mined the transaction while running process_txs_confirmations it will be confirmed later in ln_best_block_update_loop
                                 if item.height > 0 && item.height <= current_height as i64 {
-                                    let header = match client
-                                        .blockchain_block_header(
-                                            item.height.try_into().expect("Convertion to u64 should not fail"),
-                                        )
-                                        .compat()
-                                        .await
-                                    {
-                                        Ok(h) => deserialize(&h).expect("Can't deserialize block header"),
+                                    let height: u64 = match item.height.try_into() {
+                                        Ok(h) => h,
+                                        Err(e) => {
+                                            log::error!("Block height convertion to u64 error: {}", e.to_string());
+                                            continue;
+                                        },
+                                    };
+                                    let header = match client.blockchain_block_header(height).compat().await {
+                                        Ok(block_header) => match deserialize(&block_header) {
+                                            Ok(h) => h,
+                                            Err(e) => {
+                                                log::error!("Block header deserialization error: {}", e.to_string());
+                                                continue;
+                                            },
+                                        },
                                         Err(_) => continue,
                                     };
                                     let confirmed_transaction_info = ConfirmedTransactionInfo::new(
@@ -606,7 +631,7 @@ async fn process_txs_confirmations(
                                         header,
                                         index,
                                         transaction.clone(),
-                                        item.height.try_into().expect("Convertion to u32 should not fail"),
+                                        height as u32,
                                     );
                                     transactions_to_confirm.push(confirmed_transaction_info);
                                     registered_txs.remove(&txid);
@@ -625,10 +650,7 @@ async fn process_txs_confirmations(
 
     let mut registered_outputs = filter.registered_outputs.lock().await;
     registered_outputs.retain(|output| {
-        let result = block_on(ln_rpc::find_watched_output_spend_with_header(
-            &filter.platform_coin,
-            output.clone(),
-        ));
+        let result = block_on(ln_rpc::find_watched_output_spend_with_header(&client, output.clone()));
         if let Some((header, index, tx, height)) = result {
             if !transactions_to_confirm.iter().any(|info| info.txid == tx.txid()) {
                 let confirmed_transaction_info =
@@ -665,7 +687,7 @@ async fn process_txs_confirmations(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn get_best_header(best_header_listener: ElectrumClient) -> EnableLightningResult<ElectrumBlockHeader> {
+async fn get_best_header(best_header_listener: &ElectrumClient) -> EnableLightningResult<ElectrumBlockHeader> {
     best_header_listener
         .blockchain_headers_subscribe()
         .compat()
@@ -714,10 +736,16 @@ async fn update_best_block(
                     h.block_height as u32,
                 )
             },
-            ElectrumBlockHeader::V14(h) => (
-                deserialize(&h.hex.into_vec()).expect("Can't deserialize block header"),
-                h.height as u32,
-            ),
+            ElectrumBlockHeader::V14(h) => {
+                let block_header = match deserialize(&h.hex.into_vec()) {
+                    Ok(header) => header,
+                    Err(e) => {
+                        log::error!("Block header deserialization error: {}", e.to_string());
+                        return;
+                    },
+                };
+                (block_header, h.height as u32)
+            },
         };
         channel_manager.best_block_updated(&new_best_header, new_best_height);
         chain_monitor.best_block_updated(&new_best_header, new_best_height);
@@ -738,7 +766,7 @@ async fn ln_best_block_update_loop(
         if ctx.is_stopping() {
             break;
         }
-        let best_header = match get_best_header(best_header_listener.clone()).await {
+        let best_header = match get_best_header(&best_header_listener).await {
             Ok(h) => h,
             Err(e) => {
                 log::error!("Error while requesting best header for lightning node: {}", e);

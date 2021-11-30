@@ -1,5 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::{lp_coinfind_or_err, MmCoinEnum};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utxo::{sat_from_big_decimal, UtxoCommonOps, UtxoTxGenerationOps};
@@ -31,13 +32,14 @@ use ln_utils::{connect_to_node, last_request_id_path, nodes_data_path, open_ln_c
 use rpc::v1::types::Bytes as BytesJson;
 use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
-use std::convert::TryInto;
 use std::fmt;
 use std::sync::Arc;
 
 pub mod ln_errors;
 mod ln_rpc;
 pub mod ln_utils;
+
+const DEFAULT_LISTENING_PORT: u16 = 9735;
 
 #[derive(Debug)]
 pub struct LightningProtocolConf {
@@ -412,7 +414,8 @@ impl LightningActivationParams {
                 "Node name length can't be more than 32 characters".into(),
             ));
         }
-        let node_name = format!("{}{:width$}", req.name, " ", width = 32 - req.name.len());
+        let mut node_name = [b' '; 32];
+        node_name[0..req.name.len()].copy_from_slice(req.name.as_bytes());
 
         let mut node_color = [0u8; 3];
         hex::decode_to_slice(
@@ -421,11 +424,11 @@ impl LightningActivationParams {
         )
         .map_to_mm(|_| LightningFromReqErr::InvalidRequest("Invalid Hex Color".into()))?;
 
-        let listening_port = req.listening_port.unwrap_or(9735);
+        let listening_port = req.listening_port.unwrap_or(DEFAULT_LISTENING_PORT);
 
         Ok(LightningActivationParams {
             listening_port,
-            node_name: node_name.as_bytes().try_into().expect("Node name has incorrect length"),
+            node_name,
             node_color,
         })
     }
@@ -479,8 +482,15 @@ pub struct OpenChannelRequest {
     pub announce_channel: bool,
 }
 
+#[derive(Serialize)]
+pub struct OpenChannelResponse {
+    temporary_channel_id: [u8; 32],
+    node_id: String,
+    request_id: u64,
+}
+
 #[cfg(target_arch = "wasm32")]
-pub async fn open_channel(_ctx: MmArc, _req: OpenChannelRequest) -> OpenChannelResult<String> {
+pub async fn open_channel(_ctx: MmArc, _req: OpenChannelRequest) -> OpenChannelResult<OpenChannelResponse> {
     MmError::err(OpenChannelError::UnsupportedMode(
         "'open_channel'".into(),
         "native".into(),
@@ -489,7 +499,7 @@ pub async fn open_channel(_ctx: MmArc, _req: OpenChannelRequest) -> OpenChannelR
 
 /// Opens a channel on the lightning network.
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelResult<String> {
+pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelResult<OpenChannelResponse> {
     use crate::utxo::ActualTxFee;
 
     let coin = lp_coinfind_or_err(&ctx, &req.coin).await?;
@@ -500,7 +510,7 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
 
     let platform_coin = ln_coin.platform_coin().clone();
     let decimals = platform_coin.as_ref().decimals;
-    let amount = match req.amount.clone() {
+    let amount = match req.amount {
         ChannelOpenAmount::Exact(value) => {
             let balance = platform_coin.my_spendable_balance().compat().await?;
             if balance < value {
@@ -558,8 +568,9 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
         ln_coin.channel_manager.clone(),
     )?;
 
-    Ok(format!(
-        "Initiated opening channel with temporary ID: {:?} with node: {} and request id: {}",
-        temporary_channel_id, req.node_id, request_id
-    ))
+    Ok(OpenChannelResponse {
+        temporary_channel_id,
+        node_id: req.node_id,
+        request_id,
+    })
 }
