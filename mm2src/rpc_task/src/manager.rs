@@ -20,9 +20,7 @@ where
     Item: Serialize,
     Error: SerMmErrorType,
 {
-    in_progress: HashMap<TaskId, (InProgressStatus, TaskAbortHandle)>,
-    awaiting: HashMap<TaskId, (AwaitingStatus, UserActionSender<UserAction>)>,
-    finished: HashMap<TaskId, FinishedTaskResult<Item, Error>>,
+    tasks: HashMap<TaskId, TaskStatusExt<Item, Error, InProgressStatus, AwaitingStatus, UserAction>>,
     next_task_id: TaskId,
 }
 
@@ -34,9 +32,7 @@ where
 {
     fn default() -> Self {
         RpcTaskManager {
-            in_progress: HashMap::new(),
-            awaiting: HashMap::new(),
-            finished: HashMap::new(),
+            tasks: HashMap::new(),
             next_task_id: 0,
         }
     }
@@ -120,22 +116,23 @@ where
         task_id: TaskId,
         forget_if_ready: bool,
     ) -> Option<RpcTaskStatus<Item, Error, InProgressStatus, AwaitingStatus>> {
-        // First, check if the task is awaiting for a user action.
-        if let Some((awaiting_status, _action_tx)) = self.awaiting.get(&task_id) {
-            return Some(RpcTaskStatus::UserActionRequired(awaiting_status.clone()));
-        }
-        // Second, check if the task is still ongoing.
-        if let Some((status, _handle)) = self.in_progress.get(&task_id) {
-            return Some(RpcTaskStatus::InProgress(status.clone()));
-        }
-        // Third, return a result of the task if it exists.
-        if forget_if_ready {
-            self.finished.remove(&task_id).map(RpcTaskStatus::Ready)
-        } else {
-            self.finished
-                .get(&task_id)
-                .map(|ready| RpcTaskStatus::Ready(ready.clone()))
-        }
+        let entry = match self.tasks.entry(task_id) {
+            Entry::Occupied(entry) => entry,
+            Entry::Vacant(_) => return None,
+        };
+        let rpc_status = match entry.get() {
+            TaskStatusExt::InProgress { status, .. } => RpcTaskStatus::InProgress(status.clone()),
+            TaskStatusExt::Awaiting { status, .. } => RpcTaskStatus::UserActionRequired(status.clone()),
+            TaskStatusExt::Ready(ready) => {
+                // I prefer cloning `ready` instead of removing `TaskStatusX` and matching/unwrapping it again.
+                let rpc_status = RpcTaskStatus::Ready(ready.clone());
+                if forget_if_ready {
+                    entry.remove();
+                }
+                rpc_status
+            },
+        };
+        Some(rpc_status)
     }
 }
 
@@ -149,15 +146,11 @@ where
         Arc::new(Mutex::new(RpcTaskManager::default()))
     }
 
-    pub fn contains(&self, task_id: TaskId) -> bool {
-        self.in_progress.contains_key(&task_id)
-            || self.awaiting.contains_key(&task_id)
-            || self.finished.contains_key(&task_id)
-    }
+    pub fn contains(&self, task_id: TaskId) -> bool { self.tasks.contains_key(&task_id) }
 
     /// Cancel task if it's in progress.
     pub fn cancel_task(&mut self, task_id: TaskId) -> RpcTaskResult<()> {
-        self.in_progress
+        self.tasks
             .remove(&task_id)
             .map(|_| ())
             .or_mm_err(|| self.rpc_task_error_if_not_found(task_id, TaskStatusError::InProgress))
@@ -168,16 +161,19 @@ where
         task_initial_in_progress_status: InProgressStatus,
     ) -> RpcTaskResult<(TaskId, TaskAbortHandler)> {
         let task_id = self.next_task_id();
-        let (task_abort_handle, task_abort_handler) = oneshot::channel();
-        match self.in_progress.entry(task_id) {
+        let (abort_handle, abort_handler) = oneshot::channel();
+        match self.tasks.entry(task_id) {
             Entry::Occupied(_entry) => MmError::err(RpcTaskError::UnexpectedTaskStatus {
                 task_id,
                 actual: TaskStatusError::InProgress,
                 expected: TaskStatusError::Idle,
             }),
             Entry::Vacant(entry) => {
-                entry.insert((task_initial_in_progress_status, task_abort_handle));
-                Ok((task_id, task_abort_handler))
+                entry.insert(TaskStatusExt::InProgress {
+                    status: task_initial_in_progress_status,
+                    abort_handle,
+                });
+                Ok((task_id, abort_handler))
             },
         }
     }
@@ -197,32 +193,17 @@ where
         }
     }
 
-    pub(crate) fn on_task_aborted(&mut self, task_id: TaskId) {
-        self.in_progress.remove(&task_id);
-        self.awaiting.remove(&task_id);
-    }
-
     fn rpc_task_error_if_not_found(&self, task_id: TaskId, expected: TaskStatusError) -> RpcTaskError {
-        if self.finished.contains_key(&task_id) {
-            RpcTaskError::UnexpectedTaskStatus {
-                task_id,
-                actual: TaskStatusError::Finished,
-                expected,
-            }
-        } else if self.awaiting.contains_key(&task_id) {
-            RpcTaskError::UnexpectedTaskStatus {
-                task_id,
-                actual: TaskStatusError::AwaitingUserAction,
-                expected,
-            }
-        } else if self.in_progress.contains_key(&task_id) {
-            RpcTaskError::UnexpectedTaskStatus {
-                task_id,
-                actual: TaskStatusError::InProgress,
-                expected,
-            }
-        } else {
-            RpcTaskError::NoSuchTask(task_id)
+        let actual = match self.tasks.get(&task_id) {
+            Some(TaskStatusExt::InProgress { .. }) => TaskStatusError::InProgress,
+            Some(TaskStatusExt::Awaiting { .. }) => TaskStatusError::AwaitingUserAction,
+            Some(TaskStatusExt::Ready(_)) => TaskStatusError::Finished,
+            None => return RpcTaskError::NoSuchTask(task_id),
+        };
+        RpcTaskError::UnexpectedTaskStatus {
+            task_id,
+            actual,
+            expected,
         }
     }
 
@@ -233,56 +214,60 @@ where
     }
 
     fn on_task_finished(&mut self, task_id: TaskId, task_result: FinishedTaskResult<Item, Error>) -> RpcTaskResult<()> {
-        match self.finished.entry(task_id) {
-            Entry::Occupied(_entry) => {
-                return MmError::err(RpcTaskError::UnexpectedTaskStatus {
-                    task_id,
-                    actual: TaskStatusError::Finished,
-                    expected: TaskStatusError::InProgress,
-                });
-            },
-            Entry::Vacant(entry) => {
-                entry.insert(task_result);
-            },
-        }
-        if self.in_progress.remove(&task_id).is_none() {
+        if self.tasks.insert(task_id, TaskStatusExt::Ready(task_result)).is_none() {
             warn!("Finished task '{}' was not ongoing", task_id);
-        }
-        if self.awaiting.remove(&task_id).is_some() {
-            warn!("Finished task '{}' was waiting for a user action", task_id);
         }
         Ok(())
     }
 
-    fn update_in_progress_status(
-        &mut self,
-        task_id: TaskId,
-        in_progress_status: InProgressStatus,
-    ) -> RpcTaskResult<()> {
-        let status = match self.in_progress.get_mut(&task_id) {
-            Some((status, _handle)) => status,
-            None => return MmError::err(RpcTaskError::NoSuchTask(task_id)),
-        };
-        *status = in_progress_status;
-        Ok(())
+    fn update_in_progress_status(&mut self, task_id: TaskId, status: InProgressStatus) -> RpcTaskResult<()> {
+        match self.tasks.remove(&task_id) {
+            Some(TaskStatusExt::InProgress { abort_handle, .. })
+            | Some(TaskStatusExt::Awaiting { abort_handle, .. }) => {
+                // Insert new in-progress status to the tasks container.
+                self.tasks
+                    .insert(task_id, TaskStatusExt::InProgress { status, abort_handle });
+                Ok(())
+            },
+            Some(ready @ TaskStatusExt::Ready(_)) => {
+                // Return the task result to the tasks container.
+                self.tasks.insert(task_id, ready);
+                MmError::err(RpcTaskError::UnexpectedTaskStatus {
+                    task_id,
+                    actual: TaskStatusError::Finished,
+                    expected: TaskStatusError::InProgress,
+                })
+            },
+            None => MmError::err(RpcTaskError::NoSuchTask(task_id)),
+        }
     }
 
     fn set_task_is_waiting_for_user_action(
         &mut self,
         task_id: TaskId,
-        awaiting_status: AwaitingStatus,
-        user_action_tx: UserActionSender<UserAction>,
+        status: AwaitingStatus,
+        action_sender: UserActionSender<UserAction>,
     ) -> RpcTaskResult<()> {
-        match self.awaiting.entry(task_id) {
-            Entry::Occupied(_entry) => MmError::err(RpcTaskError::UnexpectedTaskStatus {
-                task_id,
-                actual: TaskStatusError::AwaitingUserAction,
-                expected: TaskStatusError::InProgress,
-            }),
-            Entry::Vacant(entry) => {
-                entry.insert((awaiting_status, user_action_tx));
+        match self.tasks.remove(&task_id) {
+            Some(TaskStatusExt::InProgress {
+                status: next_in_progress_status,
+                abort_handle,
+            }) => {
+                // Insert new awaiting status to the tasks container.
+                self.tasks.insert(task_id, TaskStatusExt::Awaiting {
+                    status,
+                    abort_handle,
+                    action_sender,
+                    next_in_progress_status,
+                });
                 Ok(())
             },
+            Some(unexpected) => {
+                // Return the status to the tasks container.
+                self.tasks.insert(task_id, unexpected);
+                MmError::err(self.rpc_task_error_if_not_found(task_id, TaskStatusError::InProgress))
+            },
+            None => MmError::err(RpcTaskError::NoSuchTask(task_id)),
         }
     }
 }
@@ -296,13 +281,48 @@ where
 {
     /// Notify a spawned interrupted RPC task about the user action if it await the action.
     pub fn on_user_action(&mut self, task_id: TaskId, user_action: UserAction) -> RpcTaskResult<()> {
-        let (_status, user_action_sender) = self
-            .awaiting
-            .remove(&task_id)
-            .or_mm_err(|| self.rpc_task_error_if_not_found(task_id, TaskStatusError::AwaitingUserAction))?;
-        user_action_sender
-            .send(user_action)
-            // The task seems to be canceled/aborted for some reason.
-            .map_to_mm(|_user_action| RpcTaskError::Canceled)
+        match self.tasks.remove(&task_id) {
+            Some(TaskStatusExt::Awaiting {
+                action_sender,
+                abort_handle,
+                next_in_progress_status: status,
+                ..
+            }) => {
+                let result = action_sender
+                    .send(user_action)
+                    // The task seems to be canceled/aborted for some reason.
+                    .map_to_mm(|_user_action| RpcTaskError::Canceled);
+                // Insert new in-progress status to the tasks container.
+                self.tasks
+                    .insert(task_id, TaskStatusExt::InProgress { status, abort_handle });
+                result
+            },
+            Some(unexpected) => {
+                // Return the unexpected status to the tasks container.
+                self.tasks.insert(task_id, unexpected);
+                MmError::err(self.rpc_task_error_if_not_found(task_id, TaskStatusError::AwaitingUserAction))
+            },
+            None => MmError::err(RpcTaskError::NoSuchTask(task_id)),
+        }
     }
+}
+
+/// `TaskStatus` extended with `TaskAbortHandle`.
+/// This is stored in the [`RpcTaskManager::tasks`] container.
+enum TaskStatusExt<Item, Error, InProgressStatus, AwaitingStatus, UserAction>
+where
+    Item: Serialize,
+    Error: SerMmErrorType,
+{
+    InProgress {
+        status: InProgressStatus,
+        abort_handle: TaskAbortHandle,
+    },
+    Awaiting {
+        status: AwaitingStatus,
+        action_sender: UserActionSender<UserAction>,
+        abort_handle: TaskAbortHandle,
+        next_in_progress_status: InProgressStatus,
+    },
+    Ready(FinishedTaskResult<Item, Error>),
 }

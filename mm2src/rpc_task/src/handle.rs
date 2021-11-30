@@ -27,11 +27,8 @@ where
     Error: SerMmErrorType,
 {
     pub(crate) fn abort(self) {
-        self.lock_and_then(|mut task_manager| {
-            task_manager.on_task_aborted(self.task_id);
-            Ok(())
-        })
-        .ok();
+        self.lock_and_then(|mut task_manager| task_manager.cancel_task(self.task_id))
+            .ok();
     }
 
     fn lock_and_then<F, T>(&self, f: F) -> RpcTaskResult<T>
