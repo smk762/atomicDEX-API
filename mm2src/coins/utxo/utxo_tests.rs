@@ -114,7 +114,7 @@ fn utxo_coin_fields_for_test(
         },
         decimals: 8,
         dust_amount: UTXO_DUST_AMOUNT,
-        tx_fee: TxFee::Fixed(1000),
+        tx_fee: TxFee::FixedPerKb(1000),
         rpc_client,
         key_pair,
         my_address,
