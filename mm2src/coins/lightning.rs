@@ -15,7 +15,6 @@ use common::ip_addr::myipaddr;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::MmNumber;
-use derive_more::Display;
 #[cfg(not(target_arch = "wasm32"))]
 use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
@@ -38,8 +37,6 @@ use std::sync::Arc;
 pub mod ln_errors;
 mod ln_rpc;
 pub mod ln_utils;
-
-const DEFAULT_LISTENING_PORT: u16 = 9735;
 
 #[derive(Debug)]
 pub struct LightningProtocolConf {
@@ -355,83 +352,6 @@ impl MmCoin for LightningCoin {
     fn coin_protocol_info(&self) -> Vec<u8> { unimplemented!() }
 
     fn is_coin_protocol_supported(&self, _info: &Option<Vec<u8>>) -> bool { unimplemented!() }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct LightningActivationParams {
-    // The listening port for the p2p LN node
-    pub listening_port: u16,
-    // Printable human-readable string to describe this node to other users.
-    pub node_name: [u8; 32],
-    // Node's RGB color. This is used for showing the node in a network graph with the desired color.
-    pub node_color: [u8; 3],
-}
-
-#[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
-#[serde(tag = "error_type", content = "error_data")]
-pub enum LightningFromReqErr {
-    #[display(fmt = "Platform coin {} activated in {} mode", _0, _1)]
-    UnexpectedMethod(String, String),
-    #[display(fmt = "{} is only supported in {} mode", _0, _1)]
-    UnsupportedMode(String, String),
-    #[display(fmt = "Invalid request: {}", _0)]
-    InvalidRequest(String),
-    #[display(fmt = "Invalid address: {}", _0)]
-    InvalidAddress(String),
-}
-
-impl From<serde_json::Error> for LightningFromReqErr {
-    fn from(e: serde_json::Error) -> Self { LightningFromReqErr::InvalidRequest(e.to_string()) }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct LightningActivationRequest {
-    // The listening port for the p2p LN node
-    pub listening_port: Option<u16>,
-    // Printable human-readable string to describe this node to other users.
-    pub name: String,
-    // Node's HEX color. This is used for showing the node in a network graph with the desired color.
-    pub color: Option<String>,
-}
-
-impl LightningActivationParams {
-    pub fn from_activation_req(
-        platform_coin: UtxoStandardCoin,
-        req: LightningActivationRequest,
-    ) -> Result<Self, MmError<LightningFromReqErr>> {
-        // Channel funding transactions need to spend segwit outputs
-        // and while the witness script can be generated from pubkey and be used
-        // it's better for the coin to be enabled in segwit to check if balance is enough for funding transaction, etc...
-        if !platform_coin.as_ref().my_address.addr_format.is_segwit() {
-            return MmError::err(LightningFromReqErr::UnsupportedMode(
-                "Lightning network".into(),
-                "segwit".into(),
-            ));
-        }
-
-        if req.name.len() > 32 {
-            return MmError::err(LightningFromReqErr::InvalidRequest(
-                "Node name length can't be more than 32 characters".into(),
-            ));
-        }
-        let mut node_name = [b' '; 32];
-        node_name[0..req.name.len()].copy_from_slice(req.name.as_bytes());
-
-        let mut node_color = [0u8; 3];
-        hex::decode_to_slice(
-            req.color.unwrap_or_else(|| "000000".into()),
-            &mut node_color as &mut [u8],
-        )
-        .map_to_mm(|_| LightningFromReqErr::InvalidRequest("Invalid Hex Color".into()))?;
-
-        let listening_port = req.listening_port.unwrap_or(DEFAULT_LISTENING_PORT);
-
-        Ok(LightningActivationParams {
-            listening_port,
-            node_name,
-            node_color,
-        })
-    }
 }
 
 #[derive(Deserialize)]

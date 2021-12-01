@@ -215,12 +215,22 @@ impl EventHandler for LightningEventHandler {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct LightningParams {
+    // The listening port for the p2p LN node
+    pub listening_port: u16,
+    // Printable human-readable string to describe this node to other users.
+    pub node_name: [u8; 32],
+    // Node's RGB color. This is used for showing the node in a network graph with the desired color.
+    pub node_color: [u8; 3],
+}
+
 #[cfg(target_arch = "wasm32")]
 pub async fn start_lightning(
     _ctx: &MmArc,
     _platform_coin: UtxoStandardCoin,
     _ticker: String,
-    _params: LightningActivationParams,
+    _params: LightningParams,
     _network: Network,
 ) -> EnableLightningResult<LightningCoin> {
     MmError::err(EnableLightningError::UnsupportedMode(
@@ -234,7 +244,7 @@ pub async fn start_lightning(
     ctx: &MmArc,
     platform_coin: UtxoStandardCoin,
     ticker: String,
-    params: LightningActivationParams,
+    params: LightningParams,
     network: Network,
 ) -> EnableLightningResult<LightningCoin> {
     // The set (possibly empty) of socket addresses on which this node accepts incoming connections.
@@ -313,8 +323,8 @@ pub async fn start_lightning(
         .force_announced_channel_preference = false;
 
     let mut restarting_node = true;
-    // TODO: when implementing Native client for lightning whenever filter is used
-    // the code will be a part of the electrum client implementation only
+    // TODO: Right now it's safe to unwrap here, when implementing Native client for lightning whenever filter is used
+    // the code it's used in will be a part of the electrum client implementation only
     let rpc_client = match &filter.clone().unwrap().platform_coin.as_ref().rpc_client {
         UtxoRpcClientEnum::Electrum(c) => c.clone(),
         UtxoRpcClientEnum::Native(_) => {
@@ -372,6 +382,7 @@ pub async fn start_lightning(
     // Sync ChannelMonitors and ChannelManager to chain tip if the node is restarting and has open channels
     if restarting_node && channel_manager_blockhash != best_block_hash {
         process_txs_confirmations(
+            // It's safe to use unwrap here for now until implementing Native Client for Lightning
             filter.clone().unwrap().clone(),
             rpc_client.clone(),
             chain_monitor.clone(),
@@ -421,6 +432,7 @@ pub async fn start_lightning(
     // Update best block whenever there's a new chain tip or a block has been newly disconnected
     spawn(ln_best_block_update_loop(
         ctx.clone(),
+        // It's safe to use unwrap here for now until implementing Native Client for Lightning
         filter.clone().unwrap(),
         chain_monitor.clone(),
         channel_manager.clone(),
@@ -439,6 +451,7 @@ pub async fn start_lightning(
     // Start Background Processing. Runs tasks periodically in the background to keep LN node operational
     let background_processor = BackgroundProcessor::start(
         persist_channel_manager_callback,
+        // It's safe to use unwrap here for now until implementing Native Client for Lightning
         LightningEventHandler::new(filter.clone().unwrap(), channel_manager.clone()),
         chain_monitor,
         channel_manager.clone(),

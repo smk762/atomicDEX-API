@@ -19,14 +19,23 @@ pub trait L2ActivationOps: Into<MmCoinEnum> {
     type PlatformCoin: TryPlatformCoinFromMmCoinEnum;
     type ActivationParams;
     type ProtocolInfo: L2ProtocolParams + TryFromCoinProtocol;
+    type ValidatedParams;
     type ActivationResult;
     type ActivationError: NotMmError;
+
+    fn validate_platform_configuration(
+        platform_coin: &Self::PlatformCoin,
+    ) -> Result<(), MmError<Self::ActivationError>>;
+
+    fn validate_activation_params(
+        activation_params: Self::ActivationParams,
+    ) -> Result<Self::ValidatedParams, MmError<Self::ActivationError>>;
 
     async fn init_l2(
         ctx: &MmArc,
         ticker: String,
         platform_coin: Self::PlatformCoin,
-        activation_params: Self::ActivationParams,
+        validated_params: Self::ValidatedParams,
         protocol_conf: Self::ProtocolInfo,
     ) -> Result<(Self, Self::ActivationResult), MmError<Self::ActivationError>>;
 }
@@ -105,8 +114,11 @@ where
             l2_ticker: req.ticker.clone(),
         })?;
 
-    let (l2, activation_result) =
-        L2::init_l2(&ctx, req.ticker, platform_coin, req.activation_params, l2_protocol).await?;
+    L2::validate_platform_configuration(&platform_coin)?;
+
+    let validated_params = L2::validate_activation_params(req.activation_params)?;
+
+    let (l2, activation_result) = L2::init_l2(&ctx, req.ticker, platform_coin, validated_params, l2_protocol).await?;
 
     let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
     coins_ctx

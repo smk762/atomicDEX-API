@@ -847,6 +847,7 @@ dependencies = [
  "coins",
  "common",
  "derive_more",
+ "hex 0.4.3",
  "rpc",
  "ser_error",
  "ser_error_derive",
