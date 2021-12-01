@@ -1309,12 +1309,6 @@ pub trait UtxoCoinBuilder {
     }
 
     async fn tx_fee(&self, rpc_client: &UtxoRpcClientEnum) -> Result<TxFee, String> {
-        const ONE_DOGE: u64 = 100000000;
-
-        if self.ticker() == "DOGE" {
-            return Ok(TxFee::FixedPerKb(ONE_DOGE));
-        }
-
         let tx_fee = match self.conf()["txfee"].as_u64() {
             None => TxFee::FixedPerKb(1000),
             Some(0) => {
