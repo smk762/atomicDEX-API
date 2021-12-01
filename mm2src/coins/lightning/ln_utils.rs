@@ -26,7 +26,7 @@ cfg_native! {
     use chain::TransactionOutput;
     use common::executor::{spawn, Timer};
     use common::ip_addr::fetch_external_ip;
-    use common::{block_on, log};
+    use common::log;
     use common::log::LogState;
     use futures::compat::Future01CompatExt;
     use futures::lock::Mutex as AsyncMutex;
@@ -647,20 +647,23 @@ async fn process_txs_confirmations(
             },
         };
     }
+    drop(registered_txs);
 
+    let mut outputs_to_remove = Vec::new();
     let mut registered_outputs = filter.registered_outputs.lock().await;
-    registered_outputs.retain(|output| {
-        let result = block_on(ln_rpc::find_watched_output_spend_with_header(&client, output.clone()));
+    for output in registered_outputs.clone() {
+        let result = ln_rpc::find_watched_output_spend_with_header(&client, &output).await;
         if let Some((header, index, tx, height)) = result {
             if !transactions_to_confirm.iter().any(|info| info.txid == tx.txid()) {
                 let confirmed_transaction_info =
                     ConfirmedTransactionInfo::new(tx.txid(), header, index, tx, height as u32);
                 transactions_to_confirm.push(confirmed_transaction_info);
-                return false;
             }
+            outputs_to_remove.push(output);
         }
-        true
-    });
+    }
+    registered_outputs.retain(|output| !outputs_to_remove.contains(output));
+    drop(registered_outputs);
 
     transactions_to_confirm.sort_by(|a, b| a.height.cmp(&b.height));
     // If a transaction spends another in the same block, the spent transaction should be confirmed first

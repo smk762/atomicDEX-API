@@ -76,7 +76,7 @@ impl BroadcasterInterface for UtxoStandardCoin {
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn find_watched_output_spend_with_header(
     electrum_client: &ElectrumClient,
-    output: WatchedOutput,
+    output: &WatchedOutput,
 ) -> Option<(BlockHeader, usize, Transaction, u64)> {
     // from_block parameter is not used in find_output_spend for electrum clients
     let utxo_client: UtxoRpcClientEnum = electrum_client.clone().into();
