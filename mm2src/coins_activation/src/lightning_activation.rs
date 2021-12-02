@@ -2,7 +2,7 @@ use crate::l2::{EnableL2Error, L2ActivationOps, L2ProtocolParams};
 use crate::prelude::*;
 use async_trait::async_trait;
 use coins::lightning::ln_errors::EnableLightningError;
-use coins::lightning::ln_utils::{network_from_string, start_lightning, LightningParams};
+use coins::lightning::ln_utils::{start_lightning, LightningParams};
 use coins::lightning::{LightningCoin, LightningProtocolConf};
 use coins::utxo::utxo_standard::UtxoStandardCoin;
 use coins::{CoinProtocol, MarketCoinOps, MmCoinEnum};
@@ -157,8 +157,14 @@ impl L2ActivationOps for LightningCoin {
         validated_params: Self::ValidatedParams,
         protocol_conf: Self::ProtocolInfo,
     ) -> Result<(Self, Self::ActivationResult), MmError<Self::ActivationError>> {
-        let network = network_from_string(protocol_conf.network)?;
-        let lightning_coin = start_lightning(ctx, platform_coin.clone(), ticker, validated_params, network).await?;
+        let lightning_coin = start_lightning(
+            ctx,
+            platform_coin.clone(),
+            ticker,
+            validated_params,
+            protocol_conf.network.into(),
+        )
+        .await?;
         let init_result = LightningInitResult {
             platform_coin: platform_coin.ticker().into(),
         };

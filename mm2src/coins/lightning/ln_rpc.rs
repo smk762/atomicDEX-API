@@ -13,6 +13,7 @@ use bitcoin::hash_types::Txid;
 use bitcoin_hashes::Hash;
 use common::executor::spawn;
 use common::{block_on, log};
+#[cfg(not(target_arch = "wasm32"))] use derive_more::Display;
 use futures::compat::Future01CompatExt;
 use keys::hash::H256;
 use lightning::chain::{chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator},
@@ -74,10 +75,19 @@ impl BroadcasterInterface for UtxoStandardCoin {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Display)]
+pub enum FindWatchedOutputSpendError {
+    #[display(fmt = "Can't convert transaction: {}", _0)]
+    TransactionConvertionErr(String),
+    #[display(fmt = "Can't deserialize block header: {}", _0)]
+    BlockHeaderDerserializeErr(String),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn find_watched_output_spend_with_header(
     electrum_client: &ElectrumClient,
     output: &WatchedOutput,
-) -> Option<(BlockHeader, usize, Transaction, u64)> {
+) -> Result<Option<(BlockHeader, usize, Transaction, u64)>, FindWatchedOutputSpendError> {
     // from_block parameter is not used in find_output_spend for electrum clients
     let utxo_client: UtxoRpcClientEnum = electrum_client.clone().into();
     let output_spend = match utxo_client
@@ -91,7 +101,7 @@ pub async fn find_watched_output_spend_with_header(
         .await
     {
         Ok(Some(output)) => output,
-        _ => return None,
+        _ => return Ok(None),
     };
 
     if let BlockHashOrHeight::Height(height) = output_spend.spent_in_block {
@@ -100,20 +110,15 @@ pub async fn find_watched_output_spend_with_header(
                 Ok(h) => {
                     let spending_tx = match Transaction::try_from(output_spend.spending_tx) {
                         Ok(tx) => tx,
-                        Err(e) => {
-                            log::error!("Can't convert transaction error: {}", e.to_string());
-                            return None;
-                        },
+                        Err(e) => return Err(FindWatchedOutputSpendError::TransactionConvertionErr(e.to_string())),
                     };
-                    return Some((h, output_spend.input_index, spending_tx, height as u64));
+                    return Ok(Some((h, output_spend.input_index, spending_tx, height as u64)));
                 },
-                Err(e) => {
-                    log::error!("Can't deserialize block header error: {}", e.to_string());
-                },
+                Err(e) => return Err(FindWatchedOutputSpendError::BlockHeaderDerserializeErr(e.to_string())),
             }
         }
     }
-    None
+    Ok(None)
 }
 
 impl Filter for PlatformFields {

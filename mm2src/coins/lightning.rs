@@ -3,22 +3,25 @@ use super::{lp_coinfind_or_err, MmCoinEnum};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::utxo::{sat_from_big_decimal, UtxoCommonOps, UtxoTxGenerationOps};
+use crate::utxo::utxo_common::UtxoTxBuilder;
+use crate::utxo::BlockchainNetwork;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::utxo::{sat_from_big_decimal, FeePolicy, UtxoCommonOps, UtxoTxGenerationOps};
 use crate::{BalanceFut, CoinBalance, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, MarketCoinOps, MmCoin,
             NegotiateSwapContractAddrErr, SwapOps, TradeFee, TradePreimageFut, TradePreimageValue, TransactionEnum,
             TransactionFut, UtxoStandardCoin, ValidateAddressResult, WithdrawFut, WithdrawRequest};
 use bigdecimal::BigDecimal;
 use bitcoin::blockdata::script::Script;
 use bitcoin::hash_types::Txid;
+#[cfg(not(target_arch = "wasm32"))] use chain::TransactionOutput;
 #[cfg(not(target_arch = "wasm32"))]
 use common::ip_addr::myipaddr;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_number::MmNumber;
-#[cfg(not(target_arch = "wasm32"))]
-use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
 use futures01::Future;
+#[cfg(not(target_arch = "wasm32"))] use keys::AddressHashEnum;
 use lightning::chain::WatchedOutput;
 #[cfg(not(target_arch = "wasm32"))]
 use lightning_background_processor::BackgroundProcessor;
@@ -29,6 +32,8 @@ use ln_utils::{connect_to_node, last_request_id_path, nodes_data_path, open_ln_c
                read_last_request_id_from_file, read_nodes_data_from_file, save_last_request_id_to_file,
                save_node_data_to_file, ChannelManager, PeerManager};
 use rpc::v1::types::Bytes as BytesJson;
+#[cfg(not(target_arch = "wasm32"))] use script::Builder;
+use script::TransactionInputSigner;
 use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -41,7 +46,7 @@ pub mod ln_utils;
 #[derive(Debug)]
 pub struct LightningProtocolConf {
     pub platform_coin_ticker: String,
-    pub network: String,
+    pub network: BlockchainNetwork,
 }
 
 #[derive(Debug)]
@@ -51,6 +56,8 @@ pub struct PlatformFields {
     pub registered_txs: AsyncMutex<HashMap<Txid, HashSet<Script>>>,
     // This cache stores the outputs that the LN node has interest in.
     pub registered_outputs: AsyncMutex<Vec<WatchedOutput>>,
+    // This cache stores transactions to be broadcasted once the other node accepts the channel
+    pub unsigned_funding_txs: AsyncMutex<HashMap<u64, TransactionInputSigner>>,
 }
 
 impl PlatformFields {
@@ -420,50 +427,52 @@ pub async fn open_channel(_ctx: MmArc, _req: OpenChannelRequest) -> OpenChannelR
 /// Opens a channel on the lightning network.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelResult<OpenChannelResponse> {
-    use crate::utxo::ActualTxFee;
-
     let coin = lp_coinfind_or_err(&ctx, &req.coin).await?;
     let ln_coin = match coin {
         MmCoinEnum::LightningCoin(c) => c,
         _ => return MmError::err(OpenChannelError::UnsupportedCoin(coin.ticker().to_string())),
     };
 
+    // Making sure that the node data is correct and that we can connect to it before doing more operations
+    let (node_pubkey, node_addr) = parse_node_info(req.node_id.clone())?;
+    connect_to_node(node_pubkey, node_addr, ln_coin.peer_manager.clone()).await?;
+
     let platform_coin = ln_coin.platform_coin().clone();
     let decimals = platform_coin.as_ref().decimals;
-    let amount = match req.amount {
-        ChannelOpenAmount::Exact(value) => {
-            let balance = platform_coin.my_spendable_balance().compat().await?;
-            if balance < value {
-                return MmError::err(OpenChannelError::BalanceError(format!(
-                    "Not enough balance to open channel, Current balance: {}",
-                    balance
-                )));
-            }
-            sat_from_big_decimal(&value, decimals)?
-        },
-        ChannelOpenAmount::Max => {
-            let fee = match platform_coin.get_tx_fee().await {
-                Ok(ActualTxFee::Fixed(f)) => f,
-                // P2WSH transactions are measured in vbytes and are always equal to 153 for BTC,
-                // but since the UtxoTxBuilder in generate_funding_transaction uses the actual bytes size
-                // which is equal to 234, 234 will be used for now.
-                // TODO: after the hotfix for update_fee_and_check_completeness to calculate the tx_size in vbytes,
-                // the vbytes size can be used here for this to reduce fees and to be generic over any other coin
-                Ok(ActualTxFee::Dynamic(f)) => f * 234 / 1000,
-                Ok(ActualTxFee::FixedPerKb(f)) => f * 234 / 1000,
-                Err(e) => return MmError::err(OpenChannelError::RpcError(e.to_string())),
-            };
-            let (unspents, _) = platform_coin
-                .ordered_mature_unspents(&platform_coin.as_ref().my_address)
-                .await?;
-            unspents.iter().fold(0, |sum, unspent| sum + unspent.value) - fee
+    let (unspents, _) = platform_coin
+        .ordered_mature_unspents(&platform_coin.as_ref().my_address)
+        .await?;
+    let (value, fee_policy) = match req.amount {
+        ChannelOpenAmount::Max => (
+            unspents.iter().fold(0, |sum, unspent| sum + unspent.value),
+            FeePolicy::DeductFromOutput(0),
+        ),
+        ChannelOpenAmount::Exact(v) => {
+            let value = sat_from_big_decimal(&v, decimals)?;
+            (value, FeePolicy::SendExact)
         },
     };
 
-    let (node_pubkey, node_addr) = parse_node_info(req.node_id.clone())?;
+    // The actual script_pubkey will replace this before signing the transaction after receiving the required
+    // output script from the other node when the channel is accepted
+    let script_pubkey =
+        Builder::build_witness_script(&AddressHashEnum::WitnessScriptHash(Default::default())).to_bytes();
+    let outputs = vec![TransactionOutput { value, script_pubkey }];
 
-    connect_to_node(node_pubkey, node_addr, ln_coin.peer_manager.clone()).await?;
+    let mut tx_builder = UtxoTxBuilder::new(&platform_coin)
+        .add_available_inputs(unspents)
+        .add_outputs(outputs)
+        .with_fee_policy(fee_policy);
 
+    let fee = platform_coin
+        .get_tx_fee()
+        .await
+        .map_err(|e| OpenChannelError::RpcError(e.to_string()))?;
+    tx_builder = tx_builder.with_fee(fee);
+
+    let (unsigned, _) = tx_builder.build().await?;
+
+    // Saving node data to reconnect to it on restart
     let ticker = ln_coin.ticker();
     let nodes_data = read_nodes_data_from_file(&nodes_data_path(&ctx, ticker))?;
     if !nodes_data.contains_key(&node_pubkey) {
@@ -482,11 +491,14 @@ pub async fn open_channel(ctx: MmArc, req: OpenChannelRequest) -> OpenChannelRes
 
     let temporary_channel_id = open_ln_channel(
         node_pubkey,
-        amount,
+        unsigned.outputs[0].value,
         request_id,
         req.announce_channel,
         ln_coin.channel_manager.clone(),
     )?;
+
+    let mut unsigned_funding_txs = ln_coin.platform_fields.unsigned_funding_txs.lock().await;
+    unsigned_funding_txs.insert(request_id, unsigned);
 
     Ok(OpenChannelResponse {
         temporary_channel_id,

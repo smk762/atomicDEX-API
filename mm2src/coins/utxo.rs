@@ -35,6 +35,7 @@ pub mod utxo_standard;
 
 use async_trait::async_trait;
 use bigdecimal::BigDecimal;
+use bitcoin::network::constants::Network as BitcoinNetwork;
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
 use chain::{OutPoint, TransactionInput, TransactionOutput, TxHashAlgo};
 use common::executor::{spawn, Timer};
@@ -353,7 +354,7 @@ impl RecentlySpentOutPoints {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub enum BlockchainNetwork {
     #[serde(rename = "mainnet")]
     Mainnet,
@@ -361,6 +362,16 @@ pub enum BlockchainNetwork {
     Testnet,
     #[serde(rename = "regtest")]
     Regtest,
+}
+
+impl From<BlockchainNetwork> for BitcoinNetwork {
+    fn from(network: BlockchainNetwork) -> Self {
+        match network {
+            BlockchainNetwork::Mainnet => BitcoinNetwork::Bitcoin,
+            BlockchainNetwork::Testnet => BitcoinNetwork::Testnet,
+            BlockchainNetwork::Regtest => BitcoinNetwork::Regtest,
+        }
+    }
 }
 
 #[derive(Debug)]

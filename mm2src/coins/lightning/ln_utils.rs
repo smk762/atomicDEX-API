@@ -13,9 +13,8 @@ use std::str::FromStr;
 
 cfg_native! {
     use crate::utxo::rpc_clients::{electrum_script_hash, BestBlock as RpcBestBlock, ElectrumBlockHeader, ElectrumClient,
-                                   ElectrumNonce};
-    use crate::utxo::utxo_common::UtxoTxBuilder;
-    use crate::utxo::{sign_tx, FeePolicy, UtxoCommonOps, UtxoTxGenerationOps};
+                                   ElectrumNonce, UtxoRpcError};
+    use crate::utxo::sign_tx;
     use bitcoin::blockdata::block::BlockHeader;
     use bitcoin::blockdata::constants::genesis_block;
     use bitcoin::blockdata::script::Script;
@@ -23,9 +22,9 @@ cfg_native! {
     use bitcoin::consensus::encode::deserialize;
     use bitcoin::hash_types::{BlockHash, TxMerkleNode, Txid};
     use bitcoin_hashes::{sha256d, Hash};
-    use chain::TransactionOutput;
     use common::executor::{spawn, Timer};
     use common::ip_addr::fetch_external_ip;
+    use common::jsonrpc_client::JsonRpcErrorType;
     use common::{block_on, log};
     use common::log::LogState;
     use futures::compat::Future01CompatExt;
@@ -84,13 +83,6 @@ pub type PeerManager = SimpleArcPeerManager<
     LogState,
 >;
 
-pub fn network_from_string(network: String) -> EnableLightningResult<Network> {
-    network
-        .as_str()
-        .parse::<Network>()
-        .map_to_mm(|e| EnableLightningError::InvalidRequest(e.to_string()))
-}
-
 // TODO: add TOR address option
 #[cfg(not(target_arch = "wasm32"))]
 fn netaddress_from_ipaddr(addr: IpAddr, port: u16) -> Vec<NetAddress> {
@@ -145,12 +137,12 @@ impl EventHandler for LightningEventHandler {
                 temporary_channel_id,
                 channel_value_satoshis,
                 output_script,
-                user_channel_id: _,
+                user_channel_id,
             } => {
-                let funding_tx = match block_on(generate_funding_transaction(
-                    *channel_value_satoshis,
+                let funding_tx = match block_on(sign_funding_transaction(
+                    user_channel_id,
                     output_script.clone(),
-                    self.filter.platform_coin.clone(),
+                    self.filter.clone(),
                 )) {
                     Ok(tx) => tx,
                     Err(e) => {
@@ -276,12 +268,13 @@ pub async fn start_lightning(
         .to_string();
     let persister = Arc::new(FilesystemPersister::new(ln_data_dir.clone()));
 
-    // Initialize the Filter. PlatformFields implements the Filter trait, so it'll act as our filter.
     let platform_fields = Arc::new(PlatformFields {
         platform_coin,
         registered_txs: AsyncMutex::new(HashMap::new()),
         registered_outputs: AsyncMutex::new(Vec::new()),
+        unsigned_funding_txs: AsyncMutex::new(HashMap::new()),
     });
+    // Initialize the Filter. PlatformFields implements the Filter trait, we can use it to construct the filter.
     let filter = Some(platform_fields.clone());
 
     // Initialize the ChainMonitor
@@ -555,6 +548,35 @@ fn cmp_txs_for_spending(spent_tx: &Transaction, spending_tx: &Transaction) -> Or
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+async fn process_tx_for_unconfirmation(txid: Txid, filter: Arc<PlatformFields>, channel_manager: Arc<ChannelManager>) {
+    if let Err(err) = filter
+        .platform_coin
+        .as_ref()
+        .rpc_client
+        .get_transaction_bytes(H256::from(txid.as_hash().into_inner()).reversed())
+        .compat()
+        .await
+        .map_err(|e| e.into_inner())
+    {
+        if let UtxoRpcError::ResponseParseError(ref json_err) = err {
+            if let JsonRpcErrorType::Response(_, _) = json_err.error {
+                log::info!(
+                    "Transaction {} is not found on chain :{}. The transaction will be re-broadcasted.",
+                    txid,
+                    err
+                );
+                channel_manager.transaction_unconfirmed(&txid);
+            }
+        }
+        log::error!(
+            "Error while trying to check if the transaction {} is discarded or not :{}",
+            txid,
+            err
+        );
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 async fn process_txs_confirmations(
     filter: Arc<PlatformFields>,
     client: ElectrumClient,
@@ -567,34 +589,11 @@ async fn process_txs_confirmations(
     let chain_monitor_relevant_txids = chain_monitor.get_relevant_txids();
 
     for txid in channel_manager_relevant_txids {
-        if filter
-            .platform_coin
-            .as_ref()
-            .rpc_client
-            .get_transaction_bytes(H256::from(txid.as_hash().into_inner()).reversed())
-            .compat()
-            .await
-            .is_err()
-        {
-            // If it's a connection error this will try to broadcast an already successfully broadcasted transaction
-            // which will be rejected, causing no problems and the transaction will be confirmed with transactions_confirmed
-            // later anyways
-            channel_manager.transaction_unconfirmed(&txid);
-        }
+        process_tx_for_unconfirmation(txid, filter.clone(), channel_manager.clone()).await;
     }
 
     for txid in chain_monitor_relevant_txids {
-        if filter
-            .platform_coin
-            .as_ref()
-            .rpc_client
-            .get_transaction_bytes(H256::from(txid.as_hash().into_inner()).reversed())
-            .compat()
-            .await
-            .is_err()
-        {
-            chain_monitor.transaction_unconfirmed(&txid);
-        }
+        process_tx_for_unconfirmation(txid, filter.clone(), channel_manager.clone()).await;
     }
 
     let mut registered_txs = filter.registered_txs.lock().await;
@@ -672,7 +671,17 @@ async fn process_txs_confirmations(
     let mut outputs_to_remove = Vec::new();
     let mut registered_outputs = filter.registered_outputs.lock().await;
     for output in registered_outputs.clone() {
-        let result = ln_rpc::find_watched_output_spend_with_header(&client, &output).await;
+        let result = match ln_rpc::find_watched_output_spend_with_header(&client, &output).await {
+            Ok(res) => res,
+            Err(e) => {
+                log::error!(
+                    "Error while trying to find if the registered output {:?} is spent: {}",
+                    output.outpoint,
+                    e
+                );
+                continue;
+            },
+        };
         if let Some((header, index, tx, height)) = result {
             if !transactions_to_confirm.iter().any(|info| info.txid == tx.txid()) {
                 let confirmed_transaction_info =
@@ -1020,30 +1029,23 @@ pub fn open_ln_channel(
 
 // Generates the raw funding transaction with one output equal to the channel value.
 #[cfg(not(target_arch = "wasm32"))]
-async fn generate_funding_transaction(
-    channel_value_satoshis: u64,
+async fn sign_funding_transaction(
+    request_id: &u64,
     output_script: Script,
-    coin: UtxoStandardCoin,
+    filter: Arc<PlatformFields>,
 ) -> OpenChannelResult<Transaction> {
-    let outputs = vec![TransactionOutput {
-        value: channel_value_satoshis,
-        script_pubkey: output_script.to_bytes().into(),
-    }];
+    let coin = &filter.platform_coin;
+    let mut unsigned = {
+        let unsigned_funding_txs = filter.unsigned_funding_txs.lock().await;
+        unsigned_funding_txs
+            .get(request_id)
+            .ok_or_else(|| {
+                OpenChannelError::InternalError(format!("Unsigned funding tx not found for request id: {}", request_id))
+            })?
+            .clone()
+    };
+    unsigned.outputs[0].script_pubkey = output_script.to_bytes().into();
 
-    let (unspents, _) = coin.ordered_mature_unspents(&coin.as_ref().my_address).await?;
-
-    let mut tx_builder = UtxoTxBuilder::new(&coin)
-        .add_available_inputs(unspents)
-        .add_outputs(outputs)
-        .with_fee_policy(FeePolicy::SendExact);
-
-    let fee = coin
-        .get_tx_fee()
-        .await
-        .map_err(|e| OpenChannelError::RpcError(e.to_string()))?;
-    tx_builder = tx_builder.with_fee(fee);
-
-    let (unsigned, _) = tx_builder.build().await?;
     let prev_script = Builder::build_p2pkh(&coin.as_ref().my_address.hash);
     let signed = sign_tx(
         unsigned,
