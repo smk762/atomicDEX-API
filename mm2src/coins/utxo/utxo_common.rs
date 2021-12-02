@@ -10,7 +10,7 @@ use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
-use common::{block_on, now_ms};
+use common::now_ms;
 use futures::compat::Future01CompatExt;
 use futures::future::{FutureExt, TryFutureExt};
 use futures01::future::Either;
@@ -1260,7 +1260,7 @@ where
     Box::new(fut.boxed().compat())
 }
 
-pub fn search_for_swap_tx_spend_my(
+pub async fn search_for_swap_tx_spend_my(
     coin: &UtxoCoinFields,
     time_lock: u32,
     other_pub: &[u8],
@@ -1269,7 +1269,7 @@ pub fn search_for_swap_tx_spend_my(
     output_index: usize,
     search_from_block: u64,
 ) -> Result<Option<FoundSwapTxSpend>, String> {
-    block_on(search_for_swap_output_spend(
+    search_for_swap_output_spend(
         coin,
         time_lock,
         coin.key_pair.public(),
@@ -1278,10 +1278,11 @@ pub fn search_for_swap_tx_spend_my(
         tx,
         output_index,
         search_from_block,
-    ))
+    )
+    .await
 }
 
-pub fn search_for_swap_tx_spend_other(
+pub async fn search_for_swap_tx_spend_other(
     coin: &UtxoCoinFields,
     time_lock: u32,
     other_pub: &[u8],
@@ -1290,7 +1291,7 @@ pub fn search_for_swap_tx_spend_other(
     output_index: usize,
     search_from_block: u64,
 ) -> Result<Option<FoundSwapTxSpend>, String> {
-    block_on(search_for_swap_output_spend(
+    search_for_swap_output_spend(
         coin,
         time_lock,
         &try_s!(Public::from_slice(other_pub)),
@@ -1299,7 +1300,8 @@ pub fn search_for_swap_tx_spend_other(
         tx,
         output_index,
         search_from_block,
-    ))
+    )
+    .await
 }
 
 /// Extract a secret from the `spend_tx`.

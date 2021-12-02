@@ -1,6 +1,5 @@
 use super::{lp_main, LpMainParams};
 use bigdecimal::BigDecimal;
-use common::block_on;
 use common::executor::Timer;
 use common::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status,
                         enable_native as enable_native_impl, enable_qrc20, find_metrics_in_json, from_env_file,
@@ -22,6 +21,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 cfg_native! {
+    use common::block_on
     use common::for_tests::{get_passphrase, new_mm2_temp_folder_path};
     use common::fs::slurp;
     use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
@@ -147,6 +147,7 @@ fn test_rpc() {
 
 /// This is not a separate test but a helper used by `MarketMakerIt` to run the MarketMaker from the test binary.
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_mm_start() {
     if let Ok(conf) = var("_MM2_TEST_CONF") {
         log!("test_mm_start] Starting the MarketMaker...");
@@ -681,6 +682,7 @@ fn test_p2wpkh_my_balance() {
     assert_eq!(my_address, "tb1qssfmay8nnghx7ynlznejnjxn6m4pemz9v7fsxy");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn check_set_price_fails(mm: &MarketMakerIt, base: &str, rel: &str) {
     let rc = block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -698,6 +700,7 @@ fn check_set_price_fails(mm: &MarketMakerIt, base: &str, rel: &str) {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn check_buy_fails(mm: &MarketMakerIt, base: &str, rel: &str, vol: f64) {
     let rc = block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -711,6 +714,7 @@ fn check_buy_fails(mm: &MarketMakerIt, base: &str, rel: &str, vol: f64) {
     assert!(rc.0.is_server_error(), "!buy success but should be error: {}", rc.1);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn check_sell_fails(mm: &MarketMakerIt, base: &str, rel: &str, vol: f64) {
     let rc = block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -2884,6 +2888,7 @@ fn orderbook_should_display_base_rel_volumes() {
     assert_eq!(&min_volume * &price, orderbook.bids[0].base_min_volume_rat);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn check_priv_key(mm: &MarketMakerIt, coin: &str, expected_priv_key: &str) {
     let rc = block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -3042,6 +3047,7 @@ fn test_electrum_and_enable_response() {
     assert_eq!(eth_response.get("mature_confirmations"), None);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn check_too_low_volume_order_creation_fails(mm: &MarketMakerIt, base: &str, rel: &str) {
     let rc = block_on(mm.rpc(json! ({
         "userpass": mm.userpass,
@@ -3813,6 +3819,7 @@ fn test_batch_requests() {
     assert!(responses[2]["error"].as_str().unwrap().contains("Userpass is invalid!"));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn request_metrics(mm: &MarketMakerIt) -> MetricsJson {
     let (status, metrics, _headers) = block_on(mm.rpc(json!({ "method": "metrics"}))).unwrap();
     assert_eq!(status, StatusCode::OK, "RPC «metrics» failed with status «{}»", status);
@@ -8304,6 +8311,7 @@ fn alice_can_see_the_active_order_after_orderbook_sync_segwit() {
     block_on(mm_alice.stop()).unwrap();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn request_and_check_orderbook_depth(mm_alice: &MarketMakerIt) {
     let rc = block_on(mm_alice.rpc(json! ({
         "userpass": mm_alice.userpass,

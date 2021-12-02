@@ -707,6 +707,7 @@ impl MarketCoinOps for ZCoin {
     fn min_trading_vol(&self) -> MmNumber { utxo_common::min_trading_vol(self.as_ref()) }
 }
 
+#[async_trait]
 impl SwapOps for ZCoin {
     fn send_taker_fee(&self, _fee_addr: &[u8], amount: BigDecimal, uuid: &[u8]) -> TransactionFut {
         let selfi = self.clone();
@@ -980,7 +981,7 @@ impl SwapOps for ZCoin {
         utxo_common::check_if_my_payment_sent(self.clone(), time_lock, other_pub, secret_hash)
     }
 
-    fn search_for_swap_tx_spend_my(
+    async fn search_for_swap_tx_spend_my(
         &self,
         time_lock: u32,
         other_pub: &[u8],
@@ -998,9 +999,10 @@ impl SwapOps for ZCoin {
             utxo_common::DEFAULT_SWAP_VOUT,
             search_from_block,
         )
+        .await
     }
 
-    fn search_for_swap_tx_spend_other(
+    async fn search_for_swap_tx_spend_other(
         &self,
         time_lock: u32,
         other_pub: &[u8],
@@ -1018,6 +1020,7 @@ impl SwapOps for ZCoin {
             utxo_common::DEFAULT_SWAP_VOUT,
             search_from_block,
         )
+        .await
     }
 
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {

@@ -1046,8 +1046,7 @@ pub fn var(name: &str) -> Result<String, String> {
 #[cfg(target_arch = "wasm32")]
 pub fn var(_name: &str) -> Result<String, String> { ERR!("Environment variable not supported in WASM") }
 
-/// TODO make it wasm32 only
-/// #[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn block_on<F>(f: F) -> F::Output
 where
     F: Future03,
@@ -1058,7 +1057,18 @@ where
         log!("block_on at\n"(trace));
     }
 
-    futures::executor::block_on(f)
+    wio::CORE.0.block_on(f)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn async_blocking<F, R>(blocking_fn: F) -> R
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    tokio::task::spawn_blocking(blocking_fn)
+        .await
+        .expect("spawn_blocking to succeed")
 }
 
 #[cfg(target_arch = "wasm32")]

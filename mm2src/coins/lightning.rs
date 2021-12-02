@@ -12,7 +12,7 @@ use ln_utils::{network_from_string, start_lightning, LightningConf};
 use super::{lp_coinfind_or_err, MmCoinEnum};
 
 mod ln_errors;
-mod ln_rpc;
+#[cfg(not(target_arch = "wasm32"))] mod ln_rpc;
 #[cfg(not(target_arch = "wasm32"))] mod ln_utils;
 
 #[derive(Deserialize)]

@@ -421,10 +421,16 @@ mod docker_tests {
             .wait()
             .unwrap();
 
-        let found = coin
-            .search_for_swap_tx_spend_my(time_lock, &*coin.my_public_key(), &[0; 20], &tx.tx_hex(), 0, &None)
-            .unwrap()
-            .unwrap();
+        let found = block_on(coin.search_for_swap_tx_spend_my(
+            time_lock,
+            &*coin.my_public_key(),
+            &[0; 20],
+            &tx.tx_hex(),
+            0,
+            &None,
+        ))
+        .unwrap()
+        .unwrap();
         assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
     }
 
@@ -452,10 +458,16 @@ mod docker_tests {
             .wait()
             .unwrap();
 
-        let found = coin
-            .search_for_swap_tx_spend_my(time_lock, &*coin.my_public_key(), &[0; 20], &tx.tx_hex(), 0, &None)
-            .unwrap()
-            .unwrap();
+        let found = block_on(coin.search_for_swap_tx_spend_my(
+            time_lock,
+            &*coin.my_public_key(),
+            &[0; 20],
+            &tx.tx_hex(),
+            0,
+            &None,
+        ))
+        .unwrap()
+        .unwrap();
         assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
     }
 
@@ -484,17 +496,16 @@ mod docker_tests {
             .wait()
             .unwrap();
 
-        let found = coin
-            .search_for_swap_tx_spend_my(
-                time_lock,
-                &*coin.my_public_key(),
-                &*dhash160(&secret),
-                &tx.tx_hex(),
-                0,
-                &None,
-            )
-            .unwrap()
-            .unwrap();
+        let found = block_on(coin.search_for_swap_tx_spend_my(
+            time_lock,
+            &*coin.my_public_key(),
+            &*dhash160(&secret),
+            &tx.tx_hex(),
+            0,
+            &None,
+        ))
+        .unwrap()
+        .unwrap();
         assert_eq!(FoundSwapTxSpend::Spent(spend_tx), found);
     }
 
@@ -523,17 +534,16 @@ mod docker_tests {
             .wait()
             .unwrap();
 
-        let found = coin
-            .search_for_swap_tx_spend_my(
-                time_lock,
-                &*coin.my_public_key(),
-                &*dhash160(&secret),
-                &tx.tx_hex(),
-                0,
-                &None,
-            )
-            .unwrap()
-            .unwrap();
+        let found = block_on(coin.search_for_swap_tx_spend_my(
+            time_lock,
+            &*coin.my_public_key(),
+            &*dhash160(&secret),
+            &tx.tx_hex(),
+            0,
+            &None,
+        ))
+        .unwrap()
+        .unwrap();
         assert_eq!(FoundSwapTxSpend::Spent(spend_tx), found);
     }
 

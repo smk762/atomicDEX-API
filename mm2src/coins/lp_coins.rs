@@ -97,6 +97,7 @@ use qrc20::{qrc20_coin_from_conf_and_params, Qrc20Coin, Qrc20FeeDetails};
 
 pub mod lightning;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod sql_tx_history_storage;
 
 #[doc(hidden)]
@@ -213,6 +214,7 @@ pub enum NegotiateSwapContractAddrErr {
 }
 
 /// Swap operations (mostly based on the Hash/Time locked transactions implemented by coin wallets).
+#[async_trait]
 pub trait SwapOps {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal, uuid: &[u8]) -> TransactionFut;
 
@@ -309,7 +311,7 @@ pub trait SwapOps {
         swap_contract_address: &Option<BytesJson>,
     ) -> Box<dyn Future<Item = Option<TransactionEnum>, Error = String> + Send>;
 
-    fn search_for_swap_tx_spend_my(
+    async fn search_for_swap_tx_spend_my(
         &self,
         time_lock: u32,
         other_pub: &[u8],
@@ -319,7 +321,7 @@ pub trait SwapOps {
         swap_contract_address: &Option<BytesJson>,
     ) -> Result<Option<FoundSwapTxSpend>, String>;
 
-    fn search_for_swap_tx_spend_other(
+    async fn search_for_swap_tx_spend_other(
         &self,
         time_lock: u32,
         other_pub: &[u8],
@@ -2263,7 +2265,7 @@ pub trait TxHistoryStorage: Send + Sync + 'static {
     async fn add_transactions(
         &self,
         collection_id: &str,
-        transactions: &[TransactionDetails],
+        transactions: impl IntoIterator<Item = TransactionDetails> + Send + 'static,
     ) -> Result<(), MmError<Self::Error>>;
 
     /// Removes the transaction by internal_id from the selected collection in the storage

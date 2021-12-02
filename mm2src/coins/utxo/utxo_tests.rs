@@ -432,17 +432,16 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
         .unwrap();
     let spend_tx = TransactionEnum::UtxoTx(deserialize(spend_tx_bytes.as_slice()).unwrap());
 
-    let found = coin
-        .search_for_swap_tx_spend_my(
-            1591928233,
-            &*coin.my_public_key(),
-            &*dhash160(&secret),
-            &payment_tx_bytes,
-            0,
-            &None,
-        )
-        .unwrap()
-        .unwrap();
+    let found = block_on(coin.search_for_swap_tx_spend_my(
+        1591928233,
+        &*coin.my_public_key(),
+        &*dhash160(&secret),
+        &payment_tx_bytes,
+        0,
+        &None,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(FoundSwapTxSpend::Spent(spend_tx), found);
 }
 
@@ -465,17 +464,16 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
         .unwrap();
     let refund_tx = TransactionEnum::UtxoTx(deserialize(refund_tx_bytes.as_slice()).unwrap());
 
-    let found = coin
-        .search_for_swap_tx_spend_my(
-            1591933469,
-            coin.as_ref().key_pair.public(),
-            &secret,
-            &payment_tx_bytes,
-            0,
-            &None,
-        )
-        .unwrap()
-        .unwrap();
+    let found = block_on(coin.search_for_swap_tx_spend_my(
+        1591933469,
+        coin.as_ref().key_pair.public(),
+        &secret,
+        &payment_tx_bytes,
+        0,
+        &None,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
 }
 

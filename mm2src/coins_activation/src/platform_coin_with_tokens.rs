@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use async_trait::async_trait;
+#[cfg(not(target_arch = "wasm32"))]
 use coins::sql_tx_history_storage::SqliteTxHistoryStorage;
 use coins::{lp_coinfind, CoinProtocol, CoinsContext, MmCoinEnum, TxHistoryStorage};
 use common::mm_ctx::MmArc;
@@ -285,6 +286,7 @@ where
 
     let activation_result = platform_coin.get_activation_result().await?;
     if req.request.tx_history_enabled() {
+        #[cfg(not(target_arch = "wasm32"))]
         platform_coin.start_history_background_fetching(
             ctx.metrics.clone(),
             SqliteTxHistoryStorage(ctx.sqlite_connection.as_option().unwrap().clone()),

@@ -542,14 +542,14 @@ fn test_search_for_swap_tx_spend_taker_spent() {
         .wait()
         .unwrap();
 
-    let actual = maker_coin.search_for_swap_tx_spend_my(
+    let actual = block_on(maker_coin.search_for_swap_tx_spend_my(
         timelock,
         taker_pub,
         secret_hash,
         &payment_tx_hex,
         search_from_block,
         &maker_coin.swap_contract_address(),
-    );
+    ));
     let expected = Ok(Some(FoundSwapTxSpend::Spent(spend)));
     assert_eq!(actual, expected);
 }
@@ -608,14 +608,14 @@ fn test_search_for_swap_tx_spend_maker_refunded() {
         .wait()
         .unwrap();
 
-    let actual = maker_coin.search_for_swap_tx_spend_my(
+    let actual = block_on(maker_coin.search_for_swap_tx_spend_my(
         timelock,
         &taker_pub,
         secret_hash,
         &payment_tx_hex,
         search_from_block,
         &maker_coin.swap_contract_address(),
-    );
+    ));
     let expected = Ok(Some(FoundSwapTxSpend::Refunded(refund)));
     assert_eq!(actual, expected);
 }
@@ -654,14 +654,14 @@ fn test_search_for_swap_tx_spend_not_spent() {
         .wait()
         .unwrap();
 
-    let actual = maker_coin.search_for_swap_tx_spend_my(
+    let actual = block_on(maker_coin.search_for_swap_tx_spend_my(
         timelock,
         &taker_pub,
         secret_hash,
         &payment_tx_hex,
         search_from_block,
         &maker_coin.swap_contract_address(),
-    );
+    ));
     // maker payment hasn't been spent or refunded yet
     assert_eq!(actual, Ok(None));
 }
@@ -1319,10 +1319,10 @@ fn test_search_for_segwit_swap_tx_spend_native_was_refunded_maker() {
         .wait()
         .unwrap();
 
-    let found = coin
-        .search_for_swap_tx_spend_my(time_lock, &*coin.my_public_key(), &[0; 20], &tx.tx_hex(), 0, &None)
-        .unwrap()
-        .unwrap();
+    let found =
+        block_on(coin.search_for_swap_tx_spend_my(time_lock, &*coin.my_public_key(), &[0; 20], &tx.tx_hex(), 0, &None))
+            .unwrap()
+            .unwrap();
     assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
 }
 
@@ -1351,10 +1351,10 @@ fn test_search_for_segwit_swap_tx_spend_native_was_refunded_taker() {
         .wait()
         .unwrap();
 
-    let found = coin
-        .search_for_swap_tx_spend_my(time_lock, &*coin.my_public_key(), &[0; 20], &tx.tx_hex(), 0, &None)
-        .unwrap()
-        .unwrap();
+    let found =
+        block_on(coin.search_for_swap_tx_spend_my(time_lock, &*coin.my_public_key(), &[0; 20], &tx.tx_hex(), 0, &None))
+            .unwrap()
+            .unwrap();
     assert_eq!(FoundSwapTxSpend::Refunded(refund_tx), found);
 }
 
