@@ -2259,6 +2259,13 @@ pub trait TxHistoryStorage: Send + Sync + 'static {
         transaction: &TransactionDetails,
     ) -> Result<(), MmError<Self::Error>>;
 
+    /// Adds multiples transactions to the selected collection in the storage
+    async fn add_transactions(
+        &self,
+        collection_id: &str,
+        transactions: &[TransactionDetails],
+    ) -> Result<(), MmError<Self::Error>>;
+
     /// Removes the transaction by internal_id from the selected collection in the storage
     async fn remove_transaction(
         &self,
