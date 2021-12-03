@@ -1,20 +1,23 @@
 use super::RequestTxHistoryResult;
 use crate::utxo::bch::BchCoin;
+use crate::utxo::utxo_common;
 use crate::utxo::UtxoStandardOps;
-use crate::{MarketCoinOps, TxHistoryStorage};
+use crate::{HistorySyncState, MarketCoinOps, TxHistoryStorage};
 use async_trait::async_trait;
 use common::executor::Timer;
-use common::log::error;
+use common::log::{error, info};
 use common::mm_metrics::MetricsArc;
 use common::mm_number::BigDecimal;
 use common::state_machine::prelude::*;
 use futures::compat::Future01CompatExt;
 use rpc::v1::types::H256 as H256Json;
+use std::collections::HashMap;
 
 struct BchAndSlpHistoryCtx<Storage: TxHistoryStorage> {
     coin: BchCoin,
     storage: Storage,
     metrics: MetricsArc,
+    current_balance: BigDecimal,
 }
 
 // States have to be generic over storage type because BchAndSlpHistoryCtx is generic over it
@@ -38,34 +41,25 @@ impl<T: TxHistoryStorage> State for Init<T> {
     type Result = ();
 
     async fn on_changed(self: Box<Self>, ctx: &mut BchAndSlpHistoryCtx<T>) -> StateResult<BchAndSlpHistoryCtx<T>, ()> {
+        *ctx.coin.as_ref().history_sync_state.lock().unwrap() = HistorySyncState::NotStarted;
+
         if let Err(e) = ctx.storage.init_collection(ctx.coin.ticker()).await {
             return Self::change_state(Stopped::storage_error(e));
         }
 
-        let initial_balance = loop {
-            match ctx.coin.my_balance().compat().await {
-                Ok(coin_balance) => break coin_balance.into_total(),
-                Err(e) => {
-                    error!("Error {} on balance fetching for the coin {}", e, ctx.coin.ticker());
-                    Timer::sleep(30.).await;
-                },
-            }
-        };
-        Self::change_state(FetchingTxHashes::new(initial_balance))
+        Self::change_state(FetchingTxHashes::new())
     }
 }
 
 // States have to be generic over storage type because BchAndSlpHistoryCtx is generic over it
 struct FetchingTxHashes<T> {
     phantom: std::marker::PhantomData<T>,
-    current_balance: BigDecimal,
 }
 
 impl<T> FetchingTxHashes<T> {
-    fn new(current_balance: BigDecimal) -> Self {
+    fn new() -> Self {
         FetchingTxHashes {
             phantom: Default::default(),
-            current_balance,
         }
     }
 }
@@ -86,14 +80,23 @@ impl<T: TxHistoryStorage> State for FetchingTxHashes<T> {
 
         let maybe_tx_ids = ctx.coin.request_tx_history(ctx.metrics.clone()).await;
         match maybe_tx_ids {
-            RequestTxHistoryResult::Ok(all_tx_ids_with_height) => Self::change_state(UpdatingUnconfirmedTxes::new(
-                all_tx_ids_with_height,
-                self.current_balance,
-            )),
+            RequestTxHistoryResult::Ok(all_tx_ids_with_height) => {
+                let in_storage = match ctx.storage.unique_tx_hashes_num(ctx.coin.ticker()).await {
+                    Ok(num) => num,
+                    Err(e) => return Self::change_state(Stopped::storage_error(e)),
+                };
+                if all_tx_ids_with_height.len() > in_storage {
+                    let txes_left = all_tx_ids_with_height.len() - in_storage;
+                    *ctx.coin.as_ref().history_sync_state.lock().unwrap() =
+                        HistorySyncState::InProgress(json!({ "transactions_left": txes_left }));
+                }
+
+                Self::change_state(UpdatingUnconfirmedTxes::new(all_tx_ids_with_height))
+            },
             RequestTxHistoryResult::HistoryTooLarge => Self::change_state(Stopped::<T, T::Error>::history_too_large()),
             RequestTxHistoryResult::Retry { error } => {
                 error!("Error {} on requesting tx history for {}", error, ctx.coin.ticker());
-                Self::change_state(OnIoErrorCooldown::new(self.current_balance))
+                Self::change_state(OnIoErrorCooldown::new())
             },
             RequestTxHistoryResult::CriticalError(e) => {
                 error!(
@@ -110,19 +113,18 @@ impl<T: TxHistoryStorage> State for FetchingTxHashes<T> {
 // States have to be generic over storage type because BchAndSlpHistoryCtx is generic over it
 struct OnIoErrorCooldown<T> {
     phantom: std::marker::PhantomData<T>,
-    current_balance: BigDecimal,
 }
 
 impl<T> OnIoErrorCooldown<T> {
-    fn new(current_balance: BigDecimal) -> Self {
+    fn new() -> Self {
         OnIoErrorCooldown {
             phantom: Default::default(),
-            current_balance,
         }
     }
 }
 
 impl<T> TransitionFrom<FetchingTxHashes<T>> for OnIoErrorCooldown<T> {}
+impl<T> TransitionFrom<FetchingTransactionsData<T>> for OnIoErrorCooldown<T> {}
 
 #[async_trait]
 impl<T: TxHistoryStorage> State for OnIoErrorCooldown<T> {
@@ -131,24 +133,24 @@ impl<T: TxHistoryStorage> State for OnIoErrorCooldown<T> {
 
     async fn on_changed(self: Box<Self>, _ctx: &mut BchAndSlpHistoryCtx<T>) -> StateResult<BchAndSlpHistoryCtx<T>, ()> {
         Timer::sleep(30.).await;
-        Self::change_state(FetchingTxHashes::new(self.current_balance))
+        Self::change_state(FetchingTxHashes::new())
     }
 }
 
 // States have to be generic over storage type because BchAndSlpHistoryCtx is generic over it
 struct WaitForHistoryUpdateTrigger<T> {
     phantom: std::marker::PhantomData<T>,
-    current_balance: BigDecimal,
 }
 
 impl<T> WaitForHistoryUpdateTrigger<T> {
-    fn new(current_balance: BigDecimal) -> Self {
+    fn new() -> Self {
         WaitForHistoryUpdateTrigger {
             phantom: Default::default(),
-            current_balance,
         }
     }
 }
+
+impl<T> TransitionFrom<FetchingTransactionsData<T>> for WaitForHistoryUpdateTrigger<T> {}
 
 #[async_trait]
 impl<T: TxHistoryStorage> State for WaitForHistoryUpdateTrigger<T> {
@@ -161,7 +163,7 @@ impl<T: TxHistoryStorage> State for WaitForHistoryUpdateTrigger<T> {
             match ctx.storage.contains_unconfirmed_transactions(ctx.coin.ticker()).await {
                 Ok(contains) => {
                     if contains {
-                        return Self::change_state(FetchingTxHashes::new(self.current_balance));
+                        return Self::change_state(FetchingTxHashes::new());
                     }
                 },
                 Err(e) => return Self::change_state(Stopped::storage_error(e)),
@@ -170,8 +172,9 @@ impl<T: TxHistoryStorage> State for WaitForHistoryUpdateTrigger<T> {
             match ctx.coin.my_balance().compat().await {
                 Ok(balance) => {
                     let total_balance = balance.into_total();
-                    if self.current_balance != total_balance {
-                        return Self::change_state(FetchingTxHashes::new(total_balance));
+                    if ctx.current_balance != total_balance {
+                        ctx.current_balance = total_balance;
+                        return Self::change_state(FetchingTxHashes::new());
                     }
                 },
                 Err(e) => {
@@ -186,15 +189,13 @@ impl<T: TxHistoryStorage> State for WaitForHistoryUpdateTrigger<T> {
 struct UpdatingUnconfirmedTxes<T> {
     phantom: std::marker::PhantomData<T>,
     all_tx_ids_with_height: Vec<(H256Json, u64)>,
-    current_balance: BigDecimal,
 }
 
 impl<T> UpdatingUnconfirmedTxes<T> {
-    fn new(all_tx_ids_with_height: Vec<(H256Json, u64)>, current_balance: BigDecimal) -> Self {
+    fn new(all_tx_ids_with_height: Vec<(H256Json, u64)>) -> Self {
         UpdatingUnconfirmedTxes {
             phantom: Default::default(),
             all_tx_ids_with_height,
-            current_balance,
         }
     }
 }
@@ -213,7 +214,7 @@ impl<T: TxHistoryStorage> State for UpdatingUnconfirmedTxes<T> {
                     let found = self
                         .all_tx_ids_with_height
                         .iter()
-                        .find(|(hash, height)| hash.0.as_ref() == tx.tx_hash.0.as_slice());
+                        .find(|(hash, _)| hash.0.as_ref() == tx.tx_hash.0.as_slice());
                     match found {
                         Some((_, height)) => {
                             tx.block_height = *height;
@@ -230,10 +231,7 @@ impl<T: TxHistoryStorage> State for UpdatingUnconfirmedTxes<T> {
                         },
                     }
                 }
-                Self::change_state(FetchingTransactionsData::new(
-                    self.all_tx_ids_with_height,
-                    self.current_balance,
-                ))
+                Self::change_state(FetchingTransactionsData::new(self.all_tx_ids_with_height))
             },
             Err(e) => Self::change_state(Stopped::storage_error(e)),
         }
@@ -244,17 +242,15 @@ impl<T: TxHistoryStorage> State for UpdatingUnconfirmedTxes<T> {
 struct FetchingTransactionsData<T> {
     phantom: std::marker::PhantomData<T>,
     all_tx_ids_with_height: Vec<(H256Json, u64)>,
-    current_balance: BigDecimal,
 }
 
 impl<T> TransitionFrom<UpdatingUnconfirmedTxes<T>> for FetchingTransactionsData<T> {}
 
 impl<T> FetchingTransactionsData<T> {
-    fn new(all_tx_ids_with_height: Vec<(H256Json, u64)>, current_balance: BigDecimal) -> Self {
+    fn new(all_tx_ids_with_height: Vec<(H256Json, u64)>) -> Self {
         FetchingTransactionsData {
             phantom: Default::default(),
             all_tx_ids_with_height,
-            current_balance,
         }
     }
 }
@@ -265,10 +261,44 @@ impl<T: TxHistoryStorage> State for FetchingTransactionsData<T> {
     type Result = ();
 
     async fn on_changed(self: Box<Self>, ctx: &mut BchAndSlpHistoryCtx<T>) -> StateResult<BchAndSlpHistoryCtx<T>, ()> {
-        unimplemented!()
+        for (tx_hash, _) in self.all_tx_ids_with_height {
+            let tx_hash_string = format!("{:02x}", tx_hash);
+            match ctx
+                .storage
+                .has_transactions_with_hash(ctx.coin.ticker(), &tx_hash_string)
+                .await
+            {
+                Ok(true) => continue,
+                Ok(false) => (),
+                Err(e) => return Self::change_state(Stopped::storage_error(e)),
+            }
+
+            let tx_details = match ctx.coin.tx_details_by_hash(&tx_hash.0, &mut HashMap::new()).await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    error!(
+                        "Error {} on getting {} tx details for hash {:02x}",
+                        e,
+                        ctx.coin.ticker(),
+                        tx_hash
+                    );
+                    return Self::change_state(OnIoErrorCooldown::new());
+                },
+            };
+
+            if let Err(e) = ctx.storage.add_transaction(ctx.coin.ticker(), &tx_details).await {
+                return Self::change_state(Stopped::storage_error(e));
+            }
+
+            // wait for for one second to reduce the number of requests to electrum servers
+            Timer::sleep(1.).await;
+        }
+        *ctx.coin.as_ref().history_sync_state.lock().unwrap() = HistorySyncState::Finished;
+        Self::change_state(WaitForHistoryUpdateTrigger::new())
     }
 }
 
+#[derive(Debug)]
 enum StopReason<E> {
     HistoryTooLarge,
     StorageError(E),
@@ -306,17 +336,44 @@ impl<T, E> Stopped<T, E> {
 impl<T, E> TransitionFrom<FetchingTxHashes<T>> for Stopped<T, E> {}
 impl<T, E> TransitionFrom<UpdatingUnconfirmedTxes<T>> for Stopped<T, E> {}
 impl<T, E> TransitionFrom<WaitForHistoryUpdateTrigger<T>> for Stopped<T, E> {}
+impl<T, E> TransitionFrom<FetchingTransactionsData<T>> for Stopped<T, E> {}
 
 #[async_trait]
-impl<T: TxHistoryStorage, E: Send + 'static> LastState for Stopped<T, E> {
+impl<T: TxHistoryStorage, E: std::fmt::Debug + Send + 'static> LastState for Stopped<T, E> {
     type Ctx = BchAndSlpHistoryCtx<T>;
     type Result = ();
 
-    async fn on_changed(self: Box<Self>, ctx: &mut Self::Ctx) -> Self::Result { todo!() }
+    async fn on_changed(self: Box<Self>, ctx: &mut Self::Ctx) -> Self::Result {
+        info!(
+            "Stopping tx history fetching for {}. Reason: {:?}",
+            ctx.coin.ticker(),
+            self.stop_reason
+        );
+        let new_state_json = match self.stop_reason {
+            StopReason::HistoryTooLarge => json!({
+                "code": utxo_common::HISTORY_TOO_LARGE_ERR_CODE,
+                "message": "Got `history too large` error from Electrum server. History is not available",
+            }),
+            reason => json!({
+                "message": format!("{:?}", reason),
+            }),
+        };
+        *ctx.coin.as_ref().history_sync_state.lock().unwrap() = HistorySyncState::Error(new_state_json);
+    }
 }
 
-pub async fn bch_and_slp_history_loop(coin: BchCoin, storage: impl TxHistoryStorage, metrics: MetricsArc) {
-    let ctx = BchAndSlpHistoryCtx { coin, storage, metrics };
+pub async fn bch_and_slp_history_loop(
+    coin: BchCoin,
+    storage: impl TxHistoryStorage,
+    metrics: MetricsArc,
+    current_balance: BigDecimal,
+) {
+    let ctx = BchAndSlpHistoryCtx {
+        coin,
+        storage,
+        metrics,
+        current_balance,
+    };
     let state_machine: StateMachine<_, ()> = StateMachine::from_ctx(ctx);
     state_machine.run(Init::new()).await;
 }

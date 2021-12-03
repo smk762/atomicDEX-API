@@ -21,7 +21,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 cfg_native! {
-    use common::block_on
+    use common::block_on;
     use common::for_tests::{get_passphrase, new_mm2_temp_folder_path};
     use common::fs::slurp;
     use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;

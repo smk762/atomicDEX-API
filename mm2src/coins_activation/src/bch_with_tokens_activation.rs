@@ -1,6 +1,4 @@
-use crate::platform_coin_with_tokens::{EnablePlatformCoinWithTokensError, PlatformWithTokensActivationOps,
-                                       RegisterTokenInfo, TokenActivationParams, TokenActivationRequest,
-                                       TokenAsMmCoinInitializer, TokenInitializer, TokenOf};
+use crate::platform_coin_with_tokens::*;
 use crate::prelude::*;
 use crate::slp_token_activation::SlpActivationRequest;
 use async_trait::async_trait;
@@ -14,6 +12,7 @@ use common::executor::spawn;
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsArc;
+use common::mm_number::BigDecimal;
 use common::Future01CompatExt;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value as Json;
@@ -128,6 +127,16 @@ pub struct BchWithTokensActivationResult {
     slp_addresses_infos: HashMap<String, CoinAddressInfo<TokenBalances>>,
 }
 
+impl GetPlatformBalance for BchWithTokensActivationResult {
+    fn get_platform_balance(&self) -> BigDecimal {
+        self.bch_addresses_infos
+            .iter()
+            .fold(BigDecimal::from(0), |total, (_, addr_info)| {
+                &total + &addr_info.balances.get_total()
+            })
+    }
+}
+
 #[derive(Debug)]
 pub enum BchWithTokensActivationError {
     PlatformCoinCreationError {
@@ -234,7 +243,17 @@ impl PlatformWithTokensActivationOps for BchCoin {
         Ok(result)
     }
 
-    fn start_history_background_fetching(&self, metrics: MetricsArc, storage: impl TxHistoryStorage + Send + 'static) {
-        spawn(bch_and_slp_history_loop(self.clone(), storage, metrics))
+    fn start_history_background_fetching(
+        &self,
+        metrics: MetricsArc,
+        storage: impl TxHistoryStorage + Send + 'static,
+        initial_balance: BigDecimal,
+    ) {
+        spawn(bch_and_slp_history_loop(
+            self.clone(),
+            storage,
+            metrics,
+            initial_balance,
+        ))
     }
 }

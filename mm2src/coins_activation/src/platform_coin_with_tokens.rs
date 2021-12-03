@@ -6,6 +6,7 @@ use coins::{lp_coinfind, CoinProtocol, CoinsContext, MmCoinEnum, TxHistoryStorag
 use common::mm_ctx::MmArc;
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsArc;
+use common::mm_number::BigDecimal;
 use common::{HttpStatusCode, NotSame, StatusCode};
 use derive_more::Display;
 use ser_error_derive::SerializeErrorType;
@@ -128,11 +129,15 @@ where
     }
 }
 
+pub trait GetPlatformBalance {
+    fn get_platform_balance(&self) -> BigDecimal;
+}
+
 #[async_trait]
 pub trait PlatformWithTokensActivationOps: Into<MmCoinEnum> {
     type ActivationRequest: Clone + Send + Sync + TxHistoryEnabled;
     type PlatformProtocolInfo: TryFromCoinProtocol;
-    type ActivationResult;
+    type ActivationResult: GetPlatformBalance;
     type ActivationError: NotMmError;
 
     /// Initializes the platform coin itself
@@ -151,7 +156,12 @@ pub trait PlatformWithTokensActivationOps: Into<MmCoinEnum> {
 
     async fn get_activation_result(&self) -> Result<Self::ActivationResult, MmError<Self::ActivationError>>;
 
-    fn start_history_background_fetching(&self, metrics: MetricsArc, storage: impl TxHistoryStorage + Send + 'static);
+    fn start_history_background_fetching(
+        &self,
+        metrics: MetricsArc,
+        storage: impl TxHistoryStorage + Send + 'static,
+        initial_balance: BigDecimal,
+    );
 }
 
 #[derive(Debug, Deserialize)]
@@ -290,6 +300,7 @@ where
         platform_coin.start_history_background_fetching(
             ctx.metrics.clone(),
             SqliteTxHistoryStorage(ctx.sqlite_connection.as_option().unwrap().clone()),
+            activation_result.get_platform_balance(),
         );
     }
 

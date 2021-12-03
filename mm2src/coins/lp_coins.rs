@@ -560,6 +560,7 @@ pub enum TransactionType {
     StakingDelegation,
     RemoveDelegation,
     StandardTransfer,
+    TokenTransfer(BytesJson),
 }
 
 impl Default for TransactionType {
@@ -652,6 +653,8 @@ pub struct CoinBalance {
 
 impl CoinBalance {
     pub fn into_total(self) -> BigDecimal { self.spendable + self.unspendable }
+
+    pub fn get_total(&self) -> BigDecimal { &self.spendable + &self.unspendable }
 }
 
 /// The approximation is needed to cover the dynamic miner fee changing during a swap.
@@ -2297,4 +2300,12 @@ pub trait TxHistoryStorage: Send + Sync + 'static {
         collection_id: &str,
         tx: &TransactionDetails,
     ) -> Result<(), MmError<Self::Error>>;
+
+    async fn has_transactions_with_hash(
+        &self,
+        collection_id: &str,
+        tx_hash: &str,
+    ) -> Result<bool, MmError<Self::Error>>;
+
+    async fn unique_tx_hashes_num(&self, collection_id: &str) -> Result<usize, MmError<Self::Error>>;
 }
