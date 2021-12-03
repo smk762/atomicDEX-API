@@ -1902,7 +1902,6 @@ mod docker_tests {
 
         let priv_key = SecretKey::new(&mut rand6::thread_rng());
         let fill_balance_functor = |amount: BigDecimal| {
-            //let low_balance = MmNumber::from("0.000015").to_decimal()
             let (_ctx, mycoin) = utxo_coin_from_privkey("MYCOIN", priv_key.as_ref());
             let my_address = mycoin.my_address().expect("!my_address");
             fill_address(&mycoin, &my_address, amount, 30);
