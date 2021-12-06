@@ -1429,7 +1429,11 @@ where
     };
     let outputs = vec![TransactionOutput { value, script_pubkey }];
     let fee = match req.fee {
-        Some(WithdrawFee::UtxoPerKbyte { amount }) | Some(WithdrawFee::UtxoFixed { amount }) => {
+        Some(WithdrawFee::UtxoFixed { amount }) => {
+            let fixed = sat_from_big_decimal(&amount, decimals)?;
+            Some(ActualTxFee::FixedPerKb(fixed))
+        },
+        Some(WithdrawFee::UtxoPerKbyte { amount }) => {
             let dynamic = sat_from_big_decimal(&amount, decimals)?;
             Some(ActualTxFee::Dynamic(dynamic))
         },

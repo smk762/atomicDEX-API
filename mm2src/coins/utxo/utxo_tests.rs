@@ -494,7 +494,7 @@ fn test_withdraw_impl_set_fixed_fee() {
     };
     let expected = Some(
         UtxoFeeDetails {
-            amount: "0.0245".parse().unwrap(),
+            amount: "0.1".parse().unwrap(),
         }
         .into(),
     );
