@@ -6725,31 +6725,8 @@ fn test_update_maker_order_fail() {
         "update_maker_order success, but should be error {}",
         update_maker_order.1
     );
-
-    log!("Issue bob batch update maker order and cancel order request that should make update maker order fail because Order with UUID has been deleted");
-    let batch_json = json!([
-        {
-            "userpass": mm_bob.userpass,
-            "method": "update_maker_order",
-            "uuid": uuid,
-            "new_price": 1,
-            "volume_delta": 2.9,
-        },
-        {
-            "userpass": mm_bob.userpass,
-            "method": "cancel_order",
-            "uuid": uuid,
-        },
-    ]);
-
-    let rc = block_on(mm_bob.rpc(batch_json)).unwrap();
-    assert!(rc.0.is_success(), "!batch: {}", rc.1);
-    log!((rc.1));
-    let responses = json::from_str::<Vec<Json>>(&rc.1).unwrap();
-    if responses[1]["result"] == *"success" {
-        assert_eq!(responses[0].get("result"), None);
-    }
 }
+
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn test_update_maker_order_after_matched() {
