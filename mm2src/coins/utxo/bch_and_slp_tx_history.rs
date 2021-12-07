@@ -11,7 +11,6 @@ use common::mm_number::BigDecimal;
 use common::state_machine::prelude::*;
 use futures::compat::Future01CompatExt;
 use rpc::v1::types::H256 as H256Json;
-use std::collections::HashMap;
 
 struct BchAndSlpHistoryCtx<Storage: TxHistoryStorage> {
     coin: BchCoin,
@@ -273,11 +272,15 @@ impl<T: TxHistoryStorage> State for FetchingTransactionsData<T> {
                 Err(e) => return Self::change_state(Stopped::storage_error(e)),
             }
 
-            let tx_details = match ctx.coin.tx_details_by_hash(&tx_hash.0, &mut HashMap::new()).await {
+            let tx_details = match ctx
+                .coin
+                .transaction_details_with_token_transfers(&tx_hash, &ctx.storage)
+                .await
+            {
                 Ok(tx) => tx,
                 Err(e) => {
                     error!(
-                        "Error {} on getting {} tx details for hash {:02x}",
+                        "Error {:?} on getting {} tx details for hash {:02x}",
                         e,
                         ctx.coin.ticker(),
                         tx_hash
@@ -286,7 +289,7 @@ impl<T: TxHistoryStorage> State for FetchingTransactionsData<T> {
                 },
             };
 
-            if let Err(e) = ctx.storage.add_transaction(ctx.coin.ticker(), &tx_details).await {
+            if let Err(e) = ctx.storage.add_transactions(ctx.coin.ticker(), tx_details).await {
                 return Self::change_state(Stopped::storage_error(e));
             }
 

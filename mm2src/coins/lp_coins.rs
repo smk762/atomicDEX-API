@@ -2257,14 +2257,7 @@ pub trait TxHistoryStorage: Send + Sync + 'static {
     /// Initializes a collection/table using a specified collection_id
     async fn init_collection(&self, collection_id: &str) -> Result<(), MmError<Self::Error>>;
 
-    /// Adds a transaction to the selected collection in the storage
-    async fn add_transaction(
-        &self,
-        collection_id: &str,
-        transaction: &TransactionDetails,
-    ) -> Result<(), MmError<Self::Error>>;
-
-    /// Adds multiples transactions to the selected collection in the storage
+    /// Adds multiple transactions to the selected collection in the storage
     async fn add_transactions(
         &self,
         collection_id: &str,
@@ -2308,4 +2301,10 @@ pub trait TxHistoryStorage: Send + Sync + 'static {
     ) -> Result<bool, MmError<Self::Error>>;
 
     async fn unique_tx_hashes_num(&self, collection_id: &str) -> Result<usize, MmError<Self::Error>>;
+
+    async fn get_raw_tx_bytes(
+        &self,
+        collection_id: &str,
+        tx_hash: &str,
+    ) -> Result<Option<Vec<u8>>, MmError<Self::Error>>;
 }

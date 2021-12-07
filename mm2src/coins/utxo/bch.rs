@@ -3,7 +3,7 @@ use crate::utxo::rpc_clients::UtxoRpcFut;
 use crate::utxo::slp::{parse_slp_script, SlpTokenInfo, SlpTransaction, SlpUnspent};
 use crate::utxo::utxo_common::big_decimal_from_sat_unsigned;
 use crate::{CanRefundHtlc, CoinBalance, CoinProtocol, NegotiateSwapContractAddrErr, SwapOps, TradePreimageValue,
-            ValidateAddressResult, WithdrawFut};
+            TxHistoryStorage, ValidateAddressResult, WithdrawFut};
 use common::log::warn;
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
@@ -127,6 +127,11 @@ impl From<UtxoRpcError> for IsSlpUtxoError {
 
 impl From<serialization::Error> for IsSlpUtxoError {
     fn from(err: serialization::Error) -> IsSlpUtxoError { IsSlpUtxoError::TxDeserialization(err) }
+}
+
+#[derive(Debug)]
+pub enum GetTxDetailsError<E> {
+    StorageError(E),
 }
 
 impl BchCoin {
@@ -297,6 +302,15 @@ impl BchCoin {
             self.as_ref().conf.p2sh_addr_prefix,
         )?;
         Ok(slp_address)
+    }
+
+    /// Returns multiple details by tx hash if token transfers also occurred in the transaction
+    pub async fn transaction_details_with_token_transfers<T: TxHistoryStorage>(
+        &self,
+        tx_hash: &H256Json,
+        storage: &T,
+    ) -> Result<Vec<TransactionDetails>, GetTxDetailsError<T::Error>> {
+        unimplemented!()
     }
 }
 
