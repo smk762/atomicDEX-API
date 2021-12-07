@@ -4961,17 +4961,10 @@ pub(self) async fn subscribe_to_orderbook_topic(
                     // We are subscribed to the topic and the orderbook was requested already
                     true
                 },
-                OrderbookRequestingState::NotRequested { subscribed_at }
-                    if *subscribed_at + ORDERBOOK_REQUESTING_TIMEOUT < current_timestamp =>
-                {
+                OrderbookRequestingState::NotRequested { subscribed_at } => {
                     // We are subscribed to the topic. Also we didn't request the orderbook,
-                    // but enough time has passed for the orderbook to fill by OrdermatchRequest::SyncPubkeyOrderbookState.
-                    true
-                },
-                OrderbookRequestingState::NotRequested { .. } => {
-                    // We are subscribed to the topic. Also we didn't request the orderbook,
-                    // and the orderbook has not filled up yet.
-                    false
+                    // True if enough time has passed for the orderbook to fill by OrdermatchRequest::SyncPubkeyOrderbookState.
+                    *subscribed_at + ORDERBOOK_REQUESTING_TIMEOUT < current_timestamp
                 },
             },
         }
