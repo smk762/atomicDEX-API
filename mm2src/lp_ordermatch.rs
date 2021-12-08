@@ -2973,9 +2973,9 @@ async fn check_balance_for_maker_orders(ctx: MmArc, ordermatch_ctx: &OrdermatchC
 async fn handle_timed_out_maker_matches(ctx: MmArc, ordermatch_ctx: &OrdermatchContext) {
     let now = now_ms();
     let storage = MyOrdersStorage::new(ctx.clone());
-    let mut my_maker_orders = ordermatch_ctx.my_maker_orders.lock().clone();
+    let my_maker_orders = ordermatch_ctx.my_maker_orders.lock().clone();
 
-    for (_, order) in my_maker_orders.iter_mut() {
+    for (_, order) in my_maker_orders.iter() {
         let mut order = order.lock().await;
         let old_len = order.matches.len();
         order.matches.retain(|_, order_match| {
@@ -4127,19 +4127,19 @@ pub async fn update_maker_order(ctx: &MmArc, req: MakerOrderUpdateReq) -> Result
         }
     };
 
-    let mut order = order_mutex.lock().await;
-    if order.has_ongoing_matches() {
+    let order_before_update = order_mutex.lock().await.clone();
+    if order_before_update.has_ongoing_matches() {
         return ERR!("Can't update an order that has ongoing matches");
     }
 
-    let base = order.base.as_str();
-    let rel = order.rel.as_str();
+    let base = order_before_update.base.as_str();
+    let rel = order_before_update.rel.as_str();
     let (base_coin, rel_coin) = match find_pair(ctx, base, rel).await {
         Ok(Some(c)) => c,
-        _ => return ERR!("Base coin {} or rel coin {} has been removed from config", base, rel),
+        _ => return ERR!("Base coin {} and/or rel coin {} are not activated", base, rel),
     };
 
-    let original_conf_settings = order.conf_settings.unwrap();
+    let original_conf_settings = order_before_update.conf_settings.unwrap();
     let updated_conf_settings = OrderConfirmationsSettings {
         base_confs: req.base_confs.unwrap_or(original_conf_settings.base_confs),
         base_nota: req.base_nota.unwrap_or(original_conf_settings.base_nota),
@@ -4147,8 +4147,8 @@ pub async fn update_maker_order(ctx: &MmArc, req: MakerOrderUpdateReq) -> Result
         rel_nota: req.rel_nota.unwrap_or(original_conf_settings.rel_nota),
     };
 
-    let original_volume = order.max_base_vol.clone();
-    let reserved_amount = order.reserved_amount();
+    let original_volume = order_before_update.max_base_vol.clone();
+    let reserved_amount = order_before_update.reserved_amount();
 
     let mut update_msg = new_protocol::MakerOrderUpdated::new(req.uuid);
     update_msg.with_new_conf_settings(updated_conf_settings);
@@ -4160,7 +4160,7 @@ pub async fn update_maker_order(ctx: &MmArc, req: MakerOrderUpdateReq) -> Result
             update_msg.with_new_price(new_price.clone().into());
             new_price
         },
-        None => order.price.clone(),
+        None => order_before_update.price.clone(),
     };
 
     let min_base_amount = base_coin.min_trading_vol();
@@ -4223,7 +4223,18 @@ pub async fn update_maker_order(ctx: &MmArc, req: MakerOrderUpdateReq) -> Result
         new_price
     ));
 
-    let order_before_update = order.clone();
+    let order_mutex = {
+        let my_maker_orders = ordermatch_ctx.my_maker_orders.lock();
+        match my_maker_orders.get(&req.uuid) {
+            Some(order) => order.clone(),
+            None => return ERR!("Order with UUID: {} has been deleted", req.uuid),
+        }
+    };
+
+    let mut order = order_mutex.lock().await;
+    if *order != order_before_update {
+        return ERR!("Order state has changed after price/volume/balance checks. Please try to update the order again if it's still needed.");
+    }
     order.apply_updated(&update_msg);
     if let Err(e) = save_maker_order_on_update(ctx.clone(), &order).await {
         *order = order_before_update;
