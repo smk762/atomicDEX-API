@@ -37,7 +37,7 @@ use common::mm_ctx::{from_ctx, MmArc, MmWeak};
 use common::mm_error::prelude::*;
 use common::mm_metrics::MetricsWeak;
 use common::mm_number::MmNumber;
-use common::{calc_total_pages, now_ms, HttpStatusCode};
+use common::{calc_total_pages, now_ms, HttpStatusCode, NotSame};
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
@@ -2250,61 +2250,63 @@ impl RemoveTxResult {
     pub fn tx_existed(&self) -> bool { matches!(self, RemoveTxResult::TxRemoved) }
 }
 
+pub trait TxHistoryStorageError: std::fmt::Debug + NotMmError + NotSame + Send {}
+
 #[async_trait]
 pub trait TxHistoryStorage: Send + Sync + 'static {
-    type Error: std::fmt::Debug + NotMmError + Send;
+    type Error: TxHistoryStorageError;
 
-    /// Initializes a collection/table using a specified collection_id
-    async fn init_collection(&self, collection_id: &str) -> Result<(), MmError<Self::Error>>;
+    /// Initializes collection/tables in storage for a specified coin
+    async fn init(&self, for_coin: &str) -> Result<(), MmError<Self::Error>>;
 
-    /// Adds multiple transactions to the selected collection in the storage
-    async fn add_transactions(
+    /// Adds multiple transactions to the selected coin's history
+    /// Also consider adding tx_hex to the cache during this operation
+    async fn add_transactions_to_history(
         &self,
-        collection_id: &str,
+        for_coin: &str,
         transactions: impl IntoIterator<Item = TransactionDetails> + Send + 'static,
     ) -> Result<(), MmError<Self::Error>>;
 
-    /// Removes the transaction by internal_id from the selected collection in the storage
-    async fn remove_transaction(
+    /// Removes the transaction by internal_id from the selected coin's history
+    async fn remove_tx_from_history(
         &self,
-        collection_id: &str,
-        internal_tx_id: &BytesJson,
+        for_coin: &str,
+        internal_id: &BytesJson,
     ) -> Result<RemoveTxResult, MmError<Self::Error>>;
 
-    /// Gets the transaction by internal_id from the selected collection in the storage
-    async fn get_transaction(
+    /// Gets the transaction by internal_id from the selected coin's history
+    async fn get_tx_from_history(
         &self,
-        collection_id: &str,
-        internal_tx_id: &BytesJson,
+        for_coin: &str,
+        internal_id: &BytesJson,
     ) -> Result<Option<TransactionDetails>, MmError<Self::Error>>;
 
-    /// Returns whether the collection contains unconfirmed transactions
-    async fn contains_unconfirmed_transactions(&self, collection_id: &str) -> Result<bool, MmError<Self::Error>>;
+    /// Returns whether the history contains unconfirmed transactions
+    async fn history_contains_unconfirmed_txes(&self, for_coin: &str) -> Result<bool, MmError<Self::Error>>;
 
-    /// Gets the unconfirmed transactions from the collection
-    async fn get_unconfirmed_transactions(
+    /// Gets the unconfirmed transactions from the history
+    async fn get_unconfirmed_txes_from_history(
         &self,
-        collection_id: &str,
+        for_coin: &str,
     ) -> Result<Vec<TransactionDetails>, MmError<Self::Error>>;
 
-    /// Updates transaction in the selected collection
-    async fn update_transaction(
+    /// Updates transaction in the selected coin's history
+    async fn update_tx_in_history(&self, for_coin: &str, tx: &TransactionDetails) -> Result<(), MmError<Self::Error>>;
+
+    async fn history_has_tx_hash(&self, for_coin: &str, tx_hash: &str) -> Result<bool, MmError<Self::Error>>;
+
+    async fn unique_tx_hashes_num_in_history(&self, for_coin: &str) -> Result<usize, MmError<Self::Error>>;
+
+    async fn add_tx_to_cache(
         &self,
-        collection_id: &str,
-        tx: &TransactionDetails,
+        for_coin: &str,
+        tx_hash: &BytesJson,
+        tx_hex: &BytesJson,
     ) -> Result<(), MmError<Self::Error>>;
 
-    async fn has_transactions_with_hash(
+    async fn tx_bytes_from_cache(
         &self,
-        collection_id: &str,
-        tx_hash: &str,
-    ) -> Result<bool, MmError<Self::Error>>;
-
-    async fn unique_tx_hashes_num(&self, collection_id: &str) -> Result<usize, MmError<Self::Error>>;
-
-    async fn get_raw_tx_bytes(
-        &self,
-        collection_id: &str,
-        tx_hash: &str,
-    ) -> Result<Option<Vec<u8>>, MmError<Self::Error>>;
+        for_coin: &str,
+        tx_hash: &BytesJson,
+    ) -> Result<Option<BytesJson>, MmError<Self::Error>>;
 }

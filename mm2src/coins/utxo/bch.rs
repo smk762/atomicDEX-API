@@ -3,7 +3,7 @@ use crate::utxo::rpc_clients::UtxoRpcFut;
 use crate::utxo::slp::{parse_slp_script, SlpTokenInfo, SlpTransaction, SlpUnspent};
 use crate::utxo::utxo_common::big_decimal_from_sat_unsigned;
 use crate::{CanRefundHtlc, CoinBalance, CoinProtocol, NegotiateSwapContractAddrErr, SwapOps, TradePreimageValue,
-            TxHistoryStorage, ValidateAddressResult, WithdrawFut};
+            TxHistoryStorage, TxHistoryStorageError, ValidateAddressResult, WithdrawFut};
 use common::log::warn;
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
@@ -130,8 +130,22 @@ impl From<serialization::Error> for IsSlpUtxoError {
 }
 
 #[derive(Debug)]
-pub enum GetTxDetailsError<E> {
+pub enum GetTxDetailsError<E: TxHistoryStorageError> {
     StorageError(E),
+    RpcError(UtxoRpcError),
+    TxDeserializationError(serialization::Error),
+}
+
+impl<E: TxHistoryStorageError> From<UtxoRpcError> for GetTxDetailsError<E> {
+    fn from(err: UtxoRpcError) -> Self { GetTxDetailsError::RpcError(err) }
+}
+
+impl<E: TxHistoryStorageError> From<E> for GetTxDetailsError<E> {
+    fn from(err: E) -> Self { GetTxDetailsError::StorageError(err) }
+}
+
+impl<E: TxHistoryStorageError> From<serialization::Error> for GetTxDetailsError<E> {
+    fn from(err: serialization::Error) -> Self { GetTxDetailsError::TxDeserializationError(err) }
 }
 
 impl BchCoin {
@@ -309,7 +323,19 @@ impl BchCoin {
         &self,
         tx_hash: &H256Json,
         storage: &T,
-    ) -> Result<Vec<TransactionDetails>, GetTxDetailsError<T::Error>> {
+    ) -> Result<Vec<TransactionDetails>, MmError<GetTxDetailsError<T::Error>>> {
+        let tx_hash_as_bytes = BytesJson::new(tx_hash.0.to_vec());
+        let tx_hex = match storage.tx_bytes_from_cache(self.ticker(), &tx_hash_as_bytes).await? {
+            Some(hex) => hex,
+            None => {
+                let tx_bytes = self.as_ref().rpc_client.get_transaction_bytes(tx_hash).compat().await?;
+                storage
+                    .add_tx_to_cache(self.ticker(), &tx_hash_as_bytes, &tx_bytes)
+                    .await?;
+                tx_bytes
+            },
+        };
+        let tx: UtxoTx = deserialize(tx_hex.0.as_slice())?;
         unimplemented!()
     }
 }

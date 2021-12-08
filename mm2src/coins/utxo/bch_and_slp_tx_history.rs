@@ -42,7 +42,7 @@ impl<T: TxHistoryStorage> State for Init<T> {
     async fn on_changed(self: Box<Self>, ctx: &mut BchAndSlpHistoryCtx<T>) -> StateResult<BchAndSlpHistoryCtx<T>, ()> {
         *ctx.coin.as_ref().history_sync_state.lock().unwrap() = HistorySyncState::NotStarted;
 
-        if let Err(e) = ctx.storage.init_collection(ctx.coin.ticker()).await {
+        if let Err(e) = ctx.storage.init(ctx.coin.ticker()).await {
             return Self::change_state(Stopped::storage_error(e));
         }
 
@@ -73,14 +73,14 @@ impl<T: TxHistoryStorage> State for FetchingTxHashes<T> {
     type Result = ();
 
     async fn on_changed(self: Box<Self>, ctx: &mut BchAndSlpHistoryCtx<T>) -> StateResult<BchAndSlpHistoryCtx<T>, ()> {
-        if let Err(e) = ctx.storage.init_collection(ctx.coin.ticker()).await {
+        if let Err(e) = ctx.storage.init(ctx.coin.ticker()).await {
             return Self::change_state(Stopped::storage_error(e));
         }
 
         let maybe_tx_ids = ctx.coin.request_tx_history(ctx.metrics.clone()).await;
         match maybe_tx_ids {
             RequestTxHistoryResult::Ok(all_tx_ids_with_height) => {
-                let in_storage = match ctx.storage.unique_tx_hashes_num(ctx.coin.ticker()).await {
+                let in_storage = match ctx.storage.unique_tx_hashes_num_in_history(ctx.coin.ticker()).await {
                     Ok(num) => num,
                     Err(e) => return Self::change_state(Stopped::storage_error(e)),
                 };
@@ -159,7 +159,7 @@ impl<T: TxHistoryStorage> State for WaitForHistoryUpdateTrigger<T> {
     async fn on_changed(self: Box<Self>, ctx: &mut BchAndSlpHistoryCtx<T>) -> StateResult<Self::Ctx, Self::Result> {
         loop {
             Timer::sleep(30.).await;
-            match ctx.storage.contains_unconfirmed_transactions(ctx.coin.ticker()).await {
+            match ctx.storage.history_contains_unconfirmed_txes(ctx.coin.ticker()).await {
                 Ok(contains) => {
                     if contains {
                         return Self::change_state(FetchingTxHashes::new());
@@ -207,7 +207,7 @@ impl<T: TxHistoryStorage> State for UpdatingUnconfirmedTxes<T> {
     type Result = ();
 
     async fn on_changed(self: Box<Self>, ctx: &mut BchAndSlpHistoryCtx<T>) -> StateResult<BchAndSlpHistoryCtx<T>, ()> {
-        match ctx.storage.get_unconfirmed_transactions(ctx.coin.ticker()).await {
+        match ctx.storage.get_unconfirmed_txes_from_history(ctx.coin.ticker()).await {
             Ok(unconfirmed) => {
                 for mut tx in unconfirmed {
                     let found = self
@@ -217,14 +217,18 @@ impl<T: TxHistoryStorage> State for UpdatingUnconfirmedTxes<T> {
                     match found {
                         Some((_, height)) => {
                             tx.block_height = *height;
-                            if let Err(e) = ctx.storage.update_transaction(ctx.coin.ticker(), &tx).await {
+                            if let Err(e) = ctx.storage.update_tx_in_history(ctx.coin.ticker(), &tx).await {
                                 return Self::change_state(Stopped::storage_error(e));
                             }
                         },
                         None => {
                             // This can potentially happen when unconfirmed tx is removed from mempool for some reason.
                             // We should remove it from storage too.
-                            if let Err(e) = ctx.storage.remove_transaction(ctx.coin.ticker(), &tx.internal_id).await {
+                            if let Err(e) = ctx
+                                .storage
+                                .remove_tx_from_history(ctx.coin.ticker(), &tx.internal_id)
+                                .await
+                            {
                                 return Self::change_state(Stopped::storage_error(e));
                             }
                         },
@@ -264,7 +268,7 @@ impl<T: TxHistoryStorage> State for FetchingTransactionsData<T> {
             let tx_hash_string = format!("{:02x}", tx_hash);
             match ctx
                 .storage
-                .has_transactions_with_hash(ctx.coin.ticker(), &tx_hash_string)
+                .history_has_tx_hash(ctx.coin.ticker(), &tx_hash_string)
                 .await
             {
                 Ok(true) => continue,
@@ -289,7 +293,11 @@ impl<T: TxHistoryStorage> State for FetchingTransactionsData<T> {
                 },
             };
 
-            if let Err(e) = ctx.storage.add_transactions(ctx.coin.ticker(), tx_details).await {
+            if let Err(e) = ctx
+                .storage
+                .add_transactions_to_history(ctx.coin.ticker(), tx_details)
+                .await
+            {
                 return Self::change_state(Stopped::storage_error(e));
             }
 

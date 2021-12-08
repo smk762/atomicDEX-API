@@ -50,7 +50,7 @@ impl Filter for ElectrumClient {
         }
 
         for item in history.iter() {
-            let transaction = match block_on(selfi.get_transaction_bytes(item.tx_hash.clone()).compat()) {
+            let transaction = match block_on(selfi.get_transaction_bytes(&item.tx_hash).compat()) {
                 Ok(tx) => tx,
                 Err(_) => continue,
             };

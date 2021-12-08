@@ -237,7 +237,7 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
 
     fn send_raw_transaction(&self, tx: BytesJson) -> UtxoRpcFut<H256Json>;
 
-    fn get_transaction_bytes(&self, txid: H256Json) -> UtxoRpcFut<BytesJson>;
+    fn get_transaction_bytes(&self, txid: &H256Json) -> UtxoRpcFut<BytesJson>;
 
     fn get_verbose_transaction(&self, txid: &H256Json) -> UtxoRpcFut<RpcTransaction>;
 
@@ -616,7 +616,7 @@ impl UtxoRpcClientOps for NativeClient {
         Box::new(rpc_func!(self, "sendrawtransaction", tx).map_to_mm_fut(UtxoRpcError::from))
     }
 
-    fn get_transaction_bytes(&self, txid: H256Json) -> UtxoRpcFut<BytesJson> {
+    fn get_transaction_bytes(&self, txid: &H256Json) -> UtxoRpcFut<BytesJson> {
         Box::new(self.get_raw_transaction_bytes(txid).map_to_mm_fut(UtxoRpcError::from))
     }
 
@@ -684,7 +684,7 @@ impl UtxoRpcClientOps for NativeClient {
                 .into_iter()
                 .filter(|tx| !tx.is_conflicting())
             {
-                let maybe_spend_tx_bytes = try_s!(selfi.get_raw_transaction_bytes(transaction.txid).compat().await);
+                let maybe_spend_tx_bytes = try_s!(selfi.get_raw_transaction_bytes(&transaction.txid).compat().await);
                 let maybe_spend_tx: UtxoTx =
                     try_s!(deserialize(maybe_spend_tx_bytes.as_slice()).map_err(|e| ERRL!("{:?}", e)));
 
@@ -776,7 +776,7 @@ impl NativeClientImpl {
         txid: H256Json,
         index: usize,
     ) -> Box<dyn Future<Item = u64, Error = String> + Send + 'static> {
-        let fut = self.get_raw_transaction_bytes(txid).map_err(|e| ERRL!("{}", e));
+        let fut = self.get_raw_transaction_bytes(&txid).map_err(|e| ERRL!("{}", e));
         Box::new(fut.and_then(move |bytes| {
             let tx: UtxoTx = try_s!(deserialize(bytes.as_slice()).map_err(|e| ERRL!(
                 "Error {:?} trying to deserialize the transaction {:?}",
@@ -811,7 +811,7 @@ impl NativeClientImpl {
 
     /// https://developer.bitcoin.org/reference/rpc/getrawtransaction.html
     /// Always returns transaction bytes
-    pub fn get_raw_transaction_bytes(&self, txid: H256Json) -> RpcRes<BytesJson> {
+    pub fn get_raw_transaction_bytes(&self, txid: &H256Json) -> RpcRes<BytesJson> {
         let verbose = 0;
         rpc_func!(self, "getrawtransaction", txid, verbose)
     }
@@ -1614,7 +1614,7 @@ impl UtxoRpcClientOps for ElectrumClient {
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-get
     /// returns transaction bytes by default
-    fn get_transaction_bytes(&self, txid: H256Json) -> UtxoRpcFut<BytesJson> {
+    fn get_transaction_bytes(&self, txid: &H256Json) -> UtxoRpcFut<BytesJson> {
         let verbose = false;
         Box::new(rpc_func!(self, "blockchain.transaction.get", txid, verbose).map_to_mm_fut(UtxoRpcError::from))
     }
@@ -1685,7 +1685,7 @@ impl UtxoRpcClientOps for ElectrumClient {
             }
 
             for item in history.iter() {
-                let transaction = try_s!(selfi.get_transaction_bytes(item.tx_hash.clone()).compat().await);
+                let transaction = try_s!(selfi.get_transaction_bytes(&item.tx_hash).compat().await);
 
                 let maybe_spend_tx: UtxoTx = try_s!(deserialize(transaction.as_slice()).map_err(|e| ERRL!("{:?}", e)));
 

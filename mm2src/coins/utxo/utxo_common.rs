@@ -1222,7 +1222,7 @@ where
                 let history = try_s!(client.scripthash_get_history(&hex::encode(script_hash)).compat().await);
                 match history.first() {
                     Some(item) => {
-                        let tx_bytes = try_s!(client.get_transaction_bytes(item.tx_hash.clone()).compat().await);
+                        let tx_bytes = try_s!(client.get_transaction_bytes(&item.tx_hash).compat().await);
                         let mut tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
                         tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
                         Ok(Some(tx.into()))
@@ -1247,7 +1247,7 @@ where
                 let received_by_addr = try_s!(client.list_received_by_address(0, true, true).compat().await);
                 for item in received_by_addr {
                     if item.address == target_addr && !item.txids.is_empty() {
-                        let tx_bytes = try_s!(client.get_transaction_bytes(item.txids[0].clone()).compat().await);
+                        let tx_bytes = try_s!(client.get_transaction_bytes(&item.txids[0]).compat().await);
                         let mut tx: UtxoTx = try_s!(deserialize(tx_bytes.0.as_slice()).map_err(|e| ERRL!("{:?}", e)));
                         tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
                         return Ok(Some(tx.into()));
@@ -2660,7 +2660,7 @@ where
             let tx_from_rpc = match coin
                 .as_ref()
                 .rpc_client
-                .get_transaction_bytes(tx.hash().reversed().into())
+                .get_transaction_bytes(&tx.hash().reversed().into())
                 .compat()
                 .await
             {
