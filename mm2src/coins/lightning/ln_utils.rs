@@ -60,13 +60,6 @@ cfg_native! {
     const TRY_RECONNECTING_TO_NODE_INTERVAL: u64 = 60;
 }
 
-lazy_static! {
-    pub static ref NO_SUCH_TRANSACTION_ERROR: Json = json!({
-        "code": 2,
-        "message": "daemon error: DaemonError({'code': -5, 'message': 'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.'})"
-    });
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 type ChainMonitor = chainmonitor::ChainMonitor<
     InMemorySigner,
@@ -567,13 +560,15 @@ async fn process_tx_for_unconfirmation(txid: Txid, filter: Arc<PlatformFields>, 
     {
         if let UtxoRpcError::ResponseParseError(ref json_err) = err {
             if let JsonRpcErrorType::Response(_, json) = &json_err.error {
-                if NO_SUCH_TRANSACTION_ERROR.eq(json) {
-                    log::info!(
-                        "Transaction {} is not found on chain :{}. The transaction will be re-broadcasted.",
-                        txid,
-                        err
-                    );
-                    channel_manager.transaction_unconfirmed(&txid);
+                if let Some(message) = json["message"].as_str() {
+                    if message.contains("'code': -5") {
+                        log::info!(
+                            "Transaction {} is not found on chain :{}. The transaction will be re-broadcasted.",
+                            txid,
+                            err
+                        );
+                        channel_manager.transaction_unconfirmed(&txid);
+                    }
                 }
             }
         }
