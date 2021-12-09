@@ -1048,6 +1048,14 @@ pub enum ElectrumBlockHeader {
     V14(ElectrumBlockHeaderV14),
 }
 
+/// The merkle branch of a confirmed transaction
+#[derive(Clone, Debug, Deserialize)]
+pub struct TxMerkleBranch {
+    pub merkle: Vec<H256Json>,
+    pub block_height: u64,
+    pub pos: usize,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct BestBlock {
     pub height: u64,
@@ -1599,6 +1607,11 @@ impl ElectrumClient {
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-block-headers
     pub fn blockchain_block_headers(&self, start_height: u64, count: NonZeroU64) -> RpcRes<ElectrumBlockHeadersRes> {
         rpc_func!(self, "blockchain.block.headers", start_height, count)
+    }
+
+    /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-get-merkle
+    pub fn blockchain_transaction_get_merkle(&self, txid: H256Json, height: u64) -> RpcRes<TxMerkleBranch> {
+        rpc_func!(self, "blockchain.transaction.get_merkle", txid, height)
     }
 }
 

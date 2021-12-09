@@ -536,17 +536,6 @@ impl ConfirmedTransactionInfo {
     }
 }
 
-// Used to order 2 transactions if one spends the other by the spent transaction first
-#[cfg(not(target_arch = "wasm32"))]
-fn cmp_txs_for_spending(spent_tx: &Transaction, spending_tx: &Transaction) -> Ordering {
-    for tx_in in &spending_tx.input {
-        if spent_tx.txid() == tx_in.previous_output.txid {
-            return Ordering::Less;
-        }
-    }
-    Ordering::Equal
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 async fn process_tx_for_unconfirmation(txid: Txid, filter: Arc<PlatformFields>, channel_manager: Arc<ChannelManager>) {
     if let Err(err) = filter
@@ -620,7 +609,7 @@ async fn process_txs_confirmations(
                         continue;
                     },
                 };
-                for (index, vout) in transaction.output.iter().enumerate() {
+                for (_, vout) in transaction.output.iter().enumerate() {
                     if scripts.contains(&vout.script_pubkey) {
                         let script_hash = hex::encode(electrum_script_hash(vout.script_pubkey.as_ref()));
                         let history = client
@@ -629,7 +618,7 @@ async fn process_txs_confirmations(
                             .await
                             .unwrap_or_default();
                         for item in history {
-                            if item.tx_hash == rpc_txid {
+                            if item.tx_hash == rpc_txid.clone() {
                                 // If a new block mined the transaction while running process_txs_confirmations it will be confirmed later in ln_best_block_update_loop
                                 if item.height > 0 && item.height <= current_height as i64 {
                                     let height: u64 = match item.height.try_into() {
@@ -648,6 +637,20 @@ async fn process_txs_confirmations(
                                             },
                                         },
                                         Err(_) => continue,
+                                    };
+                                    let index = match client
+                                        .blockchain_transaction_get_merkle(rpc_txid.clone(), height)
+                                        .compat()
+                                        .await
+                                    {
+                                        Ok(merkle_branch) => merkle_branch.pos,
+                                        Err(e) => {
+                                            log::error!(
+                                                "Error getting transaction position in the block: {}",
+                                                e.to_string()
+                                            );
+                                            continue;
+                                        },
                                     };
                                     let confirmed_transaction_info = ConfirmedTransactionInfo::new(
                                         txid,
@@ -686,8 +689,20 @@ async fn process_txs_confirmations(
                 continue;
             },
         };
-        if let Some((header, index, tx, height)) = result {
+        if let Some((header, _, tx, height)) = result {
             if !transactions_to_confirm.iter().any(|info| info.txid == tx.txid()) {
+                let rpc_txid = H256::from(tx.txid().as_hash().into_inner()).reversed();
+                let index = match client
+                    .blockchain_transaction_get_merkle(rpc_txid, height)
+                    .compat()
+                    .await
+                {
+                    Ok(merkle_branch) => merkle_branch.pos,
+                    Err(e) => {
+                        log::error!("Error getting transaction position in the block: {}", e.to_string());
+                        continue;
+                    },
+                };
                 let confirmed_transaction_info =
                     ConfirmedTransactionInfo::new(tx.txid(), header, index, tx, height as u32);
                 transactions_to_confirm.push(confirmed_transaction_info);
@@ -698,9 +713,13 @@ async fn process_txs_confirmations(
     registered_outputs.retain(|output| !outputs_to_remove.contains(output));
     drop(registered_outputs);
 
-    transactions_to_confirm.sort_by(|a, b| a.height.cmp(&b.height));
-    // If a transaction spends another in the same block, the spent transaction should be confirmed first
-    transactions_to_confirm.sort_by(|a, b| cmp_txs_for_spending(&a.transaction, &b.transaction));
+    transactions_to_confirm.sort_by(|a, b| {
+        let block_order = a.height.cmp(&b.height);
+        match block_order {
+            Ordering::Equal => a.index.cmp(&b.index),
+            _ => block_order,
+        }
+    });
 
     for confirmed_transaction_info in transactions_to_confirm {
         channel_manager.transactions_confirmed(
