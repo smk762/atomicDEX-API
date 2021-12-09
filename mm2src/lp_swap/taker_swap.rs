@@ -463,8 +463,8 @@ pub struct TakerSwap {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TakerPaymentSpentData {
-    transaction: TransactionIdentifier,
-    secret: H256Json,
+    pub transaction: TransactionIdentifier,
+    pub secret: H256Json,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
