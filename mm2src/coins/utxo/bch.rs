@@ -1,4 +1,5 @@
 use super::*;
+use crate::history_tx_details::Builder as TxDetailsBuilder;
 use crate::utxo::rpc_clients::UtxoRpcFut;
 use crate::utxo::slp::{parse_slp_script, SlpTokenInfo, SlpTransaction, SlpUnspent};
 use crate::utxo::utxo_common::big_decimal_from_sat_unsigned;
@@ -134,6 +135,7 @@ pub enum GetTxDetailsError<E: TxHistoryStorageError> {
     StorageError(E),
     RpcError(UtxoRpcError),
     TxDeserializationError(serialization::Error),
+    AddressesFromScriptError(String),
 }
 
 impl<E: TxHistoryStorageError> From<UtxoRpcError> for GetTxDetailsError<E> {
@@ -336,7 +338,52 @@ impl BchCoin {
             },
         };
         let tx: UtxoTx = deserialize(tx_hex.0.as_slice())?;
-        unimplemented!()
+        let mut bch_tx_builder = TxDetailsBuilder::new(tx.clone());
+        let mut slp_tx_builder = None;
+
+        let maybe_op_return: Script = tx.outputs[0].script_pubkey.clone().into();
+        if !maybe_op_return.is_pay_to_public_key_hash()
+            && !maybe_op_return.is_pay_to_public_key()
+            && !maybe_op_return.is_pay_to_script_hash()
+        {
+            match parse_slp_script(&maybe_op_return) {
+                Ok(slp_details) => match slp_details.transaction {
+                    SlpTransaction::Send { token_id, amounts } => {
+                        slp_tx_builder = Some(TxDetailsBuilder::new(tx.clone()));
+                    },
+                    _ => unimplemented!(),
+                },
+                Err(_) => (),
+            }
+        }
+
+        for output in tx.outputs {
+            let addresses = self
+                .addresses_from_script(&output.script_pubkey.into())
+                .map_to_mm(GetTxDetailsError::AddressesFromScriptError)?;
+            if addresses.len() != 1 {
+                let msg = format!(
+                    "{} tx {:02x} output script resulted into unexpected number of addresses",
+                    self.ticker(),
+                    tx_hash,
+                );
+                return MmError::err(GetTxDetailsError::AddressesFromScriptError(msg));
+            }
+
+            let amount = big_decimal_from_sat_unsigned(output.value, self.decimals());
+            for address in addresses {
+                bch_tx_builder.transferred_to(address.clone(), &amount);
+                if let Some(ref mut slp_tx_builder) = slp_tx_builder {
+                    slp_tx_builder.transferred_to(address, &amount);
+                }
+            }
+        }
+
+        let result = match slp_tx_builder {
+            Some(slp_tx_builder) => vec![bch_tx_builder.build(), slp_tx_builder.build()],
+            None => vec![bch_tx_builder.build()],
+        };
+        Ok(result)
     }
 }
 

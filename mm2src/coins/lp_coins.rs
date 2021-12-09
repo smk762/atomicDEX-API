@@ -107,6 +107,8 @@ pub use test_coin::TestCoin;
 
 #[cfg(target_arch = "wasm32")] pub mod tx_history_db;
 
+mod history_tx_details;
+
 #[cfg(all(not(target_arch = "wasm32"), feature = "zhtlc"))]
 pub mod z_coin;
 
