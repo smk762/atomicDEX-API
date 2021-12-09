@@ -1990,7 +1990,7 @@ mod docker_tests {
         let required = MmNumber::from("0.00002").to_decimal();
         expect_not_sufficient_balance(&rc.1, available, required, None);
 
-        fill_balance_functor(MmNumber::from("0.099995").to_decimal());
+        fill_balance_functor(MmNumber::from("7.770085").to_decimal());
         let rc = block_on(mm.rpc(json!({
             "userpass": mm.userpass,
             "mmrpc": "2.0",
@@ -2000,22 +2000,16 @@ mod docker_tests {
                 "rel": "MYCOIN1",
                 "swap_method": "sell",
                 "price": 1,
-                "volume": 0.1,
+                "volume": 7.77,
             },
         })))
         .unwrap();
         assert!(!rc.0.is_success(), "trade_preimage success, but should fail: {}", rc.1);
-        let available = MmNumber::from("0.10001").to_decimal();
+        let available = MmNumber::from("7.7701").to_decimal();
         // `required = volume + fee_to_send_taker_payment + dex_fee + fee_to_send_dex_fee`,
-        // where `volume = 0.1`, `fee_to_send_taker_payment = fee_to_send_dex_fee = 0.00001`, `dex_fee = 0.0001`.
-        // Please note `dex_fee = 0.01 / 7770` < `min_dex_fee = 0.0001`, so `dex_fee = min_dex_fee = 0.0001`
-        // 0.10001 / 7770 -> 0.1001487001287001287001287001287001287001287001287001287001287001287001287001287001287001287001287001
-        // .00001287129987129987129987129987129987129987129987 + fee_to_send_dex_fee + fee_to_send_taker_payment
-        // = 0.0001487001287001287001287001287001287001287001287001287001287001287001287001287001287001287001287001
-        // + 0.1 = 0.1001487001287001287001287001287001287001287001287001287001287001287001287001287001287001287001287001
-        let required = MmNumber::from(
-            "0.1001487001287001287001287001287001287001287001287001287001287001287001287001287001287001287001287001",
-        );
+        // where `volume = 7.77`, `fee_to_send_taker_payment = fee_to_send_dex_fee = 0.00001`, `dex_fee = 0.0001`.
+        // Please note `dex_fee = 7.77 / 7770` < `min_dex_fee = 0.0001`, so `dex_fee = min_dex_fee = 0.0001`
+        let required = MmNumber::from("7.78002");
         expect_not_sufficient_balance(&rc.1, available, required.to_decimal(), Some(BigDecimal::from(0)));
     }
 
