@@ -278,7 +278,7 @@ impl<T: TxHistoryStorage> State for FetchingTransactionsData<T> {
 
             let tx_details = match ctx
                 .coin
-                .transaction_details_with_token_transfers(&tx_hash, &ctx.storage)
+                .transaction_details_with_token_transfers(&tx_hash, None, &ctx.storage)
                 .await
             {
                 Ok(tx) => tx,

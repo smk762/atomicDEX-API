@@ -1,8 +1,8 @@
-use crate::TransactionDetails;
+use crate::{BlockHeightAndTime, Transaction, TransactionDetails, TransactionType};
 use common::mm_number::BigDecimal;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-pub struct Builder<Addr, Tx> {
+pub struct Builder<Addr, Tx: Transaction> {
     tx: Tx,
     my_addresses: HashSet<Addr>,
     total_amount: BigDecimal,
@@ -10,10 +10,11 @@ pub struct Builder<Addr, Tx> {
     spent_by_me: BigDecimal,
     from_addresses: HashSet<Addr>,
     to_addresses: HashSet<Addr>,
-    amounts_transferred: HashMap<Addr, BigDecimal>,
+    transaction_type: TransactionType,
+    block_height_and_time: Option<BlockHeightAndTime>,
 }
 
-impl<Addr: Clone + Eq + std::hash::Hash, Tx> Builder<Addr, Tx> {
+impl<Addr: Clone + Eq + std::hash::Hash, Tx: Transaction> Builder<Addr, Tx> {
     pub fn new(tx: Tx) -> Self {
         Builder {
             tx,
@@ -23,7 +24,8 @@ impl<Addr: Clone + Eq + std::hash::Hash, Tx> Builder<Addr, Tx> {
             spent_by_me: Default::default(),
             from_addresses: Default::default(),
             to_addresses: Default::default(),
-            amounts_transferred: Default::default(),
+            block_height_and_time: None,
+            transaction_type: TransactionType::StandardTransfer,
         }
     }
 
@@ -32,7 +34,6 @@ impl<Addr: Clone + Eq + std::hash::Hash, Tx> Builder<Addr, Tx> {
             self.received_by_me += amount;
         }
         self.to_addresses.insert(address.clone());
-        *self.amounts_transferred.entry(address).or_insert(BigDecimal::from(0)) += amount;
     }
 
     pub fn transferred_from(&mut self, address: Addr, amount: &BigDecimal) {
@@ -41,8 +42,30 @@ impl<Addr: Clone + Eq + std::hash::Hash, Tx> Builder<Addr, Tx> {
         }
         self.total_amount += amount;
         self.from_addresses.insert(address.clone());
-        *self.amounts_transferred.entry(address).or_insert(BigDecimal::from(0)) -= amount;
     }
 
-    pub fn build(self) -> TransactionDetails { unimplemented!() }
+    pub fn build(self) -> TransactionDetails {
+        let (block_height, timestamp) = match self.block_height_and_time {
+            Some(height_with_time) => (height_with_time.height, height_with_time.timestamp),
+            None => (0, 0),
+        };
+
+        TransactionDetails {
+            tx_hex: self.tx.tx_hex().into(),
+            tx_hash: self.tx.tx_hash(),
+            from: vec![],
+            to: vec![],
+            total_amount: self.total_amount,
+            my_balance_change: &self.received_by_me - &self.spent_by_me,
+            spent_by_me: self.spent_by_me,
+            received_by_me: self.received_by_me,
+            block_height,
+            timestamp,
+            fee_details: None,
+            coin: "".to_string(),
+            internal_id: Default::default(),
+            kmd_rewards: None,
+            transaction_type: self.transaction_type,
+        }
+    }
 }

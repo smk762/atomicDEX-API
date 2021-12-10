@@ -1,11 +1,11 @@
 use super::*;
 use crate::history_tx_details::Builder as TxDetailsBuilder;
 use crate::utxo::rpc_clients::UtxoRpcFut;
-use crate::utxo::slp::{parse_slp_script, SlpTokenInfo, SlpTransaction, SlpUnspent};
+use crate::utxo::slp::{parse_slp_script, ParseSlpScriptError, SlpTokenInfo, SlpTransaction, SlpUnspent};
 use crate::utxo::utxo_common::big_decimal_from_sat_unsigned;
-use crate::{CanRefundHtlc, CoinBalance, CoinProtocol, NegotiateSwapContractAddrErr, SwapOps, TradePreimageValue,
-            TxHistoryStorage, TxHistoryStorageError, ValidateAddressResult, WithdrawFut};
-use common::log::warn;
+use crate::{BlockHeightAndTime, CanRefundHtlc, CoinBalance, CoinProtocol, NegotiateSwapContractAddrErr, SwapOps,
+            TradePreimageValue, TxHistoryStorage, TxHistoryStorageError, ValidateAddressResult, WithdrawFut};
+use common::log::{error, warn};
 use common::mm_metrics::MetricsArc;
 use common::mm_number::MmNumber;
 use derive_more::Display;
@@ -136,6 +136,8 @@ pub enum GetTxDetailsError<E: TxHistoryStorageError> {
     RpcError(UtxoRpcError),
     TxDeserializationError(serialization::Error),
     AddressesFromScriptError(String),
+    SlpTokenIdIsNotGenesis(H256),
+    ParseSlpScriptError(ParseSlpScriptError),
 }
 
 impl<E: TxHistoryStorageError> From<UtxoRpcError> for GetTxDetailsError<E> {
@@ -148,6 +150,10 @@ impl<E: TxHistoryStorageError> From<E> for GetTxDetailsError<E> {
 
 impl<E: TxHistoryStorageError> From<serialization::Error> for GetTxDetailsError<E> {
     fn from(err: serialization::Error) -> Self { GetTxDetailsError::TxDeserializationError(err) }
+}
+
+impl<E: TxHistoryStorageError> From<ParseSlpScriptError> for GetTxDetailsError<E> {
+    fn from(err: ParseSlpScriptError) -> Self { GetTxDetailsError::ParseSlpScriptError(err) }
 }
 
 impl BchCoin {
@@ -320,43 +326,90 @@ impl BchCoin {
         Ok(slp_address)
     }
 
-    /// Returns multiple details by tx hash if token transfers also occurred in the transaction
-    pub async fn transaction_details_with_token_transfers<T: TxHistoryStorage>(
+    async fn tx_from_storage_or_rpc<T: TxHistoryStorage>(
         &self,
         tx_hash: &H256Json,
         storage: &T,
-    ) -> Result<Vec<TransactionDetails>, MmError<GetTxDetailsError<T::Error>>> {
+    ) -> Result<BytesJson, MmError<GetTxDetailsError<T::Error>>> {
         let tx_hash_as_bytes = BytesJson::new(tx_hash.0.to_vec());
-        let tx_hex = match storage.tx_bytes_from_cache(self.ticker(), &tx_hash_as_bytes).await? {
-            Some(hex) => hex,
+        match storage.tx_bytes_from_cache(self.ticker(), &tx_hash_as_bytes).await? {
+            Some(hex) => Ok(hex),
             None => {
                 let tx_bytes = self.as_ref().rpc_client.get_transaction_bytes(tx_hash).compat().await?;
                 storage
                     .add_tx_to_cache(self.ticker(), &tx_hash_as_bytes, &tx_bytes)
                     .await?;
-                tx_bytes
+                Ok(tx_bytes)
             },
-        };
-        let tx: UtxoTx = deserialize(tx_hex.0.as_slice())?;
-        let mut bch_tx_builder = TxDetailsBuilder::new(tx.clone());
-        let mut slp_tx_builder = None;
+        }
+    }
 
-        let maybe_op_return: Script = tx.outputs[0].script_pubkey.clone().into();
-        if !maybe_op_return.is_pay_to_public_key_hash()
-            && !maybe_op_return.is_pay_to_public_key()
-            && !maybe_op_return.is_pay_to_script_hash()
-        {
-            match parse_slp_script(&maybe_op_return) {
-                Ok(slp_details) => match slp_details.transaction {
-                    SlpTransaction::Send { token_id, amounts } => {
-                        slp_tx_builder = Some(TxDetailsBuilder::new(tx.clone()));
-                    },
-                    _ => unimplemented!(),
-                },
-                Err(_) => (),
+    /// Returns multiple details by tx hash if token transfers also occurred in the transaction
+    pub async fn transaction_details_with_token_transfers<T: TxHistoryStorage>(
+        &self,
+        tx_hash: &H256Json,
+        block_height_and_time: Option<BlockHeightAndTime>,
+        storage: &T,
+    ) -> Result<Vec<TransactionDetails>, MmError<GetTxDetailsError<T::Error>>> {
+        let tx_bytes = self.tx_from_storage_or_rpc(tx_hash, storage).await?;
+        let tx: UtxoTx = deserialize(tx_bytes.0.as_slice())?;
+        let mut previous_transactions = HashMap::with_capacity(tx.inputs.len());
+        for input in tx.inputs.iter() {
+            if previous_transactions.contains_key(&input.previous_output.hash) {
+                continue;
             }
+
+            let tx_bytes = self.tx_from_storage_or_rpc(tx_hash, storage).await?;
+            let tx: UtxoTx = deserialize(tx_bytes.0.as_slice())?;
+            previous_transactions.insert(tx.hash(), tx);
         }
 
+        let maybe_op_return: Script = tx.outputs[0].script_pubkey.clone().into();
+        if maybe_op_return.is_pay_to_public_key_hash()
+            || maybe_op_return.is_pay_to_public_key()
+            || maybe_op_return.is_pay_to_script_hash()
+        {
+            let tx = self
+                .plain_bch_tx_details(tx_hash, tx, &previous_transactions, block_height_and_time)
+                .await?;
+            Ok(vec![tx])
+        } else {
+            match parse_slp_script(&maybe_op_return) {
+                Ok(slp_details) => {
+                    let txes = self
+                        .bch_with_slp_tx_details(
+                            tx_hash,
+                            tx,
+                            slp_details.transaction,
+                            &previous_transactions,
+                            block_height_and_time,
+                            storage,
+                        )
+                        .await?;
+                    Ok(txes.to_vec())
+                },
+                Err(e) => {
+                    error!(
+                        "Error {} on parse_slp_script, considering tx {:02x} as plain BCH",
+                        e, tx_hash
+                    );
+                    let tx = self
+                        .plain_bch_tx_details(tx_hash, tx, &previous_transactions, block_height_and_time)
+                        .await?;
+                    Ok(vec![tx])
+                },
+            }
+        }
+    }
+
+    async fn plain_bch_tx_details<E: TxHistoryStorageError>(
+        &self,
+        tx_hash: &H256Json,
+        tx: UtxoTx,
+        previous_transactions: &HashMap<H256, UtxoTx>,
+        height_and_time: Option<BlockHeightAndTime>,
+    ) -> Result<TransactionDetails, MmError<GetTxDetailsError<E>>> {
+        let mut tx_builder = TxDetailsBuilder::new(tx.clone());
         for output in tx.outputs {
             let addresses = self
                 .addresses_from_script(&output.script_pubkey.into())
@@ -372,18 +425,111 @@ impl BchCoin {
 
             let amount = big_decimal_from_sat_unsigned(output.value, self.decimals());
             for address in addresses {
-                bch_tx_builder.transferred_to(address.clone(), &amount);
-                if let Some(ref mut slp_tx_builder) = slp_tx_builder {
-                    slp_tx_builder.transferred_to(address, &amount);
-                }
+                tx_builder.transferred_to(address, &amount);
             }
         }
 
-        let result = match slp_tx_builder {
-            Some(slp_tx_builder) => vec![bch_tx_builder.build(), slp_tx_builder.build()],
-            None => vec![bch_tx_builder.build()],
+        for input in tx.inputs {
+            let index = input.previous_output.index;
+            let prev_tx = previous_transactions
+                .get(&input.previous_output.hash)
+                .expect("Tx to exist");
+            let prev_script = prev_tx.outputs[index as usize].script_pubkey.clone().into();
+            let addresses = self
+                .addresses_from_script(&prev_script)
+                .map_to_mm(GetTxDetailsError::AddressesFromScriptError)?;
+            if addresses.len() != 1 {
+                let msg = format!(
+                    "{} tx {:02x} output script resulted into unexpected number of addresses",
+                    self.ticker(),
+                    tx_hash,
+                );
+                return MmError::err(GetTxDetailsError::AddressesFromScriptError(msg));
+            }
+
+            let prev_value = prev_tx.outputs[index as usize].value;
+            let amount = big_decimal_from_sat_unsigned(prev_value, self.decimals());
+            for address in addresses {
+                tx_builder.transferred_from(address, &amount);
+            }
+        }
+        Ok(tx_builder.build())
+    }
+
+    async fn bch_with_slp_tx_details<Storage: TxHistoryStorage>(
+        &self,
+        tx_hash: &H256Json,
+        tx: UtxoTx,
+        slp_tx: SlpTransaction,
+        previous_transactions: &HashMap<H256, UtxoTx>,
+        height_and_time: Option<BlockHeightAndTime>,
+        storage: &Storage,
+    ) -> Result<[TransactionDetails; 2], MmError<GetTxDetailsError<Storage::Error>>> {
+        let (slp_decimals, slp_amounts) = match slp_tx {
+            SlpTransaction::Send { token_id, amounts } => {
+                let token_genesis_tx = self.tx_from_storage_or_rpc(tx_hash, storage).await?;
+                let token_genesis_tx: UtxoTx = deserialize(token_genesis_tx.0.as_slice())?;
+                let maybe_genesis_script: Script = token_genesis_tx.outputs[0].script_pubkey.clone().into();
+                let slp_details = parse_slp_script(&maybe_genesis_script)?;
+                match slp_details.transaction {
+                    SlpTransaction::Genesis { decimals, .. } => (decimals[0], amounts),
+                    _ => return MmError::err(GetTxDetailsError::SlpTokenIdIsNotGenesis(token_id)),
+                }
+            },
+            SlpTransaction::Mint {
+                token_id,
+                additional_token_quantity,
+                ..
+            } => {
+                let token_genesis_tx = self.tx_from_storage_or_rpc(tx_hash, storage).await?;
+                let token_genesis_tx: UtxoTx = deserialize(token_genesis_tx.0.as_slice())?;
+                let maybe_genesis_script: Script = token_genesis_tx.outputs[0].script_pubkey.clone().into();
+                let slp_details = parse_slp_script(&maybe_genesis_script)?;
+                match slp_details.transaction {
+                    SlpTransaction::Genesis { decimals, .. } => (decimals[0], vec![additional_token_quantity]),
+                    _ => return MmError::err(GetTxDetailsError::SlpTokenIdIsNotGenesis(token_id)),
+                }
+            },
+            SlpTransaction::Genesis {
+                decimals,
+                initial_token_mint_quantity,
+                ..
+            } => (decimals[0], vec![initial_token_mint_quantity]),
         };
-        Ok(result)
+
+        let mut bch_tx_details_builder = TxDetailsBuilder::new(tx.clone());
+        let mut slp_tx_details_builder: TxDetailsBuilder<Address, _> = TxDetailsBuilder::new(tx.clone());
+        for input in tx.inputs {
+            let index = input.previous_output.index;
+            let prev_tx = previous_transactions.get(&input.previous_output.hash).unwrap();
+            let prev_script = prev_tx.outputs[index as usize].script_pubkey.clone().into();
+            let addresses = self
+                .addresses_from_script(&prev_script)
+                .map_to_mm(GetTxDetailsError::AddressesFromScriptError)?;
+            if addresses.len() != 1 {
+                let msg = format!(
+                    "{} tx {:02x} output script resulted into unexpected number of addresses",
+                    self.ticker(),
+                    tx_hash,
+                );
+                return MmError::err(GetTxDetailsError::AddressesFromScriptError(msg));
+            }
+
+            let prev_value = prev_tx.outputs[index as usize].value;
+            let amount = big_decimal_from_sat_unsigned(prev_value, self.decimals());
+            for address in addresses {
+                bch_tx_details_builder.transferred_from(address, &amount);
+            }
+
+            let prev_tx_maybe_op_return: Script = prev_tx.outputs[0].script_pubkey.clone().into();
+            if prev_tx_maybe_op_return.is_pay_to_script_hash()
+                || prev_tx_maybe_op_return.is_pay_to_public_key_hash()
+                || prev_tx_maybe_op_return.is_pay_to_public_key()
+            {
+            } else {
+            }
+        }
+        Ok([bch_tx_details_builder.build(), slp_tx_details_builder.build()])
     }
 }
 

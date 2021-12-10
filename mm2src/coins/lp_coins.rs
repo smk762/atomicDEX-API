@@ -608,6 +608,12 @@ pub struct TransactionDetails {
     transaction_type: TransactionType,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct BlockHeightAndTime {
+    height: u64,
+    timestamp: u64,
+}
+
 impl TransactionDetails {
     /// Whether the transaction details block height should be updated (when tx is confirmed)
     pub fn should_update_block_height(&self) -> bool {
