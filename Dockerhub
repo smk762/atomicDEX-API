@@ -20,15 +20,13 @@ RUN \
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# First 7 characters of the commit ID.
-
 RUN git clone https://github.com/KomodoPlatform/atomicDEX-API &&\
     cd atomicDEX-API &&\
     git checkout dev &&\
     cargo fetch &&\
     cargo build -vv &&\
-    mv target/debug/mm2 /usr/local/bin/mm2 &&\
-    cargo clean &&\
-    /usr/local/bin/mm2 > /usr/local/bin/mm2.log
+    
+RUN cd target/debug/mm2 &&\
+    ./mm2 > mm2.log
 
-CMD tail -f /mm2/mm2.log
+CMD tail -f mm2.log
