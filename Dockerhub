@@ -1,0 +1,39 @@
+FROM ubuntu:bionic
+
+RUN \
+    apt-get update &&\
+    apt-get install -y git build-essential wget &&\
+    apt-get install -y cmake &&\
+    apt-get install -y llvm-dev libclang-dev clang libssl-dev pkg-config &&\
+    apt-get install -y jq &&\
+    apt-get clean
+
+RUN \
+    wget -O- https://sh.rustup.rs > /tmp/rustup-init.sh &&\
+    sh /tmp/rustup-init.sh -y --default-toolchain none &&\
+    . /root/.cargo/env &&\
+    rustup set profile minimal &&\
+    rustup install nightly-2020-10-25 &&\
+    rustup default nightly-2020-10-25 &&\
+    rustup component add rustfmt-preview &&\
+    rm -f /tmp/rustup-init.sh
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# First 7 characters of the commit ID.
+ENV MM_VERSION=$(git rev-parse dev)
+
+RUN echo $MM_VERSION > /mm2/MM_VERSION
+
+RUN cd /mm2 && cargo fetch
+
+RUN cd /mm2 &&\
+    cargo build -vv &&\
+    mv target/debug/mm2 /usr/local/bin/mm2 &&\
+    cargo clean
+    
+    
+RUN cd /mm2 &&\
+    ./mm2 > ./mm2.log &
+
+CMD tail -f /mm2/mm2.log
