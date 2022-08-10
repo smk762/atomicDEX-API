@@ -70,7 +70,7 @@ cfg_native! {
     use futures::AsyncWriteExt;
     use std::io;
     use zcash_primitives::transaction::Transaction as ZTransaction;
-    use z_coin::ZcoinConsensusParams;
+    use z_coin::ZcoinProtocolInfo;
 }
 
 cfg_wasm32! {
@@ -2079,9 +2079,7 @@ pub enum CoinProtocol {
         decimals: u8,
     },
     #[cfg(not(target_arch = "wasm32"))]
-    ZHTLC {
-        consensus_params: ZcoinConsensusParams,
-    },
+    ZHTLC(ZcoinProtocolInfo),
 }
 
 pub type RpcTransportEventHandlerShared = Arc<dyn RpcTransportEventHandler + Send + Sync + 'static>;
