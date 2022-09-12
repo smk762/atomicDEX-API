@@ -102,7 +102,6 @@ pub mod log;
 pub mod crash_reports;
 pub mod custom_futures;
 pub mod custom_iter;
-pub mod duplex_mutex;
 pub mod seri;
 #[path = "patterns/state_machine.rs"] pub mod state_machine;
 pub mod time_cache;
