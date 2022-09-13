@@ -36,8 +36,9 @@
 use async_trait::async_trait;
 use base58::FromBase58Error;
 use common::{calc_total_pages, now_ms, ten, HttpStatusCode};
-use crypto::{Bip32Error, CryptoCtx, DerivationPath};
+use crypto::{Bip32Error, CryptoCtx, DerivationPath, HwRpcError, WithHwRpcError};
 use derive_more::Display;
+use enum_from::EnumFromTrait;
 use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
 use futures::{FutureExt, TryFutureExt};
@@ -201,7 +202,8 @@ pub mod qrc20;
 use qrc20::{qrc20_coin_from_conf_and_params, Qrc20ActivationParams, Qrc20Coin, Qrc20FeeDetails};
 
 pub mod rpc_command;
-use rpc_command::{init_create_account::{CreateAccountTaskManager, CreateAccountTaskManagerShared},
+use rpc_command::{init_account_balance::{AccountBalanceTaskManager, AccountBalanceTaskManagerShared},
+                  init_create_account::{CreateAccountTaskManager, CreateAccountTaskManagerShared},
                   init_scan_for_new_addresses::{ScanAddressesTaskManager, ScanAddressesTaskManagerShared},
                   init_withdraw::{WithdrawTaskManager, WithdrawTaskManagerShared}};
 
@@ -610,6 +612,7 @@ pub trait MarketCoinOps {
 
     /// Base coin balance for tokens, e.g. ETH balance in ERC20 case
     fn base_coin_balance(&self) -> BalanceFut<BigDecimal>;
+
     fn platform_ticker(&self) -> &str;
 
     /// Receives raw transaction bytes in hexadecimal format as input and returns tx hash in hexadecimal format
@@ -650,7 +653,7 @@ pub trait MarketCoinOps {
     fn is_privacy(&self) -> bool { false }
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum WithdrawFee {
     UtxoFixed {
@@ -712,7 +715,7 @@ pub enum WithdrawFrom {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct WithdrawRequest {
     coin: String,
     from: Option<WithdrawFrom>,
@@ -1399,23 +1402,9 @@ impl DelegationError {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Display, Serialize, SerializeErrorType, PartialEq)]
+#[derive(Clone, Debug, Display, EnumFromTrait, Serialize, SerializeErrorType, PartialEq)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum WithdrawError {
-    /*                                              */
-    /*------------ Trezor device errors ------------*/
-    /*                                             */
-    #[display(fmt = "Trezor device disconnected")]
-    TrezorDisconnected,
-    #[display(fmt = "Trezor internal error: {}", _0)]
-    HardwareWalletInternal(String),
-    #[display(fmt = "No Trezor device available")]
-    NoTrezorDeviceAvailable,
-    #[display(fmt = "Unexpected Hardware Wallet device: {}", _0)]
-    FoundUnexpectedDevice(String),
-    /*                                         */
-    /*------------- WithdrawError -------------*/
-    /*                                         */
     #[display(
         fmt = "'{}' coin doesn't support 'init_withdraw' yet. Consider using 'withdraw' request instead",
         coin
@@ -1442,18 +1431,23 @@ pub enum WithdrawError {
     InvalidFeePolicy(String),
     #[display(fmt = "No such coin {}", coin)]
     NoSuchCoin { coin: String },
+    #[from_trait(WithTimeout::timeout)]
     #[display(fmt = "Withdraw timed out {:?}", _0)]
     Timeout(Duration),
-    #[display(fmt = "Unexpected user action. Expected '{}'", expected)]
-    UnexpectedUserAction { expected: String },
     #[display(fmt = "Request should contain a 'from' address/account")]
     FromAddressNotFound,
     #[display(fmt = "Unexpected 'from' address: {}", _0)]
     UnexpectedFromAddress(String),
     #[display(fmt = "Unknown '{}' account", account_id)]
     UnknownAccount { account_id: u32 },
+    #[display(fmt = "RPC 'task' is awaiting '{}' user action", expected)]
+    UnexpectedUserAction { expected: String },
+    #[from_trait(WithHwRpcError::hw_rpc_error)]
+    #[display(fmt = "{}", _0)]
+    HwError(HwRpcError),
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
+    #[from_trait(WithInternal::internal)]
     #[display(fmt = "Internal error: {}", _0)]
     InternalError(String),
 }
@@ -1464,7 +1458,6 @@ impl HttpStatusCode for WithdrawError {
             WithdrawError::NoSuchCoin { .. } => StatusCode::NOT_FOUND,
             WithdrawError::Timeout(_) => StatusCode::REQUEST_TIMEOUT,
             WithdrawError::CoinDoesntSupportInitWithdraw { .. }
-            | WithdrawError::UnexpectedUserAction { .. }
             | WithdrawError::NotSufficientBalance { .. }
             | WithdrawError::ZeroBalanceToWithdrawMax
             | WithdrawError::AmountTooLow { .. }
@@ -1472,13 +1465,10 @@ impl HttpStatusCode for WithdrawError {
             | WithdrawError::InvalidFeePolicy(_)
             | WithdrawError::FromAddressNotFound
             | WithdrawError::UnexpectedFromAddress(_)
-            | WithdrawError::UnknownAccount { .. } => StatusCode::BAD_REQUEST,
-            WithdrawError::NoTrezorDeviceAvailable
-            | WithdrawError::TrezorDisconnected
-            | WithdrawError::FoundUnexpectedDevice(_) => StatusCode::GONE,
-            WithdrawError::HardwareWalletInternal(_)
-            | WithdrawError::Transport(_)
-            | WithdrawError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            | WithdrawError::UnknownAccount { .. }
+            | WithdrawError::UnexpectedUserAction { .. } => StatusCode::BAD_REQUEST,
+            WithdrawError::HwError(_) => StatusCode::GONE,
+            WithdrawError::Transport(_) | WithdrawError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
@@ -1892,9 +1882,10 @@ pub struct CoinsContext {
     /// Similar to `LP_coins`.
     coins: AsyncMutex<HashMap<String, MmCoinEnum>>,
     balance_update_handlers: AsyncMutex<Vec<Box<dyn BalanceTradeFeeUpdatedHandler + Send + Sync>>>,
-    withdraw_task_manager: WithdrawTaskManagerShared,
+    account_balance_task_manager: AccountBalanceTaskManagerShared,
     create_account_manager: CreateAccountTaskManagerShared,
     scan_addresses_manager: ScanAddressesTaskManagerShared,
+    withdraw_task_manager: WithdrawTaskManagerShared,
     #[cfg(target_arch = "wasm32")]
     tx_history_db: SharedDb<TxHistoryDb>,
     #[cfg(target_arch = "wasm32")]
@@ -1918,6 +1909,7 @@ impl CoinsContext {
             Ok(CoinsContext {
                 coins: AsyncMutex::new(HashMap::new()),
                 balance_update_handlers: AsyncMutex::new(vec![]),
+                account_balance_task_manager: AccountBalanceTaskManager::new_shared(),
                 withdraw_task_manager: WithdrawTaskManager::new_shared(),
                 create_account_manager: CreateAccountTaskManager::new_shared(),
                 scan_addresses_manager: ScanAddressesTaskManager::new_shared(),
