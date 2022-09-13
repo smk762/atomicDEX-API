@@ -116,6 +116,7 @@ lightning-net-tokio = "0.0.110"
 lightning-rapid-gossip-sync = "0.0.110"
 rust-ini = { version = "0.13" }
 rustls = { version = "0.20", features = ["dangerous_configuration"] }
+secp256k1v22 = { version = "0.22", package = "secp256k1" }
 tokio = { version = "1.7" }
 tokio-rustls = { version = "0.23" }
 tonic = { version = "0.7", features = ["tls", "tls-webpki-roots", "compression"] }
