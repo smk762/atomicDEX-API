@@ -1346,3 +1346,115 @@ fn test_sign_verify_message() {
         .unwrap();
     assert!(is_valid);
 }
+
+#[test]
+fn test_eth_extract_secret() {
+    let key_pair = KeyPair::from_secret_slice(
+        &hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap(),
+    )
+    .unwrap();
+    let transport = Web3Transport::single_node("https://ropsten.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b", false);
+    let web3 = Web3::new(transport);
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+
+    let swap_contract_address = Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94");
+    let coin = EthCoin(Arc::new(EthCoinImpl {
+        coin_type: EthCoinType::Erc20 {
+            platform: "ETH".to_string(),
+            token_addr: Address::from("0xc0eb7aed740e1796992a08962c15661bdeb58003"),
+        },
+        decimals: 18,
+        gas_station_url: None,
+        gas_station_decimals: ETH_GAS_STATION_DECIMALS,
+        gas_station_policy: GasStationPricePolicy::MeanAverageFast,
+        history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
+        my_address: key_pair.address(),
+        sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
+        key_pair,
+        swap_contract_address,
+        fallback_swap_contract: None,
+        ticker: "ETH".into(),
+        web3_instances: vec![Web3Instance {
+            web3: web3.clone(),
+            is_parity: true,
+        }],
+        web3,
+        ctx: ctx.weak(),
+        required_confirmations: 1.into(),
+        chain_id: None,
+        logs_block_range: DEFAULT_LOGS_BLOCK_RANGE,
+        nonce_lock: new_nonce_lock(),
+        erc20_tokens_infos: Default::default(),
+    }));
+
+    // raw transaction bytes of https://ropsten.etherscan.io/tx/0xcb7c14d3ff309996d582400369393b6fa42314c52245115d4a3f77f072c36da9
+    let tx_hex = &[
+        249, 1, 9, 37, 132, 119, 53, 148, 0, 131, 2, 73, 240, 148, 123, 193, 187, 221, 106, 10, 114, 47, 201, 191, 252,
+        73, 201, 33, 182, 133, 236, 184, 75, 148, 128, 184, 164, 2, 237, 41, 43, 188, 96, 248, 252, 165, 132, 81, 30,
+        243, 34, 85, 165, 46, 224, 176, 90, 137, 30, 19, 123, 224, 67, 83, 53, 74, 57, 148, 140, 95, 45, 70, 147, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 71, 13, 228, 223, 130, 0, 0, 168, 151, 11,
+        232, 224, 253, 63, 180, 26, 114, 23, 184, 27, 10, 161, 80, 178, 251, 73, 204, 80, 174, 97, 118, 149, 204, 186,
+        187, 243, 185, 19, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 157, 73, 251, 238, 138, 245, 142, 240, 85, 44, 209, 63, 194, 242,
+        109, 242, 246, 6, 76, 176, 27, 160, 29, 157, 226, 23, 81, 174, 34, 82, 93, 182, 41, 248, 119, 42, 221, 214, 38,
+        243, 128, 2, 235, 208, 193, 192, 74, 208, 242, 26, 221, 83, 54, 74, 160, 111, 29, 92, 8, 75, 61, 97, 103, 199,
+        100, 189, 72, 74, 221, 144, 66, 170, 68, 121, 29, 105, 19, 194, 35, 245, 196, 131, 236, 29, 105, 101, 30,
+    ];
+
+    let secret = coin.extract_secret(&[0u8; 20], tx_hex.as_slice());
+    assert!(secret.is_ok());
+    let expect_secret = &[
+        168, 151, 11, 232, 224, 253, 63, 180, 26, 114, 23, 184, 27, 10, 161, 80, 178, 251, 73, 204, 80, 174, 97, 118,
+        149, 204, 186, 187, 243, 185, 19, 128,
+    ];
+    assert_eq!(expect_secret.as_slice(), &secret.unwrap())
+}
+
+#[test]
+fn test_eth_validate_valid_and_invalid_pubkey() {
+    let ctx = MmCtxBuilder::new().into_mm_arc();
+    let conf = json!({
+      "coin": "MATIC",
+      "name": "matic",
+      "fname": "Polygon",
+      "rpcport": 80,
+      "mm2": 1,
+      "chain_id": 137,
+      "avg_blocktime": 0.03,
+      "required_confirmations": 3,
+      "protocol": {
+        "type": "ETH"
+      }
+    });
+
+    let request = json!({
+        "method": "enable",
+        "coin": "MATIC",
+        "urls": ["https://polygon-mainnet.g.alchemy.com/v2/9YYl6iMLmXXLoflMPHnMTC4Dcm2L2tFH"],
+        "swap_contract_address": "0x9130b257d37a52e52f21054c4da3450c72f595ce",
+    });
+
+    let priv_key = [
+        3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
+        172, 110, 180, 13, 123, 179, 10, 49,
+    ];
+    let coin = block_on(eth_coin_from_conf_and_request(
+        &ctx,
+        "MATIC",
+        &conf,
+        &request,
+        &priv_key,
+        CoinProtocol::ETH,
+    ))
+    .unwrap();
+    // Test expected to pass at this point as we're using a valid pubkey to validate against a valid pubkey
+    assert!(coin
+        .validate_other_pubkey(&[
+            3, 23, 183, 225, 206, 31, 159, 148, 195, 42, 67, 115, 146, 41, 248, 140, 11, 3, 51, 41, 111, 180, 110, 143,
+            114, 134, 88, 73, 198, 174, 52, 184, 78
+        ])
+        .is_ok());
+    // Test expected to fail at this point as we're using a valid pubkey to validate against an invalid pubkeys
+    assert!(coin.validate_other_pubkey(&[1u8; 20]).is_err());
+    assert!(coin.validate_other_pubkey(&[1u8; 8]).is_err());
+}
