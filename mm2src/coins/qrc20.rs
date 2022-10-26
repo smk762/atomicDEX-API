@@ -9,7 +9,7 @@ use crate::utxo::rpc_clients::{ElectrumClient, NativeClient, UnspentInfo, UtxoRp
 use crate::utxo::tx_cache::{UtxoVerboseCacheOps, UtxoVerboseCacheShared};
 use crate::utxo::utxo_builder::{UtxoCoinBuildError, UtxoCoinBuildResult, UtxoCoinBuilderCommonOps,
                                 UtxoCoinWithIguanaPrivKeyBuilder, UtxoFieldsWithIguanaPrivKeyBuilder};
-use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_inputs_signed_by_pub, UtxoTxBuilder};
+use crate::utxo::utxo_common::{self, big_decimal_from_sat, check_all_utxo_inputs_signed_by_pub, UtxoTxBuilder};
 use crate::utxo::{qtum, ActualTxFee, AdditionalTxData, AddrFromStrError, BroadcastTxErr, FeePolicy, GenerateTxError,
                   GetUtxoListOps, HistoryUtxoTx, HistoryUtxoTxMap, MatureUnspentList, RecentlySpentOutPointsGuard,
                   UtxoActivationParams, UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps, UtxoFromLegacyReqErr,
@@ -20,8 +20,8 @@ use crate::{BalanceError, BalanceFut, CoinBalance, CoinFutSpawner, FeeApproxStag
             TradePreimageFut, TradePreimageResult, TradePreimageValue, TransactionDetails, TransactionEnum,
             TransactionErr, TransactionFut, TransactionType, TxMarshalingErr, UnexpectedDerivationMethod,
             ValidateAddressResult, ValidateOtherPubKeyErr, ValidatePaymentFut, ValidatePaymentInput,
-            VerificationResult, WatcherValidatePaymentInput, WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest,
-            WithdrawResult};
+            VerificationResult, WatcherOps, WatcherSearchForSwapTxSpendInput, WatcherValidatePaymentInput,
+            WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest, WithdrawResult};
 use async_trait::async_trait;
 use bitcrypto::{dhash160, sha256};
 use chain::TransactionOutput;
@@ -614,8 +614,8 @@ impl GetUtxoListOps for Qrc20Coin {
 #[async_trait]
 #[cfg_attr(test, mockable)]
 impl UtxoCommonOps for Qrc20Coin {
-    async fn get_htlc_spend_fee(&self, tx_size: u64) -> UtxoRpcResult<u64> {
-        utxo_common::get_htlc_spend_fee(self, tx_size).await
+    async fn get_htlc_spend_fee(&self, tx_size: u64, stage: &FeeApproxStage) -> UtxoRpcResult<u64> {
+        utxo_common::get_htlc_spend_fee(self, tx_size, stage).await
     }
 
     fn addresses_from_script(&self, script: &Script) -> Result<Vec<UtxoAddress>, String> {
@@ -754,6 +754,7 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
+    #[inline]
     fn send_taker_payment(
         &self,
         _time_lock_duration: u64,
@@ -779,6 +780,7 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
+    #[inline]
     fn send_maker_spends_taker_payment(
         &self,
         taker_payment_tx: &[u8],
@@ -802,17 +804,7 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
-    fn create_taker_spends_maker_payment_preimage(
-        &self,
-        _maker_payment_tx: &[u8],
-        _time_lock: u32,
-        _maker_pub: &[u8],
-        _secret_hash: &[u8],
-        _swap_unique_data: &[u8],
-    ) -> TransactionFut {
-        unimplemented!();
-    }
-
+    #[inline]
     fn send_taker_spends_maker_payment(
         &self,
         maker_payment_tx: &[u8],
@@ -836,10 +828,7 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
-    fn send_taker_spends_maker_payment_preimage(&self, _preimage: &[u8], _secret: &[u8]) -> TransactionFut {
-        unimplemented!();
-    }
-
+    #[inline]
     fn send_taker_refunds_payment(
         &self,
         taker_payment_tx: &[u8],
@@ -861,6 +850,7 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
+    #[inline]
     fn send_maker_refunds_payment(
         &self,
         maker_payment_tx: &[u8],
@@ -882,6 +872,7 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
+    #[inline]
     fn validate_fee(
         &self,
         fee_tx: &TransactionEnum,
@@ -896,7 +887,7 @@ impl SwapOps for Qrc20Coin {
             _ => panic!("Unexpected TransactionEnum"),
         };
         let fee_tx_hash = fee_tx.hash().reversed().into();
-        if !try_fus!(check_all_inputs_signed_by_pub(fee_tx, expected_sender)) {
+        if !try_fus!(check_all_utxo_inputs_signed_by_pub(fee_tx, expected_sender)) {
             return Box::new(futures01::future::err(ERRL!("The dex fee was sent from wrong address")));
         }
         let fee_addr = try_fus!(self.contract_address_from_raw_pubkey(fee_addr));
@@ -911,15 +902,16 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
+    #[inline]
     fn validate_maker_payment(&self, input: ValidatePaymentInput) -> ValidatePaymentFut<()> {
         let payment_tx: UtxoTx = try_f!(deserialize(input.payment_tx.as_slice()));
         let sender = try_f!(self
             .contract_address_from_raw_pubkey(&input.other_pub)
-            .map_to_mm(ValidatePaymentError::InvalidInput));
+            .map_to_mm(ValidatePaymentError::InvalidParameter));
         let swap_contract_address = try_f!(input
             .swap_contract_address
             .try_to_address()
-            .map_to_mm(ValidatePaymentError::InvalidInput));
+            .map_to_mm(ValidatePaymentError::InvalidParameter));
 
         let selfi = self.clone();
         let fut = async move {
@@ -937,15 +929,16 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
+    #[inline]
     fn validate_taker_payment(&self, input: ValidatePaymentInput) -> ValidatePaymentFut<()> {
         let swap_contract_address = try_f!(input
             .swap_contract_address
             .try_to_address()
-            .map_to_mm(ValidatePaymentError::InvalidInput));
+            .map_to_mm(ValidatePaymentError::InvalidParameter));
         let payment_tx: UtxoTx = try_f!(deserialize(input.payment_tx.as_slice()));
         let sender = try_f!(self
             .contract_address_from_raw_pubkey(&input.other_pub)
-            .map_to_mm(ValidatePaymentError::InvalidInput));
+            .map_to_mm(ValidatePaymentError::InvalidParameter));
 
         let selfi = self.clone();
         let fut = async move {
@@ -963,13 +956,7 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
-    fn watcher_validate_taker_payment(
-        &self,
-        _input: WatcherValidatePaymentInput,
-    ) -> Box<dyn Future<Item = (), Error = MmError<ValidatePaymentError>> + Send> {
-        unimplemented!();
-    }
-
+    #[inline]
     fn check_if_my_payment_sent(
         &self,
         time_lock: u32,
@@ -992,6 +979,7 @@ impl SwapOps for Qrc20Coin {
         Box::new(fut.boxed().compat())
     }
 
+    #[inline]
     async fn search_for_swap_tx_spend_my(
         &self,
         input: SearchForSwapTxSpendInput<'_>,
@@ -1012,6 +1000,12 @@ impl SwapOps for Qrc20Coin {
             .await
     }
 
+    #[inline]
+    fn check_tx_signed_by_pub(&self, tx: &[u8], expected_pub: &[u8]) -> Result<bool, String> {
+        utxo_common::check_all_inputs_signed_by_pub(tx, expected_pub)
+    }
+
+    #[inline]
     fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
         self.extract_secret_impl(secret_hash, spend_tx)
     }
@@ -1042,12 +1036,63 @@ impl SwapOps for Qrc20Coin {
         }
     }
 
+    #[inline]
     fn derive_htlc_key_pair(&self, swap_unique_data: &[u8]) -> KeyPair {
         utxo_common::derive_htlc_key_pair(self.as_ref(), swap_unique_data)
     }
 
+    #[inline]
     fn validate_other_pubkey(&self, raw_pubkey: &[u8]) -> MmResult<(), ValidateOtherPubKeyErr> {
         utxo_common::validate_other_pubkey(raw_pubkey)
+    }
+}
+
+#[async_trait]
+impl WatcherOps for Qrc20Coin {
+    fn create_taker_spends_maker_payment_preimage(
+        &self,
+        _maker_payment_tx: &[u8],
+        _time_lock: u32,
+        _maker_pub: &[u8],
+        _secret_hash: &[u8],
+        _swap_unique_data: &[u8],
+    ) -> TransactionFut {
+        unimplemented!();
+    }
+
+    fn send_taker_spends_maker_payment_preimage(&self, _preimage: &[u8], _secret: &[u8]) -> TransactionFut {
+        unimplemented!();
+    }
+
+    fn create_taker_refunds_payment_preimage(
+        &self,
+        _taker_payment_tx: &[u8],
+        _time_lock: u32,
+        _maker_pub: &[u8],
+        _secret_hash: &[u8],
+        _swap_contract_address: &Option<BytesJson>,
+        _swap_unique_data: &[u8],
+    ) -> TransactionFut {
+        unimplemented!();
+    }
+
+    fn send_watcher_refunds_taker_payment_preimage(&self, _taker_refunds_payment: &[u8]) -> TransactionFut {
+        unimplemented!();
+    }
+
+    fn watcher_validate_taker_fee(&self, _taker_fee_hash: Vec<u8>, _verified_pub: Vec<u8>) -> ValidatePaymentFut<()> {
+        unimplemented!();
+    }
+
+    fn watcher_validate_taker_payment(&self, _input: WatcherValidatePaymentInput) -> ValidatePaymentFut<()> {
+        unimplemented!();
+    }
+
+    async fn watcher_search_for_swap_tx_spend(
+        &self,
+        _input: WatcherSearchForSwapTxSpendInput<'_>,
+    ) -> Result<Option<FoundSwapTxSpend>, String> {
+        unimplemented!();
     }
 }
 
