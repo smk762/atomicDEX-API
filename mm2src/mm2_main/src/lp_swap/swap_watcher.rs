@@ -10,6 +10,7 @@ use futures::compat::Future01CompatExt;
 use mm2_core::mm_ctx::MmArc;
 use mm2_libp2p::{decode_signed, pub_sub_topic, TopicPrefix};
 use mm2_number::BigDecimal;
+use rpc::v1::types::Bytes as BytesJson;
 use std::cmp::min;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -295,13 +296,14 @@ impl State for WaitForTakerPaymentSpend {
         let tx_hash = tx.tx_hash();
         info!("Taker payment spend tx {:02x}", tx_hash);
         let tx_ident = TransactionIdentifier {
-            tx_hex: tx.tx_hex().into(),
+            tx_hex: BytesJson::from(tx.tx_hex()),
             tx_hash,
         };
 
         let secret = match watcher_ctx
             .taker_coin
             .extract_secret(&watcher_ctx.data.secret_hash, &tx_ident.tx_hex.0)
+            .await
         {
             Ok(bytes) => H256Json::from(bytes.as_slice()),
             Err(err) => {
