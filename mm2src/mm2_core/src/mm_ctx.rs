@@ -3,7 +3,7 @@ use arrayref::array_ref;
 use common::executor::Timer;
 use common::executor::{abortable_queue::{AbortableQueue, WeakSpawner},
                        graceful_shutdown, AbortSettings, AbortableSystem, SpawnAbortable, SpawnFuture};
-use common::log::{self, LogLevel, LogState};
+use common::log::{self, LogLevel, LogOnError, LogState};
 use common::{bits256, cfg_native, cfg_wasm32, small_rng};
 use gstuff::{try_s, Constructible, ERR, ERRL};
 use keys::KeyPair;
@@ -381,9 +381,9 @@ impl MmArc {
         try_s!(self.stop.pin(true));
 
         // Notify shutdown listeners.
-        self.graceful_shutdown_registry.abort_all();
+        self.graceful_shutdown_registry.abort_all().warn_log();
         // Abort spawned futures.
-        self.abortable_system.abort_all();
+        self.abortable_system.abort_all().warn_log();
 
         #[cfg(feature = "track-ctx-pointer")]
         self.track_ctx_pointer();
@@ -504,7 +504,10 @@ impl MmArc {
                     userpass: userpass.into(),
                 });
 
-        let shutdown_detector = self.graceful_shutdown_registry.register_listener();
+        let shutdown_detector = self
+            .graceful_shutdown_registry
+            .register_listener()
+            .map_err(|e| MmMetricsError::Internal(e.to_string()))?;
         prometheus::spawn_prometheus_exporter(self.metrics.weak(), address, shutdown_detector, credentials)
     }
 }

@@ -322,7 +322,7 @@ async fn start_lightning(
         platform_coin.clone(),
         protocol_conf.network.clone(),
         protocol_conf.confirmation_targets,
-    ));
+    )?);
     task_handle.update_in_progress_status(LightningInProgressStatus::GettingFeesFromRPC)?;
     platform.set_latest_fees().await?;
 

@@ -13,7 +13,7 @@ use crate::{BalanceFut, CheckIfMyPaymentSentArgs, CoinFutSpawner, FeeApproxStage
             WatcherValidatePaymentInput, WithdrawError, WithdrawFut, WithdrawRequest, WithdrawResult};
 use async_trait::async_trait;
 use bincode::serialize;
-use common::executor::{abortable_queue::AbortableQueue, AbortableSystem};
+use common::executor::{abortable_queue::AbortableQueue, AbortableSystem, AbortedError};
 use common::{async_blocking, now_ms};
 use futures::{FutureExt, TryFutureExt};
 use futures01::Future;
@@ -36,6 +36,11 @@ use std::{convert::TryFrom,
 #[derive(Debug)]
 pub enum SplTokenCreationError {
     InvalidPubkey(String),
+    Internal(String),
+}
+
+impl From<AbortedError> for SplTokenCreationError {
+    fn from(e: AbortedError) -> Self { SplTokenCreationError::Internal(e.to_string()) }
 }
 
 pub struct SplTokenFields {
@@ -74,13 +79,13 @@ impl SplToken {
         ticker: String,
         token_address: String,
         platform_coin: SolanaCoin,
-    ) -> Result<SplToken, MmError<SplTokenCreationError>> {
+    ) -> MmResult<SplToken, SplTokenCreationError> {
         let token_contract_address = solana_sdk::pubkey::Pubkey::from_str(&token_address)
             .map_err(|e| MmError::new(SplTokenCreationError::InvalidPubkey(format!("{:?}", e))))?;
 
         // Create an abortable system linked to the `platform_coin` so if the platform coin is disabled,
         // all spawned futures related to `SplToken` will be aborted as well.
-        let abortable_system = platform_coin.abortable_system.create_subsystem();
+        let abortable_system = platform_coin.abortable_system.create_subsystem()?;
 
         let conf = Arc::new(SplTokenFields {
             decimals,
