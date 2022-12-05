@@ -31,6 +31,7 @@ use crate::{eth, CanRefundHtlc, CheckIfMyPaymentSentArgs, CoinBalance, CoinWithD
             ValidateFeeArgs, ValidateInstructionsErr, ValidateOtherPubKeyErr, ValidatePaymentFut,
             ValidatePaymentInput, VerificationResult, WatcherOps, WatcherValidatePaymentInput, WithdrawFut,
             WithdrawSenderAddress};
+use common::executor::{AbortableSystem, AbortedError};
 use crypto::Bip44Chain;
 use ethereum_types::H160;
 use futures::{FutureExt, TryFutureExt};
@@ -951,6 +952,10 @@ impl MmCoin for QtumCoin {
     fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
         utxo_common::is_coin_protocol_supported(self, info)
     }
+
+    fn on_disabled(&self) -> Result<(), AbortedError> { AbortableSystem::abort_all(&self.as_ref().abortable_system) }
+
+    fn on_token_deactivated(&self, _ticker: &str) {}
 }
 
 #[async_trait]

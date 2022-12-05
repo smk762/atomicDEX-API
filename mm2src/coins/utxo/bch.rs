@@ -18,6 +18,7 @@ use crate::{BlockHeightAndTime, CanRefundHtlc, CheckIfMyPaymentSentArgs, CoinBal
             TransactionType, TxFeeDetails, TxMarshalingErr, UnexpectedDerivationMethod, ValidateAddressResult,
             ValidateFeeArgs, ValidateInstructionsErr, ValidateOtherPubKeyErr, ValidatePaymentFut,
             ValidatePaymentInput, VerificationResult, WatcherOps, WatcherValidatePaymentInput, WithdrawFut};
+use common::executor::{AbortableSystem, AbortedError};
 use common::log::warn;
 use derive_more::Display;
 use futures::{FutureExt, TryFutureExt};
@@ -1262,6 +1263,14 @@ impl MmCoin for BchCoin {
 
     fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
         utxo_common::is_coin_protocol_supported(self, info)
+    }
+
+    fn on_disabled(&self) -> Result<(), AbortedError> { AbortableSystem::abort_all(&self.as_ref().abortable_system) }
+
+    fn on_token_deactivated(&self, ticker: &str) {
+        if let Ok(tokens) = self.slp_tokens_infos.lock().as_deref_mut() {
+            tokens.remove(ticker);
+        };
     }
 }
 

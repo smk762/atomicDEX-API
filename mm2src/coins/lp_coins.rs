@@ -36,7 +36,8 @@
 use async_trait::async_trait;
 use base58::FromBase58Error;
 use common::executor::{abortable_queue::{AbortableQueue, WeakSpawner},
-                       AbortSettings, SpawnAbortable, SpawnFuture};
+                       AbortSettings, AbortedError, SpawnAbortable, SpawnFuture};
+use common::log::LogOnError;
 use common::{calc_total_pages, now_ms, ten, HttpStatusCode};
 use crypto::{Bip32Error, CryptoCtx, CryptoCtxError, DerivationPath, GlobalHDAccountArc, HwRpcError, KeyPairPolicy,
              Secp256k1Secret, WithHwRpcError};
@@ -53,11 +54,13 @@ use mm2_err_handle::prelude::*;
 use mm2_metrics::MetricsWeak;
 use mm2_number::{bigdecimal::{BigDecimal, ParseBigDecimalError, Zero},
                  MmNumber};
+use parking_lot::Mutex as PaMutex;
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{self as json, Value as Json};
 use std::cmp::Ordering;
 use std::collections::hash_map::{HashMap, RawEntryMut};
+use std::collections::HashSet;
 use std::fmt;
 use std::future::Future as Future03;
 use std::num::NonZeroUsize;
@@ -1945,6 +1948,12 @@ pub trait MmCoin: SwapOps + WatcherOps + MarketCoinOps + Send + Sync + 'static {
 
     /// Check if serialized coin protocol info is supported by current version.
     fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool;
+
+    /// Abort all coin related futures on coin deactivation.
+    fn on_disabled(&self) -> Result<(), AbortedError>;
+
+    /// For Handling the removal/deactivation of token on platform coin deactivation.
+    fn on_token_deactivated(&self, _ticker: &str);
 }
 
 /// The coin futures spawner. It's used to spawn futures that can be aborted immediately or after a timeout
@@ -2115,17 +2124,13 @@ pub struct CoinsContext {
     balance_update_handlers: AsyncMutex<Vec<Box<dyn BalanceTradeFeeUpdatedHandler + Send + Sync>>>,
     account_balance_task_manager: AccountBalanceTaskManagerShared,
     create_account_manager: CreateAccountTaskManagerShared,
+    platform_coin_tokens: PaMutex<HashMap<String, HashSet<String>>>,
     scan_addresses_manager: ScanAddressesTaskManagerShared,
     withdraw_task_manager: WithdrawTaskManagerShared,
     #[cfg(target_arch = "wasm32")]
     tx_history_db: SharedDb<TxHistoryDb>,
     #[cfg(target_arch = "wasm32")]
     hd_wallet_db: SharedDb<HDWalletDb>,
-}
-
-#[derive(Debug)]
-pub struct CoinIsAlreadyActivatedErr {
-    pub ticker: String,
 }
 
 #[derive(Debug)]
@@ -2138,6 +2143,7 @@ impl CoinsContext {
     pub fn from_ctx(ctx: &MmArc) -> Result<Arc<CoinsContext>, String> {
         Ok(try_s!(from_ctx(&ctx.coins_ctx, move || {
             Ok(CoinsContext {
+                platform_coin_tokens: PaMutex::new(HashMap::new()),
                 coins: AsyncMutex::new(HashMap::new()),
                 balance_update_handlers: AsyncMutex::new(vec![]),
                 account_balance_task_manager: AccountBalanceTaskManager::new_shared(),
@@ -2152,16 +2158,29 @@ impl CoinsContext {
         })))
     }
 
-    pub async fn add_coin(&self, coin: MmCoinEnum) -> Result<(), MmError<CoinIsAlreadyActivatedErr>> {
+    pub async fn add_token(&self, coin: MmCoinEnum) -> Result<(), MmError<RegisterCoinError>> {
         let mut coins = self.coins.lock().await;
         if coins.contains_key(coin.ticker()) {
-            return MmError::err(CoinIsAlreadyActivatedErr {
-                ticker: coin.ticker().into(),
+            return MmError::err(RegisterCoinError::CoinIsInitializedAlready {
+                coin: coin.ticker().into(),
             });
         }
+        let ticker = coin.ticker();
 
-        coins.insert(coin.ticker().into(), coin);
+        let mut platform_coin_tokens = self.platform_coin_tokens.lock();
+        // Here, we try to add a token to platform_coin_tokens if the token belongs to a platform coin.
+        if let Some(platform) = platform_coin_tokens.get_mut(coin.platform_ticker()) {
+            platform.insert(ticker.to_owned());
+        }
+
+        coins.insert(ticker.into(), coin);
         Ok(())
+    }
+
+    /// Adds a Layer 2 coin that depends on a standalone platform.
+    /// The process of adding l2 coins is identical to that of adding tokens.
+    pub async fn add_l2(&self, coin: MmCoinEnum) -> Result<(), MmError<RegisterCoinError>> {
+        self.add_token(coin).await
     }
 
     pub async fn add_platform_with_tokens(
@@ -2170,19 +2189,77 @@ impl CoinsContext {
         tokens: Vec<MmCoinEnum>,
     ) -> Result<(), MmError<PlatformIsAlreadyActivatedErr>> {
         let mut coins = self.coins.lock().await;
+        let mut platform_coin_tokens = self.platform_coin_tokens.lock();
+
         if coins.contains_key(platform.ticker()) {
             return MmError::err(PlatformIsAlreadyActivatedErr {
                 ticker: platform.ticker().into(),
             });
         }
 
-        coins.insert(platform.ticker().into(), platform);
+        let platform_ticker = platform.ticker().to_string();
+        coins.insert(platform_ticker.clone(), platform);
 
         // Tokens can't be activated without platform coin so we can safely insert them without checking prior existence
+        let mut token_tickers = Vec::with_capacity(tokens.len());
+        // TODO
+        // Handling for these case:
+        // USDT was activated via enable RPC
+        // We try to activate ETH coin and USDT token via enable_eth_with_tokens
         for token in tokens {
+            token_tickers.push(token.ticker().to_string());
             coins.insert(token.ticker().into(), token);
         }
+
+        platform_coin_tokens
+            .entry(platform_ticker)
+            .or_default()
+            .extend(token_tickers);
         Ok(())
+    }
+
+    /// Get enabled coins to disable.
+    pub async fn get_tokens_to_disable(&self, ticker: &str) -> HashSet<String> {
+        let coins = self.platform_coin_tokens.lock();
+        coins.get(ticker).cloned().unwrap_or_default()
+    }
+
+    pub async fn remove_coin(&self, coin: MmCoinEnum) {
+        let ticker = coin.ticker();
+        let platform_ticker = coin.platform_ticker();
+        let mut coins_storage = self.coins.lock().await;
+        let mut platform_tokens_storage = self.platform_coin_tokens.lock();
+
+        // Check if ticker is a platform coin and remove from it platform's token list
+        if ticker == platform_ticker {
+            if let Some(tokens_to_remove) = platform_tokens_storage.remove(ticker) {
+                tokens_to_remove.iter().for_each(|token| {
+                    if let Some(token) = coins_storage.remove(token) {
+                        // Abort all token related futures on token deactivation
+                        token
+                            .on_disabled()
+                            .error_log_with_msg(&format!("Error aborting coin({ticker}) futures"));
+                    }
+                });
+            };
+        } else {
+            if let Some(tokens) = platform_tokens_storage.get_mut(platform_ticker) {
+                tokens.remove(ticker);
+            }
+            if let Some(platform_coin) = coins_storage.get(platform_ticker) {
+                platform_coin.on_token_deactivated(ticker);
+            }
+        };
+
+        //  Remove coin from coin list
+        coins_storage
+            .remove(ticker)
+            .ok_or(format!("{} is disabled already", ticker))
+            .error_log();
+
+        // Abort all coin related futures on coin deactivation
+        coin.on_disabled()
+            .error_log_with_msg(&format!("Error aborting coin({ticker}) futures"));
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -2648,8 +2725,15 @@ pub async fn lp_register_coin(
         RawEntryMut::Occupied(_oe) => {
             return MmError::err(RegisterCoinError::CoinIsInitializedAlready { coin: ticker.clone() })
         },
-        RawEntryMut::Vacant(ve) => ve.insert(ticker.clone(), coin),
+        RawEntryMut::Vacant(ve) => ve.insert(ticker.clone(), coin.clone()),
     };
+
+    if coin.ticker() == coin.platform_ticker() {
+        let mut platform_coin_tokens = cctx.platform_coin_tokens.lock();
+        platform_coin_tokens
+            .entry(coin.ticker().to_string())
+            .or_insert_with(HashSet::new);
+    }
     Ok(())
 }
 
@@ -2969,15 +3053,6 @@ pub async fn get_enabled_coins(ctx: MmArc) -> Result<Response<Vec<u8>>, String> 
 
     let res = try_s!(json::to_vec(&json!({ "result": enabled_coins })));
     Ok(try_s!(Response::builder().body(res)))
-}
-
-pub async fn disable_coin(ctx: &MmArc, ticker: &str) -> Result<(), String> {
-    let coins_ctx = try_s!(CoinsContext::from_ctx(ctx));
-    let mut coins = coins_ctx.coins.lock().await;
-    match coins.remove(ticker) {
-        Some(_) => Ok(()),
-        None => ERR!("{} is disabled already", ticker),
-    }
 }
 
 #[derive(Deserialize)]

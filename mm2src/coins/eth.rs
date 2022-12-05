@@ -22,7 +22,7 @@
 //
 use async_trait::async_trait;
 use bitcrypto::{keccak256, ripemd160, sha256};
-use common::executor::{abortable_queue::AbortableQueue, AbortableSystem, Timer};
+use common::executor::{abortable_queue::AbortableQueue, AbortableSystem, AbortedError, Timer};
 use common::log::{error, info, warn};
 use common::{get_utc_timestamp, now_ms, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
 use crypto::privkey::key_pair_from_secret;
@@ -386,7 +386,7 @@ pub struct EthCoinImpl {
     erc20_tokens_infos: Arc<Mutex<HashMap<String, Erc20TokenInfo>>>,
     /// This spawner is used to spawn coin's related futures that should be aborted on coin deactivation
     /// and on [`MmArc::stop`].
-    abortable_system: AbortableQueue,
+    pub abortable_system: AbortableQueue,
 }
 
 #[derive(Clone, Debug)]
@@ -631,7 +631,7 @@ impl EthCoinImpl {
         self.erc20_tokens_infos.lock().unwrap().insert(ticker, info);
     }
 
-    /// WARNING
+    /// ### WARNING
     /// Be very careful using this function since it returns dereferenced clone
     /// of value behind the MutexGuard and makes it non-thread-safe.
     pub fn get_erc_tokens_infos(&self) -> HashMap<String, Erc20TokenInfo> {
@@ -3436,6 +3436,14 @@ impl MmCoin for EthCoin {
     fn coin_protocol_info(&self) -> Vec<u8> { Vec::new() }
 
     fn is_coin_protocol_supported(&self, _info: &Option<Vec<u8>>) -> bool { true }
+
+    fn on_disabled(&self) -> Result<(), AbortedError> { AbortableSystem::abort_all(&self.abortable_system) }
+
+    fn on_token_deactivated(&self, ticker: &str) {
+        if let Ok(tokens) = self.erc20_tokens_infos.lock().as_deref_mut() {
+            tokens.remove(ticker);
+        };
+    }
 }
 
 pub trait TryToAddress {
