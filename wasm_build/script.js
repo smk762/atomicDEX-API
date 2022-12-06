@@ -14,7 +14,7 @@ import init, {
     Mm2MainErr,
     MainStatus,
     Mm2RpcErr
-} from "./deps/pkg/mm2.js";
+} from "./deps/pkg/mm2lib.js";
 
 const LOG_LEVEL = LogLevel.Debug;
 

@@ -10,6 +10,7 @@ derive_more = "0.99"
 futures = { version = "0.3", package = "futures" }
 itertools = "0.10"
 js-sys = { version = "0.3.27" }
+jsonrpc-core = { version = "8.0.1" } # Same version as `coin` depends on.
 mm2_err_handle = { path = "../mm2_err_handle" }
 parking_lot = { version = "0.12.0", features = ["nightly"] }
 serde = "1.0"

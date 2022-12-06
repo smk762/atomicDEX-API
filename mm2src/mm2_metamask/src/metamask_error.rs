@@ -1,5 +1,6 @@
 use crate::eth_provider::EthProviderError;
 use derive_more::Display;
+use jsonrpc_core::Error as RPCError;
 use mm2_err_handle::prelude::*;
 use serde_derive::Serialize;
 
@@ -17,8 +18,8 @@ pub enum MetamaskError {
     ErrorSerializingArguments(String),
     #[display(fmt = "Error deserializing RPC result: {}", _0)]
     ErrorDeserializingMethodResult(String),
-    #[display(fmt = "Error invoking the method '{}': {}", method, error)]
-    ErrorInvokingMethod { method: String, error: String },
+    #[display(fmt = "RPC error: {:?}", _0)]
+    Rpc(RPCError),
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
 }
@@ -28,9 +29,7 @@ impl From<EthProviderError> for MetamaskError {
         match value {
             EthProviderError::ErrorSerializingArguments(ser) => MetamaskError::ErrorSerializingArguments(ser),
             EthProviderError::ErrorDeserializingMethodResult(de) => MetamaskError::ErrorDeserializingMethodResult(de),
-            EthProviderError::ErrorInvokingMethod { method, error } => {
-                MetamaskError::ErrorInvokingMethod { method, error }
-            },
+            EthProviderError::Rpc(rpc) => MetamaskError::Rpc(rpc),
             EthProviderError::Internal(internal) => MetamaskError::Internal(internal),
         }
     }

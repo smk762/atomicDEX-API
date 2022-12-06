@@ -1,9 +1,10 @@
 //! This module is inspired by https://github.com/tomusdrw/rust-web3/blob/master/src/transports/eip_1193.rs
 
 use common::executor::{spawn_local_abortable, AbortOnDropHandle};
-use common::{deserialize_from_js, serialize_to_js, stringify_js_error};
+use common::{deserialize_from_js, serialize_to_js};
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt;
+use jsonrpc_core::Error as RPCError;
 use mm2_err_handle::prelude::*;
 use serde::de::DeserializeOwned;
 use serde_json::Value as Json;
@@ -18,7 +19,7 @@ type EthCommandResultSender<T> = oneshot::Sender<EthProviderResult<T>>;
 pub enum EthProviderError {
     ErrorSerializingArguments(String),
     ErrorDeserializingMethodResult(String),
-    ErrorInvokingMethod { method: String, error: String },
+    Rpc(RPCError),
     Internal(String),
 }
 
@@ -75,6 +76,10 @@ impl EthProvider {
         method: String,
         params: Vec<Json>,
     ) -> EthProviderResult<Json> {
+        fn deserialize<T: DeserializeOwned>(js: JsValue) -> EthProviderResult<T> {
+            deserialize_from_js(js).map_to_mm(|e| EthProviderError::ErrorDeserializingMethodResult(e.to_string()))
+        }
+
         let js_params = js_sys::Array::new();
 
         for param in params {
@@ -90,16 +95,12 @@ impl EthProvider {
         };
 
         // TODO consider specifying a timeout.
-        let js_result =
-            raw_provider
-                .request(args)
-                .await
-                .map_to_mm(|js_error| EthProviderError::ErrorInvokingMethod {
-                    method,
-                    error: stringify_js_error(&js_error),
-                })?;
-
-        deserialize_from_js(js_result).map_to_mm(|e| EthProviderError::ErrorDeserializingMethodResult(e.to_string()))
+        match raw_provider.request(args).await.map_err(deserialize::<RPCError>) {
+            Ok(js_result) => deserialize(js_result),
+            Err(Ok(rpc_err)) => MmError::err(EthProviderError::Rpc(rpc_err)),
+            // Error deserializing `RPCError`.
+            Err(Err(e)) => Err(e),
+        }
     }
 }
 

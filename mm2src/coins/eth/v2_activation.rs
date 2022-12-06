@@ -227,6 +227,15 @@ pub async fn eth_coin_from_conf_and_request_v2(
     let (my_address, priv_key_policy) = build_address_and_priv_key_policy(conf, priv_key_policy)?;
     let my_address_str = checksum_address(&format!("{:02x}", my_address));
 
+    let chain_id = conf["chain_id"].as_u64();
+
+    // Check if MetaMask supports the given `chain_id` if required.
+    // Please note that this request may take a long time.
+    #[cfg(target_arch = "wasm32")]
+    if let EthPrivKeyPolicy::Metamask(ref metamask_ctx) = priv_key_policy {
+        check_metamask_support_chain_id(ticker.clone(), &metamask_ctx, chain_id).await?;
+    }
+
     let (web3, web3_instances) = match (req.rpc_mode, &priv_key_policy) {
         (EthRpcMode::Http, EthPrivKeyPolicy::KeyPair(key_pair)) => {
             build_http_transport(ctx, ticker.clone(), my_address_str, key_pair, &req.nodes).await?
@@ -278,7 +287,7 @@ pub async fn eth_coin_from_conf_and_request_v2(
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         ctx: ctx.weak(),
         required_confirmations,
-        chain_id: conf["chain_id"].as_u64(),
+        chain_id,
         logs_block_range: conf["logs_block_range"].as_u64().unwrap_or(DEFAULT_LOGS_BLOCK_RANGE),
         nonce_lock,
         erc20_tokens_infos: Default::default(),
@@ -422,4 +431,42 @@ fn build_metamask_transport(
     }];
 
     (web3, web3_instances)
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn check_metamask_support_chain_id(
+    ticker: String,
+    metamask_ctx: &MetamaskWeak,
+    chain_id: Option<u64>,
+) -> MmResult<(), EthActivationV2Error> {
+    use crypto::MetamaskError;
+    use jsonrpc_core::ErrorCode;
+
+    /// See the documentation:
+    /// https://docs.metamask.io/guide/rpc-api.html#wallet-switchethereumchain
+    const CHAIN_IS_NOT_REGISTERED_ERROR: ErrorCode = ErrorCode::ServerError(4902);
+
+    let chain_id = match chain_id {
+        Some(chain_id) => chain_id,
+        // TODO probably we should require the user to specify the chain_id.
+        None => return Ok(()),
+    };
+
+    let metamask = metamask_ctx
+        .upgrade()
+        .or_mm_err(|| EthActivationV2Error::MetamaskCtxNotInitialized)?;
+    let provider = metamask.metamask_provider();
+    let mut session = provider.session().await;
+
+    match session.wallet_switch_ethereum_chain(chain_id).await.split_mm() {
+        Ok(()) => Ok(()),
+        Err((MetamaskError::Rpc(rpc_err), trace)) if rpc_err.code == CHAIN_IS_NOT_REGISTERED_ERROR => {
+            let error = format!("Ethereum chain_id({chain_id}) is not supported");
+            MmError::err_with_trace(EthActivationV2Error::ActivationFailed { ticker, error }, trace)
+        },
+        Err((other, trace)) => {
+            let error = other.to_string();
+            MmError::err_with_trace(EthActivationV2Error::ActivationFailed { ticker, error }, trace)
+        },
+    }
 }

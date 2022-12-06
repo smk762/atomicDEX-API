@@ -5,6 +5,7 @@ use itertools::Itertools;
 use mm2_err_handle::prelude::*;
 use serde::Serialize;
 use serde_derive::Deserialize;
+use serde_json::json;
 use serde_json::Value as Json;
 use std::collections::HashMap;
 use std::fmt;
@@ -82,6 +83,16 @@ impl<'a> MetamaskSession<'a> {
             .exactly_one()
             .map(|address| EthAccount { address })
             .map_to_mm(|_| MetamaskError::ExpectedOneEthAccount)
+    }
+
+    /// Invokes the `wallet_switchEthereumChain` method.
+    /// https://docs.metamask.io/guide/rpc-api.html#wallet-switchethereumchain
+    pub async fn wallet_switch_ethereum_chain(&mut self, chain_id: u64) -> MetamaskResult<()> {
+        let req = json!({
+            "chainId": format!("0x{chain_id:x}"),
+        });
+
+        eth_rpc_await!(self, "wallet_switchEthereumChain", req)
     }
 
     /// * user_address - Must match user's active address.
