@@ -10,7 +10,7 @@ use serde_json::Value as Json;
 #[cfg(not(target_arch = "wasm32"))] use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use web3::error::{Error, ErrorKind};
+use web3::error::{Error, TransportError};
 use web3::helpers::{build_request, to_result_from_output, to_string};
 use web3::{RequestId, Transport};
 
@@ -25,12 +25,12 @@ pub struct AuthPayload<'a> {
 /// Implementation copied from Web3 HTTP transport
 #[cfg(not(target_arch = "wasm32"))]
 fn single_response<T: Deref<Target = [u8]>>(response: T, rpc_url: &str) -> Result<Json, Error> {
-    let response = serde_json::from_slice(&response)
-        .map_err(|e| Error::from(ErrorKind::InvalidResponse(format!("{}: {}", rpc_url, e))))?;
+    let response =
+        serde_json::from_slice(&response).map_err(|e| Error::InvalidResponse(format!("{}: {}", rpc_url, e)))?;
 
     match response {
         Response::Single(output) => to_result_from_output(output),
-        _ => Err(ErrorKind::InvalidResponse("Expected single, got batch.".into()).into()),
+        _ => Err(Error::InvalidResponse("Expected single, got batch.".into())),
     }
 }
 
@@ -101,27 +101,22 @@ impl Transport for HttpTransport {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn send(&self, _id: RequestId, request: Call) -> Self::Out {
-        Box::new(
-            send_request(
-                request,
-                self.nodes.clone(),
-                self.event_handlers.clone(),
-                self.gui_auth_validation_generator.clone(),
-            )
-            .boxed()
-            .compat(),
-        )
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn send(&self, _id: RequestId, request: Call) -> Self::Out {
-        let fut = send_request(
+        Box::pin(send_request(
             request,
             self.nodes.clone(),
             self.event_handlers.clone(),
             self.gui_auth_validation_generator.clone(),
-        );
-        Box::new(Box::pin(fut).compat())
+        ))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn send(&self, _id: RequestId, request: Call) -> Self::Out {
+        Box::pin(send_request(
+            request,
+            self.nodes.clone(),
+            self.event_handlers.clone(),
+            self.gui_auth_validation_generator.clone(),
+        ))
     }
 }
 
@@ -267,7 +262,7 @@ async fn send_request(
 
         match send_request_once(serialized_request.clone(), &node.uri, &event_handlers).await {
             Ok(response_json) => return Ok(response_json),
-            Err(Error(ErrorKind::Transport(e), _)) => {
+            Err(Error::Transport(e), _) => {
                 transport_errors.push(Web3RpcError::Transport(e));
             },
             Err(e) => return Err(e),
@@ -290,7 +285,7 @@ async fn send_request_once(
         ($exp:expr, $errkind:ident) => {
             match $exp {
                 Ok(x) => x,
-                Err(e) => return Err(Error::from(ErrorKind::$errkind(ERRL!("{:?}", e)))),
+                Err(e) => return Err(Error::$errkind(ERRL!("{:?}", e))),
             }
         };
     }
@@ -307,11 +302,7 @@ async fn send_request_once(
         .await;
     let (status_code, response_str) = try_or!(result, Transport);
     if !status_code.is_success() {
-        return Err(Error::from(ErrorKind::Transport(ERRL!(
-            "!200: {}, {}",
-            status_code,
-            response_str
-        ))));
+        return Err(Error::Transport(ERRL!("!200: {}, {}", status_code, response_str)));
     }
 
     // account for incoming traffic
@@ -320,14 +311,12 @@ async fn send_request_once(
     let response: Response = try_or!(serde_json::from_str(&response_str), InvalidResponse);
     match response {
         Response::Single(output) => to_result_from_output(output),
-        Response::Batch(_) => Err(Error::from(ErrorKind::InvalidResponse(
-            "Expected single, got batch.".to_owned(),
-        ))),
+        Response::Batch(_) => Err(Error::InvalidResponse("Expected single, got batch.".to_owned())),
     }
 }
 
 fn request_failed_error(request: &Call, errors: &[Web3RpcError]) -> Error {
     let errors: String = errors.iter().map(|e| format!("{:?}; ", e)).collect();
     let error = format!("request {:?} failed: {}", request, errors);
-    Error::from(ErrorKind::Transport(error))
+    Error::Transport(TransportError::Message(error))
 }

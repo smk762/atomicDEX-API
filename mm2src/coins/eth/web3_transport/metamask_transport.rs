@@ -68,7 +68,7 @@ impl Transport for MetamaskTransport {
     fn send(&self, _id: RequestId, request: Call) -> Self::Out {
         let transport = self.clone();
         let fut = async move { transport.send_request(request).await };
-        Box::new(fut.boxed().compat())
+        Box::pin(fut)
     }
 }
 

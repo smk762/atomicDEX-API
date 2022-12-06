@@ -192,12 +192,11 @@ impl From<serde_json::Error> for Web3RpcError {
 impl From<web3::Error> for Web3RpcError {
     fn from(e: web3::Error) -> Self {
         let error_str = e.to_string();
-        match e.kind() {
-            web3::ErrorKind::InvalidResponse(_)
-            | web3::ErrorKind::Decoder(_)
-            | web3::ErrorKind::Msg(_)
-            | web3::ErrorKind::Rpc(_) => Web3RpcError::InvalidResponse(error_str),
-            web3::ErrorKind::Transport(_) | web3::ErrorKind::Io(_) => Web3RpcError::Transport(error_str),
+        match e {
+            web3::Error::InvalidResponse(_) | web3::Error::Decoder(_) | web3::Error::Msg(_) | web3::Error::Rpc(_) => {
+                Web3RpcError::InvalidResponse(error_str)
+            },
+            web3::Error::Transport(_) | web3::Error::Io(_) => Web3RpcError::Transport(error_str),
             _ => Web3RpcError::Internal(error_str),
         }
     }
@@ -646,11 +645,11 @@ async fn get_raw_transaction_impl(coin: EthCoin, req: RawTransactionRequest) -> 
         None => &req.tx_hash,
     };
     let hash = H256::from_str(tx).map_to_mm(|e| RawTransactionError::InvalidHashError(e.to_string()))?;
-    let web3_tx = coin.web3.eth().transaction(TransactionId::Hash(hash)).compat().await?;
+    let web3_tx = coin.web3.eth().transaction(TransactionId::Hash(hash)).await?;
     let web3_tx = web3_tx.or_mm_err(|| RawTransactionError::HashNotExist(req.tx_hash))?;
     let raw = signed_tx_from_web3_tx(web3_tx).map_to_mm(RawTransactionError::InternalError)?;
     Ok(RawTransactionRes {
-        tx_hex: BytesJson(rlp::encode(&raw)),
+        tx_hex: BytesJson(rlp::encode(&raw).to_vec()),
     })
 }
 
@@ -705,11 +704,12 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
                 value: Some(eth_value_for_estimate),
                 data: Some(data.clone().into()),
                 from: Some(coin.my_address),
-                to: call_addr,
+                to: Some(call_addr),
                 gas: None,
                 // gas price must be supplied because some smart contracts base their
                 // logic on gas price, e.g. TUSD: https://github.com/KomodoPlatform/atomicDEX-API/issues/643
                 gas_price: Some(gas_price),
+                ..CallRequest::default()
             };
             // TODO Note if the wallet's balance is insufficient to withdraw, then `estimate_gas` may fail with the `Exception` error.
             // TODO Ideally we should determine the case when we have the insufficient balance and return `WithdrawError::NotSufficientBalance`.
@@ -768,7 +768,7 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
         my_balance_change: &received_by_me - &spent_by_me,
         spent_by_me,
         received_by_me,
-        tx_hex: bytes.into(),
+        tx_hex: bytes.as_ref().into(),
         tx_hash: format!("{:02x}", signed.tx_hash()),
         block_height: 0,
         fee_details: Some(fee_details.into()),
@@ -1611,7 +1611,6 @@ async fn sign_and_send_transaction_impl(
             .eth()
             .send_raw_transaction(bytes)
             .map_err(|e| ERRL!("{}", e))
-            .compat()
             .await,
         signed
     );
@@ -1667,7 +1666,7 @@ impl EthCoin {
                 };
             }
 
-            let current_block = match self.web3.eth().block_number().compat().await {
+            let current_block = match self.web3.eth().block_number().await {
                 Ok(block) => block,
                 Err(e) => {
                     ctx.log.log(
@@ -1689,7 +1688,7 @@ impl EthCoin {
                 },
             };
             *self.history_sync_state.lock().unwrap() = HistorySyncState::InProgress(json!({
-                "blocks_left": u64::from(saved_traces.earliest_block),
+                "blocks_left": saved_traces.earliest_block.as_u64(),
             }));
 
             let mut existing_history = match self.load_history_from_file(ctx).compat().await {
@@ -1714,11 +1713,12 @@ impl EthCoin {
                     0.into()
                 };
 
+                let to_block = try_s!(u64::try_from(saved_traces.earliest_block));
                 let from_traces_before_earliest = match self
                     .eth_traces(
                         vec![self.my_address],
                         vec![],
-                        BlockNumber::Number(before_earliest.into()),
+                        BlockNumber::Number(to_block.into()),
                         BlockNumber::Number((saved_traces.earliest_block).into()),
                         None,
                     )
@@ -2726,11 +2726,12 @@ impl EthCoin {
                 value: Some(eth_value),
                 data: Some(call_data),
                 from: Some(coin.my_address),
-                to: contract_addr,
+                to: Some(contract_addr),
                 gas: None,
                 // gas price must be supplied because some smart contracts base their
                 // logic on gas price, e.g. TUSD: https://github.com/KomodoPlatform/atomicDEX-API/issues/643
                 gas_price: Some(gas_price),
+                ..CallRequest::default()
             };
             coin.estimate_gas(estimate_gas_req).map_to_mm_fut(Web3RpcError::from)
         }))
@@ -2753,11 +2754,12 @@ impl EthCoin {
     ) -> impl Future<Item = Bytes, Error = web3::Error> {
         let request = CallRequest {
             from: Some(self.my_address),
-            to,
+            to: Some(to),
             gas: None,
             gas_price: None,
             value,
             data,
+            ..CallRequest::default()
         };
 
         self.web3.eth().call(request, Some(BlockNumber::Latest))
@@ -3391,11 +3393,12 @@ impl MmCoin for EthCoin {
             value: Some(eth_value),
             data: Some(data.clone().into()),
             from: Some(self.my_address),
-            to: *call_addr,
+            to: Some(*call_addr),
             gas: None,
             // gas price must be supplied because some smart contracts base their
             // logic on gas price, e.g. TUSD: https://github.com/KomodoPlatform/atomicDEX-API/issues/643
             gas_price: Some(gas_price),
+            ..CallRequest::default()
         };
 
         // Please note if the wallet's balance is insufficient to withdraw, then `estimate_gas` may fail with the `Exception` error.
@@ -3619,21 +3622,22 @@ async fn get_token_decimals(web3: &Web3<Web3Transport>, token_addr: Address) -> 
     let data = try_s!(function.encode_input(&[]));
     let request = CallRequest {
         from: Some(Address::default()),
-        to: token_addr,
+        to: Some(token_addr),
         gas: None,
         gas_price: None,
         value: Some(0.into()),
         data: Some(data.into()),
+        ..CallRequest::default()
     };
 
-    let f = web3
+    let res = web3
         .eth()
-        .call(request, Some(BlockNumber::Latest))
-        .map_err(|e| ERRL!("{}", e));
-    let res = try_s!(f.compat().await);
+        .call(request, Some(BlockId::Number(BlockNumber::Latest)))
+        .map_err(|e| ERRL!("{}", e))
+        .await?;
     let tokens = try_s!(function.decode_output(&res.0));
-    let decimals: u64 = match tokens[0] {
-        Token::Uint(dec) => dec.into(),
+    let decimals = match tokens[0] {
+        Token::Uint(dec) => dec.as_u64(),
         _ => return ERR!("Invalid decimals type {:?}", tokens),
     };
     Ok(decimals as u8)
@@ -3709,7 +3713,7 @@ pub async fn eth_coin_from_conf_and_request(
     for node in nodes.iter() {
         let transport = Web3Transport::new_http(vec![node.clone()], event_handlers.clone());
         let web3 = Web3::new(transport);
-        let version = match web3.web3().client_version().compat().await {
+        let version = match web3.web3().client_version().await {
             Ok(v) => v,
             Err(e) => {
                 error!("Couldn't get client version for url {}: {}", node.uri, e);
