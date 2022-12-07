@@ -439,7 +439,6 @@ async fn check_metamask_support_chain_id(
     metamask_ctx: &MetamaskWeak,
     chain_id: Option<u64>,
 ) -> MmResult<(), EthActivationV2Error> {
-    use crypto::MetamaskError;
     use jsonrpc_core::ErrorCode;
 
     /// See the documentation:

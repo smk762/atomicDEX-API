@@ -3,6 +3,7 @@ use derive_more::Display;
 use jsonrpc_core::Error as RPCError;
 use mm2_err_handle::prelude::*;
 use serde_derive::Serialize;
+use web3::{Error as Web3Error, ErrorKind as Web3ErrorKind};
 
 pub type MetamaskResult<T> = MmResult<T, MetamaskError>;
 
@@ -31,6 +32,16 @@ impl From<EthProviderError> for MetamaskError {
             EthProviderError::ErrorDeserializingMethodResult(de) => MetamaskError::ErrorDeserializingMethodResult(de),
             EthProviderError::Rpc(rpc) => MetamaskError::Rpc(rpc),
             EthProviderError::Internal(internal) => MetamaskError::Internal(internal),
+        }
+    }
+}
+
+impl From<MetamaskError> for Web3Error {
+    fn from(e: MetamaskError) -> Self {
+        match e {
+            MetamaskError::Rpc(rpc) => Web3Error::from(Web3ErrorKind::Rpc(rpc)),
+            MetamaskError::ErrorDeserializingMethodResult(de) => Web3Error::from(Web3ErrorKind::InvalidResponse(de)),
+            error => Web3Error::from(Web3ErrorKind::Transport(error.to_string())),
         }
     }
 }

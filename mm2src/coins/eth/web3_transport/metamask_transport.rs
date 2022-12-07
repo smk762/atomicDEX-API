@@ -1,6 +1,6 @@
 use crate::eth::web3_transport::Web3SendOut;
 use crate::RpcTransportEventHandlerShared;
-use crypto::{MetamaskError, MetamaskWeak};
+use crypto::MetamaskWeak;
 use futures::{FutureExt, TryFutureExt};
 use jsonrpc_core::{Call, Params};
 use mm2_err_handle::prelude::*;
@@ -51,11 +51,7 @@ impl MetamaskTransport {
             .eth_request(method, params)
             .await
             .discard_mm_trace()
-            .map_err(|e| match e {
-                MetamaskError::Rpc(rpc) => Error::from(ErrorKind::Rpc(rpc)),
-                MetamaskError::ErrorDeserializingMethodResult(de) => Error::from(ErrorKind::InvalidResponse(de)),
-                error => Error::from(ErrorKind::Transport(error.to_string())),
-            })
+            .map_err(Error::from)
     }
 }
 

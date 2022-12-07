@@ -10,6 +10,7 @@ use serde_json::Value as Json;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use web3::types::{TransactionRequest, H256};
 
 /// `MetamaskProvider` is designed the way that there can be only one active session at the moment.
 /// This is highly unlikely that the channel will be full with `capacity = 1024` during this session.
@@ -83,6 +84,12 @@ impl<'a> MetamaskSession<'a> {
             .exactly_one()
             .map(|address| EthAccount { address })
             .map_to_mm(|_| MetamaskError::ExpectedOneEthAccount)
+    }
+
+    /// Asks the user to sign and broadcast the given `tx`.
+    /// https://eth.wiki/json-rpc/API#eth_sendtransaction
+    pub async fn eth_send_transaction(&mut self, tx: TransactionRequest) -> MetamaskResult<H256> {
+        eth_rpc_await!(self, "eth_sendTransaction", tx)
     }
 
     /// Invokes the `wallet_switchEthereumChain` method.

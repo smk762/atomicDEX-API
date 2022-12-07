@@ -28,7 +28,7 @@ use common::{get_utc_timestamp, now_ms, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
 use crypto::privkey::key_pair_from_secret;
 use crypto::{CryptoCtx, CryptoCtxError, GlobalHDAccountArc, KeyPairPolicy};
 #[cfg(target_arch = "wasm32")]
-use crypto::{MetamaskArc, MetamaskWeak};
+use crypto::{MetamaskArc, MetamaskError, MetamaskWeak};
 use derive_more::Display;
 use ethabi::{Contract, Token};
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
@@ -58,6 +58,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
+#[cfg(target_arch = "wasm32")]
+use web3::types::TransactionRequest;
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Trace,
                   TraceFilterBuilder, Transaction as Web3Transaction, TransactionId};
 use web3::{self, Web3};
@@ -213,6 +215,11 @@ impl From<ethabi::Error> for Web3RpcError {
         // It's an internal error if there are any issues during working with a smart contract ABI.
         Web3RpcError::Internal(e.to_string())
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<MetamaskError> for Web3RpcError {
+    fn from(e: MetamaskError) -> Self { Web3RpcError::from(web3::Error::from(e)) }
 }
 
 impl From<ethabi::Error> for WithdrawError {
@@ -736,18 +743,53 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
         Either::Left((nonce_res, _)) => nonce_res.map_to_mm(WithdrawError::Transport)?,
         Either::Right(_) => return MmError::err(WithdrawError::Transport("Get address nonce timed out".to_owned())),
     };
-    let tx = UnSignedEthTx {
-        nonce,
-        value: eth_value,
-        action: Action::Call(call_addr),
-        data,
-        gas,
-        gas_price,
+
+    let (tx_hash, tx_hex) = match coin.priv_key_policy {
+        EthPrivKeyPolicy::KeyPair(ref key_pair) => {
+            let tx = UnSignedEthTx {
+                nonce,
+                value: eth_value,
+                action: Action::Call(call_addr),
+                data,
+                gas,
+                gas_price,
+            };
+
+            let signed = tx.sign(key_pair.secret(), coin.chain_id);
+            let bytes = rlp::encode(&signed);
+
+            (signed.hash, BytesJson::from(bytes))
+        },
+        #[cfg(target_arch = "wasm32")]
+        EthPrivKeyPolicy::Metamask(ref metamask) => {
+            let tx_to_send = TransactionRequest {
+                from: coin.my_address,
+                to: Some(to_addr),
+                gas: Some(gas),
+                gas_price: Some(gas_price),
+                value: Some(eth_value),
+                data: Some(data.clone().into()),
+                nonce: Some(nonce),
+                condition: None,
+            };
+
+            // Wait for 10 seconds for the transaction to appear on the RPC node.
+            let wait_rpc_timeout = 10_000;
+            let check_every = 1.;
+            let SendMetamaskTx { tx_hash, signed_tx } = coin
+                .metamask_send_transaction(metamask, tx_to_send, wait_rpc_timeout, check_every)
+                .await?;
+
+            let tx_hex = signed_tx
+                .map(|tx| BytesJson::from(rlp::encode(&tx)))
+                // Return an empty `tx_hex` if the transaction is still not appeared on the RPC node.
+                .unwrap_or_default();
+            (tx_hash, tx_hex)
+        },
     };
 
-    let secret = coin.priv_key_policy.key_pair_or_err()?.secret();
-    let signed = tx.sign(secret, coin.chain_id);
-    let bytes = rlp::encode(&signed);
+    let tx_hash_bytes = BytesJson::from(tx_hash.to_vec());
+    let tx_hash_str = format!("{:02x}", tx_hash_bytes);
 
     let amount_decimal = u256_to_big_decimal(wei_amount, coin.decimals)?;
     let mut spent_by_me = amount_decimal.clone();
@@ -768,8 +810,8 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
         my_balance_change: &received_by_me - &spent_by_me,
         spent_by_me,
         received_by_me,
-        tx_hex: bytes.into(),
-        tx_hash: format!("{:02x}", signed.tx_hash()),
+        tx_hex,
+        tx_hash: tx_hash_str,
         block_height: 0,
         fee_details: Some(fee_details.into()),
         coin: coin.ticker.clone(),
@@ -3186,6 +3228,65 @@ impl EthCoin {
         };
         Box::new(fut.boxed().compat())
     }
+
+    /// Please note that this method may take a long time
+    /// due to `wallet_switchEthereumChain` and `eth_sendTransaction` requests.
+    #[cfg(target_arch = "wasm32")]
+    async fn metamask_send_transaction(
+        &self,
+        metamask: &MetamaskWeak,
+        tx: TransactionRequest,
+        wait_rpc_timeout_ms: u64,
+        check_every: f64,
+    ) -> Web3RpcResult<SendMetamaskTx> {
+        let tx_hash = {
+            let metamask_arc = metamask.upgrade().or_mm_err(|| {
+                let error = "MetaMask context with which the coin was activated no longer exists".to_string();
+                Web3RpcError::Internal(error)
+            })?;
+
+            let provider = metamask_arc.metamask_provider();
+            let mut session = provider.session().await;
+
+            // TODO consider changing the chain to mainnet.
+            if let Some(chain_id) = self.chain_id {
+                session.wallet_switch_ethereum_chain(chain_id).await?;
+            }
+
+            session.eth_send_transaction(tx).await?
+        };
+
+        let wait_until = now_ms() + wait_rpc_timeout_ms;
+        while now_ms() < wait_until {
+            let maybe_tx = self
+                .web3
+                .eth()
+                .transaction(TransactionId::Hash(tx_hash))
+                .compat()
+                .await?;
+            if let Some(tx) = maybe_tx {
+                let signed_tx = signed_tx_from_web3_tx(tx).map_to_mm(Web3RpcError::InvalidResponse)?;
+                return Ok(SendMetamaskTx {
+                    tx_hash,
+                    signed_tx: Some(signed_tx),
+                });
+            }
+
+            Timer::sleep(check_every).await;
+        }
+
+        Ok(SendMetamaskTx {
+            tx_hash,
+            signed_tx: None,
+        })
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub struct SendMetamaskTx {
+    tx_hash: H256,
+    /// `None` if we couldn't fetch the transaction from the RPC.
+    signed_tx: Option<SignedEthTx>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

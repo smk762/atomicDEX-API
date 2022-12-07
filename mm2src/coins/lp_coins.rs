@@ -882,6 +882,10 @@ pub struct WithdrawRequest {
     max: bool,
     fee: Option<WithdrawFee>,
     memo: Option<String>,
+    // TODO check this.
+    #[serde(default)]
+    #[allow(dead_code)]
+    broadcast: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -932,6 +936,7 @@ impl WithdrawRequest {
             max: true,
             fee: None,
             memo: None,
+            broadcast: false,
         }
     }
 }
