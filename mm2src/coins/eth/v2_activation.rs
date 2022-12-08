@@ -370,7 +370,7 @@ async fn build_http_transport(
         );
 
         let web3 = Web3::new(transport);
-        let version = match web3.web3().client_version().compat().await {
+        let version = match web3.web3().client_version().await {
             Ok(v) => v,
             Err(e) => {
                 error!("Couldn't get client version for url {}: {}", node.uri, e);

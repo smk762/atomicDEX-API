@@ -34,7 +34,7 @@ pub fn qrc20_coin_for_test(priv_key: [u8; 32], fallback_swap: Option<&str>) -> (
         "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
         "fallback_swap_contract": fallback_swap,
     });
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+    let contract_address = H160::from_str("0xd362e096e873eb7907e205fadc6175c6fec7bc44").unwrap();
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let params = Qrc20ActivationParams::from_legacy_req(&req).unwrap();
 
@@ -81,6 +81,7 @@ fn test_withdraw_to_p2sh_address_should_fail() {
         max: false,
         fee: None,
         memo: None,
+        broadcast: false,
     };
     let err = coin.withdraw(req).wait().unwrap_err().into_inner();
     let expect = WithdrawError::InvalidAddress("QRC20 can be sent to P2PKH addresses only".to_owned());
@@ -120,6 +121,7 @@ fn test_withdraw_impl_fee_details() {
             gas_price: 40,
         }),
         memo: None,
+        broadcast: false,
     };
     let tx_details = coin.withdraw(withdraw_req).wait().unwrap();
 
@@ -834,7 +836,7 @@ fn test_get_sender_trade_fee_preimage_for_correct_ticker() {
         "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
     });
 
-    let contract_address = "0xd362e096e873eb7907e205fadc6175c6fec7bc44".into();
+    let contract_address = H160::from_str("0xd362e096e873eb7907e205fadc6175c6fec7bc44").unwrap();
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let params = Qrc20ActivationParams::from_legacy_req(&req).unwrap();
 
@@ -942,7 +944,7 @@ fn test_coin_from_conf_without_decimals() {
         "swap_contract_address": "0xba8b71f3544b93e2f681f996da519a98ace0107a",
     });
     // 0459c999c3edf05e73c83f3fbae9f0f020919f91 has 12 decimals instead of standard 8
-    let contract_address = "0x0459c999c3edf05e73c83f3fbae9f0f020919f91".into();
+    let contract_address = H160::from_str("0x0459c999c3edf05e73c83f3fbae9f0f020919f91").unwrap();
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let params = Qrc20ActivationParams::from_legacy_req(&req).unwrap();
 
@@ -1082,7 +1084,7 @@ fn test_negotiate_swap_contract_addr_has_fallback() {
 
     let input = None;
     let result = coin.negotiate_swap_contract_addr(input).unwrap();
-    assert_eq!(Some(fallback_addr.to_vec().into()), result);
+    assert_eq!(Some(fallback_addr.0.to_vec().into()), result);
 
     let slice: &[u8] = &[1; 1];
     let error = coin.negotiate_swap_contract_addr(Some(slice)).unwrap_err().into_inner();
@@ -1104,7 +1106,7 @@ fn test_negotiate_swap_contract_addr_has_fallback() {
 
     let slice: &[u8] = fallback_addr.as_ref();
     let result = coin.negotiate_swap_contract_addr(Some(slice)).unwrap();
-    assert_eq!(Some(fallback_addr.to_vec().into()), result);
+    assert_eq!(Some(fallback_addr.0.to_vec().into()), result);
 }
 
 #[test]

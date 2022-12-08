@@ -10,7 +10,7 @@ derive_more = "0.99"
 futures = { version = "0.3", package = "futures" }
 itertools = "0.10"
 js-sys = { version = "0.3.27" }
-jsonrpc-core = { version = "8.0.1" } # Same version as `coin` depends on.
+jsonrpc-core = "18.0.0" # Same version as `web3` depends on.
 mm2_err_handle = { path = "../mm2_err_handle" }
 parking_lot = { version = "0.12.0", features = ["nightly"] }
 serde = "1.0"
@@ -18,4 +18,4 @@ serde_json = "1.0"
 serde_derive = "1.0"
 wasm-bindgen = { version = "0.2.50", features = ["nightly"] }
 wasm-bindgen-futures = { version = "0.4.1" }
-web3 = { git = "https://github.com/artemii235/rust-web3", default-features = false }
+web3 = { git = "https://github.com/sergeyboyko0791/rust-web3", default-features = false }

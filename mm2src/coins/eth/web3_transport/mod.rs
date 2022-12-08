@@ -1,7 +1,7 @@
 use crate::RpcTransportEventHandlerShared;
 #[cfg(target_arch = "wasm32")] use crypto::MetamaskWeak;
 use ethereum_types::U256;
-use futures01::Future as Future01;
+use futures::future::BoxFuture;
 use jsonrpc_core::Call;
 use mm2_net::transport::GuiAuthValidationGenerator;
 use serde_json::Value as Json;
@@ -14,7 +14,7 @@ use web3::{Error, RequestId, Transport};
 pub(crate) mod http_transport;
 #[cfg(target_arch = "wasm32")] pub(crate) mod metamask_transport;
 
-type Web3SendOut = Box<dyn Future01<Item = Json, Error = Error> + Send>;
+type Web3SendOut = BoxFuture<'static, Result<Json, Error>>;
 
 #[derive(Clone, Debug)]
 pub enum Web3Transport {
