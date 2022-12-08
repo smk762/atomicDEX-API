@@ -1,11 +1,10 @@
 use crate::eth::web3_transport::Web3SendOut;
 use crate::RpcTransportEventHandlerShared;
 use crypto::MetamaskWeak;
-use futures::{FutureExt, TryFutureExt};
 use jsonrpc_core::{Call, Params};
 use serde_json::Value as Json;
 use std::fmt;
-use web3::error::{Error, ErrorKind};
+use web3::error::{Error, TransportError};
 use web3::helpers::build_request;
 use web3::{RequestId, Transport};
 
@@ -26,9 +25,8 @@ impl MetamaskTransport {
 
     async fn send_request(&self, request: Call) -> Result<Json, Error> {
         let metamask_ctx = self.metamask_ctx.upgrade().ok_or_else(|| {
-            Error::from(ErrorKind::Transport(
-                "MetaMask context doesn't exist already".to_string(),
-            ))
+            let error = "MetaMask context doesn't exist already".to_string();
+            Error::Transport(TransportError::Message(error))
         })?;
         let provider = metamask_ctx.metamask_provider();
         let mut session = provider.session().await;
@@ -36,21 +34,21 @@ impl MetamaskTransport {
         let (method, params) = match request {
             Call::MethodCall(method_call) => (method_call.method, method_call.params),
             Call::Notification(notification) => (notification.method, notification.params),
-            Call::Invalid(_) => return Err(Error::from(ErrorKind::Internal)),
+            Call::Invalid { .. } => return Err(Error::Internal),
         };
 
         let params = match params {
             // EthProvider doesn't allow to pass an object as the params,
             // but we still can try to pass the object as a single array item.
-            Some(Params::Map(object)) => vec![Json::Object(object)],
-            Some(Params::Array(array)) => array,
-            Some(Params::None) | None => Vec::new(),
+            Params::Map(object) => vec![Json::Object(object)],
+            Params::Array(array) => array,
+            Params::None => Vec::new(),
         };
         session
             .eth_request(method, params)
             .await
             // TODO consider matching this error.
-            .map_err(|e| Error::from(ErrorKind::Transport(e.to_string())))
+            .map_err(|e| Error::Transport(TransportError::Message(e.to_string())))
     }
 }
 

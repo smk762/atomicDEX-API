@@ -1,8 +1,6 @@
 use crate::eth::{web3_transport::Web3SendOut, EthCoin, GuiAuthMessages, RpcTransportEventHandler,
                  RpcTransportEventHandlerShared, Web3RpcError};
 use common::APPLICATION_JSON;
-#[cfg(not(target_arch = "wasm32"))] use futures::FutureExt;
-use futures::TryFutureExt;
 use http::header::CONTENT_TYPE;
 use jsonrpc_core::{Call, Response};
 use mm2_net::transport::{GuiAuthValidation, GuiAuthValidationGenerator};
@@ -262,8 +260,8 @@ async fn send_request(
 
         match send_request_once(serialized_request.clone(), &node.uri, &event_handlers).await {
             Ok(response_json) => return Ok(response_json),
-            Err(Error::Transport(e), _) => {
-                transport_errors.push(Web3RpcError::Transport(e));
+            Err(Error::Transport(e)) => {
+                transport_errors.push(Web3RpcError::Transport(e.to_string()));
             },
             Err(e) => return Err(e),
         }
@@ -281,34 +279,27 @@ async fn send_request_once(
     use http::header::ACCEPT;
     use mm2_net::wasm_http::FetchRequest;
 
-    macro_rules! try_or {
-        ($exp:expr, $errkind:ident) => {
-            match $exp {
-                Ok(x) => x,
-                Err(e) => return Err(Error::$errkind(ERRL!("{:?}", e))),
-            }
-        };
-    }
-
     // account for outgoing traffic
     event_handlers.on_outgoing_request(request_payload.as_bytes());
 
-    let result = FetchRequest::post(&uri.to_string())
+    let (status_code, response_str) = FetchRequest::post(&uri.to_string())
         .cors()
         .body_utf8(request_payload)
         .header(ACCEPT.as_str(), APPLICATION_JSON)
         .header(CONTENT_TYPE.as_str(), APPLICATION_JSON)
         .request_str()
-        .await;
-    let (status_code, response_str) = try_or!(result, Transport);
+        .await
+        .map_err(|e| Error::Transport(TransportError::Message(ERRL!("{:?}", e))))?;
+
     if !status_code.is_success() {
-        return Err(Error::Transport(ERRL!("!200: {}, {}", status_code, response_str)));
+        let err = ERRL!("!200: {}, {}", status_code, response_str);
+        return Err(Error::Transport(TransportError::Message(err)));
     }
 
     // account for incoming traffic
     event_handlers.on_incoming_response(response_str.as_bytes());
 
-    let response: Response = try_or!(serde_json::from_str(&response_str), InvalidResponse);
+    let response: Response = serde_json::from_str(&response_str).map_err(|e| Error::InvalidResponse(e.to_string()))?;
     match response {
         Response::Single(output) => to_result_from_output(output),
         Response::Batch(_) => Err(Error::InvalidResponse("Expected single, got batch.".to_owned())),
