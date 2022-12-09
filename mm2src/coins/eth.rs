@@ -3989,9 +3989,14 @@ fn get_addr_nonce(addr: Address, web3s: Vec<Web3Instance>) -> Box<dyn Future<Ite
                 .iter()
                 .map(|web3| {
                     if web3.is_parity {
-                        web3.web3.eth().parity_next_nonce(addr)
+                        Either::Left(web3.web3.eth().parity_next_nonce(addr))
                     } else {
-                        web3.web3.eth().transaction_count(addr, Some(BlockNumber::Pending))
+                        Either::Right(
+                            web3.web3
+                                .eth()
+                                .transaction_count(addr, Some(BlockNumber::Pending))
+                                .map_ok(U256::from),
+                        )
                     }
                 })
                 .collect();

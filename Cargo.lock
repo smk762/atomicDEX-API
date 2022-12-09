@@ -1051,7 +1051,7 @@ dependencies = [
  "enum_from",
  "ethabi",
  "ethcore-transaction",
- "ethereum-types 0.13.1",
+ "ethereum-types",
  "ethkey",
  "futures 0.1.29",
  "futures 0.3.15",
@@ -1088,7 +1088,7 @@ dependencies = [
  "prost-build",
  "protobuf",
  "rand 0.7.3",
- "rlp 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rlp",
  "rmp-serde",
  "rpc",
  "rpc_task",
@@ -1144,7 +1144,7 @@ dependencies = [
  "common",
  "crypto",
  "derive_more",
- "ethereum-types 0.13.1",
+ "ethereum-types",
  "futures 0.3.15",
  "hex 0.4.3",
  "lightning",
@@ -2155,7 +2155,7 @@ version = "17.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4966fba78396ff92db3b817ee71143eccd98acf0f876b8d600e585a670c5d1b"
 dependencies = [
- "ethereum-types 0.13.1",
+ "ethereum-types",
  "hex 0.4.3",
  "once_cell",
  "regex",
@@ -2163,7 +2163,7 @@ dependencies = [
  "serde_json",
  "sha3 0.10.4",
  "thiserror",
- "uint 0.9.3",
+ "uint",
 ]
 
 [[package]]
@@ -2173,21 +2173,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11da94e443c60508eb62cf256243a64da87304c2802ac2528847f79d750007ef"
 dependencies = [
  "crunchy",
- "fixed-hash 0.7.0",
- "impl-rlp 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "impl-serde 0.3.2",
- "tiny-keccak 2.0.2",
-]
-
-[[package]]
-name = "ethbloom"
-version = "0.13.0"
-source = "git+https://github.com/sergeyboyko0791/parity-common#13418bdcfa001f2e71e4597be1920bc2b76a04b7"
-dependencies = [
- "crunchy",
- "fixed-hash 0.8.0",
- "impl-rlp 0.3.0 (git+https://github.com/sergeyboyko0791/parity-common)",
- "impl-serde 0.4.0",
+ "fixed-hash",
+ "impl-rlp",
+ "impl-serde",
  "tiny-keccak 2.0.2",
 ]
 
@@ -2196,10 +2184,10 @@ name = "ethcore-transaction"
 version = "0.1.0"
 source = "git+https://github.com/sergeyboyko0791/parity-ethereum.git#aa1a741b151ecc5468f5a77969dd670719bb0cc3"
 dependencies = [
- "ethereum-types 0.13.1",
+ "ethereum-types",
  "ethkey",
  "keccak-hash",
- "rlp 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rlp",
  "rustc-hex",
  "unexpected",
 ]
@@ -2210,25 +2198,12 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2827b94c556145446fcce834ca86b7abf0c39a805883fe20e72c5bfdb5a0dc6"
 dependencies = [
- "ethbloom 0.12.1",
- "fixed-hash 0.7.0",
- "impl-rlp 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "impl-serde 0.3.2",
+ "ethbloom",
+ "fixed-hash",
+ "impl-rlp",
+ "impl-serde",
  "primitive-types",
- "uint 0.9.3",
-]
-
-[[package]]
-name = "ethereum-types"
-version = "0.14.1"
-source = "git+https://github.com/sergeyboyko0791/parity-common#13418bdcfa001f2e71e4597be1920bc2b76a04b7"
-dependencies = [
- "ethbloom 0.13.0",
- "fixed-hash 0.8.0",
- "impl-rlp 0.3.0 (git+https://github.com/sergeyboyko0791/parity-common)",
- "impl-serde 0.4.0",
- "primitive-types",
- "uint 0.9.5",
+ "uint",
 ]
 
 [[package]]
@@ -2238,7 +2213,7 @@ source = "git+https://github.com/sergeyboyko0791/parity-ethereum.git#aa1a741b151
 dependencies = [
  "byteorder 1.4.3",
  "edit-distance",
- "ethereum-types 0.13.1",
+ "ethereum-types",
  "log 0.3.9",
  "mem",
  "rand 0.6.5",
@@ -2362,17 +2337,6 @@ name = "fixed-hash"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcf0ed7fe52a17a03854ec54a9f76d6d84508d1c0e66bc1793301c73fc8493c"
-dependencies = [
- "byteorder 1.4.3",
- "rand 0.8.4",
- "rustc-hex",
- "static_assertions",
-]
-
-[[package]]
-name = "fixed-hash"
-version = "0.8.0"
-source = "git+https://github.com/sergeyboyko0791/parity-common#13418bdcfa001f2e71e4597be1920bc2b76a04b7"
 dependencies = [
  "byteorder 1.4.3",
  "rand 0.8.4",
@@ -3142,15 +3106,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f28220f89297a075ddc7245cd538076ee98b01f2a9c23a53a4f1105d5a322808"
 dependencies = [
- "rlp 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "impl-rlp"
-version = "0.3.0"
-source = "git+https://github.com/sergeyboyko0791/parity-common#13418bdcfa001f2e71e4597be1920bc2b76a04b7"
-dependencies = [
- "rlp 0.5.2 (git+https://github.com/sergeyboyko0791/parity-common)",
+ "rlp",
 ]
 
 [[package]]
@@ -3158,14 +3114,6 @@ name = "impl-serde"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4551f042f3438e64dbd6226b20527fc84a6e1fe65688b58746a2f53623f25f5c"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "impl-serde"
-version = "0.4.0"
-source = "git+https://github.com/sergeyboyko0791/parity-common#13418bdcfa001f2e71e4597be1920bc2b76a04b7"
 dependencies = [
  "serde",
 ]
@@ -4379,7 +4327,7 @@ dependencies = [
  "either",
  "enum-primitive-derive",
  "enum_from",
- "ethereum-types 0.13.1",
+ "ethereum-types",
  "futures 0.1.29",
  "futures 0.3.15",
  "futures-cpupool",
@@ -4949,7 +4897,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c32561d248d352148124f036cac253a644685a21dc9fea383eb4907d7bd35a8f"
 dependencies = [
  "cfg-if 1.0.0",
- "ethereum-types 0.13.1",
+ "ethereum-types",
  "hashbrown 0.12.1",
  "impl-trait-for-tuples",
  "lru",
@@ -5228,12 +5176,12 @@ version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e28720988bff275df1f51b171e1b2a18c30d194c4d2b61defdacecd625a5d94a"
 dependencies = [
- "fixed-hash 0.7.0",
+ "fixed-hash",
  "impl-codec",
- "impl-rlp 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "impl-serde 0.3.2",
+ "impl-rlp",
+ "impl-serde",
  "scale-info",
- "uint 0.9.3",
+ "uint",
 ]
 
 [[package]]
@@ -5243,7 +5191,7 @@ dependencies = [
  "bitcoin_hashes",
  "byteorder 1.4.3",
  "rustc-hex",
- "uint 0.9.3",
+ "uint",
 ]
 
 [[package]]
@@ -5957,15 +5905,6 @@ name = "rlp"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb919243f34364b6bd2fc10ef797edbfa75f33c252e7998527479c6d6b47e1ec"
-dependencies = [
- "bytes 1.1.0",
- "rustc-hex",
-]
-
-[[package]]
-name = "rlp"
-version = "0.5.2"
-source = "git+https://github.com/sergeyboyko0791/parity-common#13418bdcfa001f2e71e4597be1920bc2b76a04b7"
 dependencies = [
  "bytes 1.1.0",
  "rustc-hex",
@@ -8509,17 +8448,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "uint"
-version = "0.9.5"
-source = "git+https://github.com/sergeyboyko0791/parity-common#13418bdcfa001f2e71e4597be1920bc2b76a04b7"
-dependencies = [
- "byteorder 1.4.3",
- "crunchy",
- "hex 0.4.3",
- "static_assertions",
-]
-
-[[package]]
 name = "unexpected"
 version = "0.1.0"
 source = "git+https://github.com/sergeyboyko0791/parity-ethereum.git#aa1a741b151ecc5468f5a77969dd670719bb0cc3"
@@ -8869,12 +8797,12 @@ dependencies = [
 [[package]]
 name = "web3"
 version = "0.19.0"
-source = "git+https://github.com/sergeyboyko0791/rust-web3#6c499308b85f05b90efeab5a44c4ca776b5f7379"
+source = "git+https://github.com/sergeyboyko0791/rust-web3#7872bd9d58e1d0db92b3219053681137f63b29e5"
 dependencies = [
  "arrayvec 0.7.1",
  "derive_more",
  "ethabi",
- "ethereum-types 0.14.1",
+ "ethereum-types",
  "futures 0.3.15",
  "futures-timer",
  "hex 0.4.3",
@@ -8883,7 +8811,7 @@ dependencies = [
  "log 0.4.14",
  "parking_lot 0.12.0",
  "pin-project 1.0.10",
- "rlp 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rlp",
  "serde",
  "serde_json",
  "tiny-keccak 2.0.2",
