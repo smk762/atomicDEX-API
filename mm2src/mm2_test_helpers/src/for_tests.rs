@@ -199,7 +199,15 @@ impl Mm2TestConf {
         }
     }
 
-    pub fn watcher_light_node(passphrase: &str, coins: &Json, seednodes: &[&str]) -> Self {
+    pub fn watcher_light_node(
+        passphrase: &str,
+        coins: &Json,
+        seednodes: &[&str],
+        wait_maker_payment_spend_factor: f64,
+        refund_start_factor: f64,
+        search_interval: f64,
+        wait_taker_payment: f64,
+    ) -> Self {
         Mm2TestConf {
             conf: json!({
                 "gui": "nogui",
@@ -208,7 +216,13 @@ impl Mm2TestConf {
                 "coins": coins,
                 "rpc_password": DEFAULT_RPC_PASSWORD,
                 "seednodes": seednodes,
-                "is_watcher": true
+                "is_watcher": true,
+                "watcher_conf": {
+                    "wait_maker_payment_spend_factor": wait_maker_payment_spend_factor,
+                    "refund_start_factor": refund_start_factor,
+                    "search_interval": search_interval,
+                    "wait_taker_payment": wait_taker_payment
+                }
             }),
             rpc_password: DEFAULT_RPC_PASSWORD.into(),
         }
@@ -377,6 +391,44 @@ pub fn morty_conf() -> Json {
         "txversion":4,
         "overwintered":1,
         "derivation_path": "m/44'/141'",
+        "protocol":{
+            "type":"UTXO"
+        }
+    })
+}
+
+pub fn kmd_conf(tx_fee: u64) -> Json {
+    json!({
+        "coin":"KMD",
+        "txversion":4,
+        "overwintered":1,
+        "txfee":tx_fee,
+        "protocol":{
+            "type":"UTXO"
+        }
+    })
+}
+
+pub fn mycoin_conf(tx_fee: u64) -> Json {
+    json!({
+        "coin":"MYCOIN",
+        "asset":"MYCOIN",
+        "txversion":4,
+        "overwintered":1,
+        "txfee":tx_fee,
+        "protocol":{
+            "type":"UTXO"
+        }
+    })
+}
+
+pub fn mycoin1_conf(tx_fee: u64) -> Json {
+    json!({
+        "coin":"MYCOIN1",
+        "asset":"MYCOIN1",
+        "txversion":4,
+        "overwintered":1,
+        "txfee":tx_fee,
         "protocol":{
             "type":"UTXO"
         }

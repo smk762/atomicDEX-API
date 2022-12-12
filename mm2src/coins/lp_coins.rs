@@ -487,13 +487,22 @@ pub enum ValidateOtherPubKeyErr {
 }
 
 #[derive(Clone, Debug)]
+pub struct WatcherValidateTakerFeeInput {
+    pub taker_fee_hash: Vec<u8>,
+    pub sender_pubkey: Vec<u8>,
+    pub min_block_number: u64,
+    pub fee_addr: Vec<u8>,
+    pub lock_duration: u64,
+}
+
+#[derive(Clone, Debug)]
 pub struct WatcherValidatePaymentInput {
     pub payment_tx: Vec<u8>,
+    pub taker_payment_refund_preimage: Vec<u8>,
     pub time_lock: u32,
     pub taker_pub: Vec<u8>,
     pub maker_pub: Vec<u8>,
     pub secret_hash: Vec<u8>,
-    pub amount: BigDecimal,
     pub try_spv_proof_until: u64,
     pub confirmations: u64,
 }
@@ -510,6 +519,16 @@ pub struct ValidatePaymentInput {
     pub try_spv_proof_until: u64,
     pub confirmations: u64,
     pub unique_swap_data: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WatcherSearchForSwapTxSpendInput<'a> {
+    pub time_lock: u32,
+    pub taker_pub: &'a [u8],
+    pub maker_pub: &'a [u8],
+    pub secret_hash: &'a [u8],
+    pub tx: &'a [u8],
+    pub search_from_block: u64,
 }
 
 pub struct SearchForSwapTxSpendInput<'a> {
@@ -664,7 +683,7 @@ pub trait SwapOps {
 
     async fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String>;
 
-    fn check_tx_signed_by_pub(&self, tx: &[u8], expected_pub: &[u8]) -> Result<bool, String>;
+    fn check_tx_signed_by_pub(&self, tx: &[u8], expected_pub: &[u8]) -> Result<bool, MmError<ValidatePaymentError>>;
 
     /// Whether the refund transaction can be sent now
     /// For example: there are no additional conditions for ETH, but for some UTXO coins we should wait for
@@ -727,11 +746,11 @@ pub trait SwapOps {
 
 #[async_trait]
 pub trait WatcherOps {
-    fn send_taker_spends_maker_payment_preimage(&self, preimage: &[u8], secret: &[u8]) -> TransactionFut;
+    fn send_maker_payment_spend_preimage(&self, preimage: &[u8], secret: &[u8]) -> TransactionFut;
 
-    fn send_watcher_refunds_taker_payment_preimage(&self, _taker_refunds_payment: &[u8]) -> TransactionFut;
+    fn send_taker_payment_refund_preimage(&self, preimage: &[u8]) -> TransactionFut;
 
-    fn create_taker_refunds_payment_preimage(
+    fn create_taker_payment_refund_preimage(
         &self,
         _taker_payment_tx: &[u8],
         _time_lock: u32,
@@ -741,7 +760,7 @@ pub trait WatcherOps {
         _swap_unique_data: &[u8],
     ) -> TransactionFut;
 
-    fn create_taker_spends_maker_payment_preimage(
+    fn create_maker_payment_spend_preimage(
         &self,
         _maker_payment_tx: &[u8],
         _time_lock: u32,
@@ -750,9 +769,14 @@ pub trait WatcherOps {
         _swap_unique_data: &[u8],
     ) -> TransactionFut;
 
-    fn watcher_validate_taker_fee(&self, _taker_fee_hash: Vec<u8>, _verified_pub: Vec<u8>) -> ValidatePaymentFut<()>;
+    fn watcher_validate_taker_fee(&self, input: WatcherValidateTakerFeeInput) -> ValidatePaymentFut<()>;
 
     fn watcher_validate_taker_payment(&self, _input: WatcherValidatePaymentInput) -> ValidatePaymentFut<()>;
+
+    async fn watcher_search_for_swap_tx_spend(
+        &self,
+        input: WatcherSearchForSwapTxSpendInput<'_>,
+    ) -> Result<Option<FoundSwapTxSpend>, String>;
 }
 
 /// Operations that coins have independently from the MarketMaker.
@@ -813,6 +837,7 @@ pub trait MarketCoinOps {
         wait_until: u64,
         from_block: u64,
         swap_contract_address: &Option<BytesJson>,
+        check_every: f64,
     ) -> TransactionFut;
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, MmError<TxMarshalingErr>>;
@@ -1195,12 +1220,12 @@ pub enum FeeApproxStage {
     WithoutApprox,
     /// Increase the trade fee slightly.
     StartSwap,
+    /// Increase the trade fee slightly
+    WatcherPreimage,
     /// Increase the trade fee significantly.
     OrderIssue,
     /// Increase the trade fee largely.
     TradePreimage,
-    /// Increase the trade fee very largely
-    WatcherPreimage,
 }
 
 #[derive(Debug)]
@@ -1868,6 +1893,8 @@ pub trait MmCoin: SwapOps + WatcherOps + MarketCoinOps + Send + Sync + 'static {
     fn withdraw(&self, req: WithdrawRequest) -> WithdrawFut;
 
     fn get_raw_transaction(&self, req: RawTransactionRequest) -> RawTransactionFut;
+
+    fn get_tx_hex_by_hash(&self, tx_hash: Vec<u8>) -> RawTransactionFut;
 
     /// Maximum number of digits after decimal point used to denominate integer coin units (satoshis, wei, etc.)
     fn decimals(&self) -> u8;
