@@ -74,7 +74,7 @@ ser_error = { path = "../derives/ser_error" }
 ser_error_derive = { path = "../derives/ser_error_derive" }
 serde = "1.0"
 serde_derive = "1.0"
-serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
+serde_json = "1.0"
 serialization = { path = "../mm2_bitcoin/serialization" }
 serialization_derive = { path = "../mm2_bitcoin/serialization_derive" }
 spv_validation = { path = "../mm2_bitcoin/spv_validation" }

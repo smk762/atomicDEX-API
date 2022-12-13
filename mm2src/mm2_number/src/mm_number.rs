@@ -6,9 +6,7 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::Zero;
 use serde::Serialize;
-use serde::{de, Deserialize, Deserializer};
-use serde_json::value::RawValue;
-use std::str::FromStr;
+use serde::{Deserialize, Deserializer};
 
 /// Construct a `$name` detailed number that have decimal, fraction and rational representations.
 /// The macro takes the `$name` name of the structure and the `$base_name` that is used to generate three different fields:
@@ -73,24 +71,19 @@ impl<'de> Deserialize<'de> for MmNumber {
     where
         D: Deserializer<'de>,
     {
-        let raw: Box<RawValue> = Deserialize::deserialize(deserializer)?;
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum MmNumberHelper {
+            BigDecimal(BigDecimal),
+            BigRational(BigRational),
+            Fraction(Fraction),
+        }
 
-        if let Ok(dec) = BigDecimal::from_str(raw.get().trim_matches('"')) {
-            return Ok(MmNumber(from_dec_to_ratio(&dec)));
-        };
-
-        if let Ok(rat) = serde_json::from_str::<BigRational>(raw.get()) {
-            return Ok(MmNumber(rat));
-        };
-
-        if let Ok(fraction) = serde_json::from_str::<Fraction>(raw.get()) {
-            return Ok(MmNumber(fraction.into()));
-        };
-
-        Err(de::Error::custom(format!(
-            "Could not deserialize any variant of MmNumber from {}",
-            raw.get()
-        )))
+        match MmNumberHelper::deserialize(deserializer)? {
+            MmNumberHelper::BigDecimal(decimal) => Ok(MmNumber(from_dec_to_ratio(&decimal))),
+            MmNumberHelper::BigRational(ratio) => Ok(MmNumber(ratio)),
+            MmNumberHelper::Fraction(fraction) => Ok(MmNumber(fraction.into())),
+        }
     }
 }
 

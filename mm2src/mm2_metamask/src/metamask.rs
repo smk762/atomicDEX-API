@@ -1,105 +1,31 @@
-use crate::eth_provider::EthProvider;
-use crate::metamask_error::{MetamaskError, MetamaskResult};
-use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
-use itertools::Itertools;
-use mm2_err_handle::prelude::*;
-use serde::Serialize;
-use serde_derive::Deserialize;
 use serde_json::json;
-use serde_json::Value as Json;
-use std::collections::HashMap;
-use std::fmt;
-use std::sync::Arc;
-use web3::types::{TransactionRequest, H256};
+use web3::helpers::CallFuture;
+use web3::types::Address;
+use web3::Transport;
 
-/// `MetamaskProvider` is designed the way that there can be only one active session at the moment.
-/// This is highly unlikely that the channel will be full with `capacity = 1024` during this session.
-const ETH_COMMAND_CHANNEL_CAPACITY: usize = 1024;
-const EIP712_DOMAIN: &str = "EIP712Domain";
-
-macro_rules! eth_rpc_await {
-    ($selff:ident, $method:expr $(, $arg_name:expr)*) => {{
-        let params = vec![
-            $(
-                serde_json::value::to_value($arg_name)
-                    .map_to_mm(|e| MetamaskError::ErrorSerializingArguments(e.to_string()))?
-            ),*
-        ];
-        $selff
-            .eth_provider
-            .invoke_method($method.to_string(), params)
-            .await
-            .mm_err(MetamaskError::from)
-    }}
+/// `Metamask` namespace.
+#[derive(Debug)]
+pub struct Metamask<T> {
+    transport: T,
 }
 
-#[derive(Clone)]
-pub struct MetamaskProvider {
-    eth_provider: Arc<AsyncMutex<EthProvider>>,
-}
+impl<T: Transport> Metamask<T> {
+    pub(crate) fn new(transport: T) -> Self { Metamask { transport } }
 
-impl MetamaskProvider {
-    pub fn detect_metamask_provider() -> MetamaskResult<MetamaskProvider> {
-        let eth_provider = EthProvider::detect_ethereum_provider(ETH_COMMAND_CHANNEL_CAPACITY)
-            .or_mm_err(|| MetamaskError::EthProviderNotFound)?;
-        Ok(MetamaskProvider {
-            eth_provider: Arc::new(AsyncMutex::new(eth_provider)),
-        })
-    }
-
-    /// Creates a session that can be used to invoke methods.
-    /// We need to limit the number of concurrent requests to one.
-    pub async fn session(&self) -> MetamaskSession<'_> {
-        let eth_provider = self.eth_provider.lock().await;
-        MetamaskSession { eth_provider }
-    }
-}
-
-pub struct MetamaskSession<'a> {
-    eth_provider: AsyncMutexGuard<'a, EthProvider>,
-}
-
-impl<'a> MetamaskSession<'a> {
-    /// Invokes an arbitrary RPC method.
-    /// [`MetamaskSession::eth_request`] is expected to be used within a Web3Transport as a plug.
-    ///
-    /// Please consider adding new methods or using existing ones
-    /// if you have a direct access to a `MetamaskSession` instance.
-    ///
-    /// See the list of available RPCs:
-    /// https://ethereum.org/en/developers/docs/apis/json-rpc/
-    pub async fn eth_request(&mut self, method: String, params: Vec<Json>) -> MetamaskResult<Json> {
-        self.eth_provider
-            .invoke_method(method, params)
-            .await
-            .mm_err(MetamaskError::from)
-    }
-
-    /// Invokes the `eth_requestAccounts` method.
+    /// Get list of available accounts.
+    /// Duplicates `Eth::accounts`.
     /// https://docs.metamask.io/guide/rpc-api.html#eth-requestaccounts
-    pub async fn eth_request_accounts(&mut self) -> MetamaskResult<EthAccount> {
-        let accounts: Vec<String> = eth_rpc_await!(self, "eth_requestAccounts")?;
-        accounts
-            .into_iter()
-            .exactly_one()
-            .map(|address| EthAccount { address })
-            .map_to_mm(|_| MetamaskError::ExpectedOneEthAccount)
-    }
-
-    /// Asks the user to sign and broadcast the given `tx`.
-    /// https://eth.wiki/json-rpc/API#eth_sendtransaction
-    pub async fn eth_send_transaction(&mut self, tx: TransactionRequest) -> MetamaskResult<H256> {
-        eth_rpc_await!(self, "eth_sendTransaction", tx)
+    pub fn accounts(&self) -> CallFuture<Vec<Address>, T::Out> {
+        CallFuture::new(self.transport.execute("eth_accounts", vec![]))
     }
 
     /// Invokes the `wallet_switchEthereumChain` method.
     /// https://docs.metamask.io/guide/rpc-api.html#wallet-switchethereumchain
-    pub async fn wallet_switch_ethereum_chain(&mut self, chain_id: u64) -> MetamaskResult<()> {
+    pub fn switch_ethereum_chain(&self, chain_id: u64) -> CallFuture<(), T::Out> {
         let req = json!({
             "chainId": format!("0x{chain_id:x}"),
         });
-
-        eth_rpc_await!(self, "wallet_switchEthereumChain", req)
+        CallFuture::new(self.transport.execute("wallet_switchEthereumChain", vec![req]))
     }
 
     /// * user_address - Must match user's active address.
@@ -131,13 +57,8 @@ impl<'a> MetamaskSession<'a> {
             message: sign_data,
         };
 
-        eth_rpc_await!(self, "eth_signTypedDataV4", user_address, req)
+        CallFuture::new(self.transport.execute("eth_signTypedDataV4", vec![user_address, req]))
     }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct EthAccount {
-    pub address: String,
 }
 
 /// `ObjectType` is used to describes an object type accordingly to:
