@@ -6,8 +6,8 @@ use crate::utxo::tx_cache::{UtxoVerboseCacheOps, UtxoVerboseCacheShared};
 use crate::utxo::utxo_block_header_storage::BlockHeaderStorage;
 use crate::utxo::utxo_builder::utxo_conf_builder::{UtxoConfBuilder, UtxoConfError, UtxoConfResult};
 use crate::utxo::{output_script, utxo_common, ElectrumBuilderArgs, ElectrumProtoVerifier, RecentlySpentOutPoints,
-                  TxFee, UtxoCoinConf, UtxoCoinFields, UtxoHDAccount, UtxoHDWallet, UtxoRpcMode, UtxoSyncStatus,
-                  UtxoSyncStatusLoopHandle, DEFAULT_GAP_LIMIT, UTXO_DUST_AMOUNT};
+                  SPVConf, TxFee, UtxoCoinConf, UtxoCoinFields, UtxoHDAccount, UtxoHDWallet, UtxoRpcMode,
+                  UtxoSyncStatus, UtxoSyncStatusLoopHandle, DEFAULT_GAP_LIMIT, UTXO_DUST_AMOUNT};
 use crate::{BlockchainNetwork, CoinTransportMetrics, DerivationMethod, HistorySyncState, PrivKeyBuildPolicy,
             PrivKeyPolicy, RpcClientType, UtxoActivationParams};
 use async_trait::async_trait;
@@ -171,6 +171,7 @@ pub trait UtxoFieldsWithIguanaPrivKeyBuilder: UtxoCoinBuilderCommonOps {
         let check_utxo_maturity = self.check_utxo_maturity();
         let tx_cache = self.tx_cache();
         let (block_headers_status_notifier, block_headers_status_watcher) = self.block_header_status_channel();
+        let spv_conf = self.spv_conf();
 
         let coin = UtxoCoinFields {
             conf,
@@ -188,6 +189,7 @@ pub trait UtxoFieldsWithIguanaPrivKeyBuilder: UtxoCoinBuilderCommonOps {
             block_headers_status_notifier,
             block_headers_status_watcher,
             abortable_system,
+            spv_conf,
         };
         Ok(coin)
     }
@@ -241,6 +243,7 @@ pub trait UtxoFieldsWithHardwareWalletBuilder: UtxoCoinBuilderCommonOps {
         let check_utxo_maturity = self.check_utxo_maturity();
         let tx_cache = self.tx_cache();
         let (block_headers_status_notifier, block_headers_status_watcher) = self.block_header_status_channel();
+        let spv_conf = self.spv_conf();
 
         let coin = UtxoCoinFields {
             conf,
@@ -258,6 +261,7 @@ pub trait UtxoFieldsWithHardwareWalletBuilder: UtxoCoinBuilderCommonOps {
             block_headers_status_notifier,
             block_headers_status_watcher,
             abortable_system,
+            spv_conf,
         };
         Ok(coin)
     }
@@ -630,16 +634,20 @@ pub trait UtxoCoinBuilderCommonOps {
         Option<UtxoSyncStatusLoopHandle>,
         Option<AsyncMutex<AsyncReceiver<UtxoSyncStatus>>>,
     ) {
-        if self.conf()["enable_spv_proof"].as_bool().unwrap_or(false) && !self.activation_params().mode.is_native() {
-            let (sync_status_notifier, sync_watcher) = channel(1);
-            (
-                Some(UtxoSyncStatusLoopHandle::new(sync_status_notifier)),
-                Some(AsyncMutex::new(sync_watcher)),
-            )
-        } else {
-            (None, None)
+        if let Some(spv) = self.spv_conf() {
+            if spv.enable_spv_proof && !self.activation_params().mode.is_native() {
+                let (sync_status_notifier, sync_watcher) = channel(1);
+                return (
+                    Some(UtxoSyncStatusLoopHandle::new(sync_status_notifier)),
+                    Some(AsyncMutex::new(sync_watcher)),
+                );
+            }
         }
+
+        (None, None)
     }
+
+    fn spv_conf(&self) -> Option<SPVConf> { serde_json::from_value::<SPVConf>(self.conf()["spv_conf"].clone()).ok() }
 }
 
 /// Attempts to parse native daemon conf file and return rpcport, rpcuser and rpcpassword

@@ -487,6 +487,19 @@ impl UtxoSyncStatusLoopHandle {
     }
 }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct SPVConf {
+    pub enable_spv_proof: bool,
+    pub starting_block: Option<u64>,
+    pub max_stored_block_headers: Option<u64>,
+}
+
+impl SPVConf {
+    pub fn get_genesis_block(&self) -> u64 { self.starting_block.unwrap_or_default() }
+
+    pub fn is_spv_enabled(&self) -> bool { self.enable_spv_proof }
+}
+
 #[derive(Debug)]
 pub struct UtxoCoinConf {
     pub ticker: String,
@@ -557,7 +570,7 @@ pub struct UtxoCoinConf {
     pub trezor_coin: Option<String>,
     /// Whether to verify swaps and lightning transactions using spv or not. When enabled, block headers will be retrieved, verified according
     /// to block_headers_verification_params and stored in the DB. Can be false if the coin's RPC server is trusted.
-    pub enable_spv_proof: bool,
+    pub spv_conf: Option<SPVConf>,
     /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
     /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
     pub block_headers_verification_params: Option<BlockHeaderVerificationParams>,
@@ -601,6 +614,7 @@ pub struct UtxoCoinFields {
     /// This abortable system is used to spawn coin's related futures that should be aborted on coin deactivation
     /// and on [`MmArc::stop`].
     pub abortable_system: AbortableQueue,
+    pub spv_conf: Option<SPVConf>,
 }
 
 #[derive(Debug, Display)]
@@ -798,6 +812,8 @@ impl UtxoCoinFields {
             hash_algo: self.tx_hash_algo.into(),
         }
     }
+
+    pub fn spv_conf(&self) -> SPVConf { self.spv_conf.clone().unwrap_or_default() }
 }
 
 #[derive(Debug, Display)]

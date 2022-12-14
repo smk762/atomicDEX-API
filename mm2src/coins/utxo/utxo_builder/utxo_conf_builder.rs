@@ -1,6 +1,6 @@
 use crate::utxo::rpc_clients::EstimateFeeMode;
-use crate::utxo::{parse_hex_encoded_u32, UtxoCoinConf, DEFAULT_DYNAMIC_FEE_VOLATILITY_PERCENT, KMD_MTP_BLOCK_COUNT,
-                  MATURE_CONFIRMATIONS_DEFAULT};
+use crate::utxo::{parse_hex_encoded_u32, SPVConf, UtxoCoinConf, DEFAULT_DYNAMIC_FEE_VOLATILITY_PERCENT,
+                  KMD_MTP_BLOCK_COUNT, MATURE_CONFIRMATIONS_DEFAULT};
 use crate::UtxoActivationParams;
 use bitcrypto::ChecksumType;
 use crypto::{Bip32Error, ChildNumber};
@@ -97,7 +97,7 @@ impl<'a> UtxoConfBuilder<'a> {
         let estimate_fee_mode = self.estimate_fee_mode();
         let estimate_fee_blocks = self.estimate_fee_blocks();
         let trezor_coin = self.trezor_coin();
-        let enable_spv_proof = self.enable_spv_proof();
+        let spv_conf = self.spv_conf();
         let block_headers_verification_params = self.block_headers_verification_params();
 
         Ok(UtxoCoinConf {
@@ -130,7 +130,7 @@ impl<'a> UtxoConfBuilder<'a> {
             mature_confirmations,
             estimate_fee_blocks,
             trezor_coin,
-            enable_spv_proof,
+            spv_conf,
             block_headers_verification_params,
         })
     }
@@ -292,7 +292,7 @@ impl<'a> UtxoConfBuilder<'a> {
     fn enable_spv_proof(&self) -> bool { false }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn enable_spv_proof(&self) -> bool { self.conf["enable_spv_proof"].as_bool().unwrap_or(false) }
+    fn spv_conf(&self) -> Option<SPVConf> { serde_json::from_value::<SPVConf>(self.conf["spv_conf"].clone()).ok() }
 
     fn block_headers_verification_params(&self) -> Option<BlockHeaderVerificationParams> {
         json::from_value(self.conf["block_headers_verification_params"].clone()).unwrap_or(None)

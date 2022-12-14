@@ -225,26 +225,31 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         })
     }
 
-    async fn get_last_block_height(&self) -> Result<u64, BlockHeaderStorageError> {
+    async fn get_last_block_height(&self) -> Result<Option<u64>, BlockHeaderStorageError> {
         let coin = self.ticker.clone();
         let sql = get_last_block_height_sql(&coin)?;
         let selfi = self.clone();
 
-        async_blocking(move || {
+        let res = async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
-            query_single_row(&conn, &sql, NO_PARAMS, |row| row.get(0))
+            query_single_row(&conn, &sql, NO_PARAMS, |row| row.get::<usize, i64>(0))
         })
         .await
         .map_err(|e| BlockHeaderStorageError::GetFromStorageError {
             coin: coin.clone(),
             reason: e.to_string(),
-        })?
-        .unwrap_or(0i64)
-        .try_into()
-        .map_err(|e: TryFromIntError| BlockHeaderStorageError::DecodeError {
-            coin,
-            reason: e.to_string(),
-        }) // last_block_height is 0 if the database is empty
+        })?;
+
+        if let Some(h) = res {
+            return Ok(Some(h.try_into().map_err(|e: TryFromIntError| {
+                BlockHeaderStorageError::DecodeError {
+                    coin,
+                    reason: e.to_string(),
+                }
+            })?));
+        }
+
+        Ok(None)
     }
 
     async fn get_last_block_header_with_non_max_bits(&self) -> Result<Option<BlockHeader>, BlockHeaderStorageError> {

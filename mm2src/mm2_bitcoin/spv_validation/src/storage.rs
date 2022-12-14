@@ -60,7 +60,7 @@ pub trait BlockHeaderStorageOps: Send + Sync + 'static {
     /// Gets the block header by height from the selected coin's storage as hex
     async fn get_block_header_raw(&self, height: u64) -> Result<Option<String>, BlockHeaderStorageError>;
 
-    async fn get_last_block_height(&self) -> Result<u64, BlockHeaderStorageError>;
+    async fn get_last_block_height(&self) -> Result<Option<u64>, BlockHeaderStorageError>;
 
     async fn get_last_block_header_with_non_max_bits(&self) -> Result<Option<BlockHeader>, BlockHeaderStorageError>;
 
