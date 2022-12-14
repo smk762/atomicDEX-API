@@ -231,11 +231,13 @@ pub(crate) mod tests {
             Ok(None)
         }
 
-        async fn get_last_block_height(&self) -> Result<u64, BlockHeaderStorageError> {
-            Ok(get_block_headers_for_coin(&self.ticker)
-                .into_keys()
-                .max_by(|a, b| a.cmp(b))
-                .unwrap())
+        async fn get_last_block_height(&self) -> Result<Option<u64>, BlockHeaderStorageError> {
+            Ok(Some(
+                get_block_headers_for_coin(&self.ticker)
+                    .into_keys()
+                    .max_by(|a, b| a.cmp(b))
+                    .unwrap(),
+            ))
         }
 
         async fn get_last_block_header_with_non_max_bits(
