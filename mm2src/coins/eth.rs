@@ -27,8 +27,6 @@ use common::log::{error, info, warn};
 use common::{get_utc_timestamp, now_ms, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
 use crypto::privkey::key_pair_from_secret;
 use crypto::{CryptoCtx, CryptoCtxError, GlobalHDAccountArc, KeyPairPolicy};
-#[cfg(target_arch = "wasm32")]
-use crypto::{MetamaskArc, MetamaskError, MetamaskWeak};
 use derive_more::Display;
 use ethabi::{Contract, Function, Token};
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
@@ -58,12 +56,16 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
-#[cfg(target_arch = "wasm32")]
-use web3::types::TransactionRequest;
 use web3::types::{Action as TraceAction, BlockId, BlockNumber, Bytes, CallRequest, FilterBuilder, Log, Trace,
                   TraceFilterBuilder, Transaction as Web3Transaction, TransactionId, U64};
 use web3::{self, Web3};
 use web3_transport::{http_transport::HttpTransportNode, EthFeeHistoryNamespace, Web3Transport};
+
+cfg_wasm32! {
+    use crypto::{MetamaskArc, MetamaskError, MetamaskWeak};
+    use mm2_metamask::MetamaskSession;
+    use web3::types::TransactionRequest;
+}
 
 use super::{coin_conf, AsyncMutex, BalanceError, BalanceFut, CheckIfMyPaymentSentArgs, CoinBalance, CoinFutSpawner,
             CoinProtocol, CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, HistorySyncState,
@@ -216,10 +218,10 @@ impl From<ethabi::Error> for Web3RpcError {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-impl From<MetamaskError> for Web3RpcError {
-    fn from(e: MetamaskError) -> Self { Web3RpcError::from(web3::Error::from(e)) }
-}
+// #[cfg(target_arch = "wasm32")]
+// impl From<MetamaskError> for Web3RpcError {
+//     fn from(e: MetamaskError) -> Self { Web3RpcError::from(web3::Error::from(e)) }
+// }
 
 impl From<ethabi::Error> for WithdrawError {
     fn from(e: ethabi::Error) -> Self {
@@ -373,6 +375,8 @@ pub struct EthCoinImpl {
     sign_message_prefix: Option<String>,
     swap_contract_address: Address,
     fallback_swap_contract: Option<Address>,
+    /// Consider using [`EthCoin::lock_web3_session`] instead.
+    /// TODO rename to `_web3`.
     web3: Web3<Web3Transport>,
     /// The separate web3 instances kept to get nonce, will replace the web3 completely soon
     web3_instances: Vec<Web3Instance>,
@@ -399,6 +403,12 @@ pub struct EthCoinImpl {
 pub struct Web3Instance {
     web3: Web3<Web3Transport>,
     is_parity: bool,
+}
+
+pub enum Web3Session<'a> {
+    Dummy,
+    #[cfg(target_arch = "wasm32")]
+    Metamask(MetamaskSession<'a, Web3Transport>),
 }
 
 #[derive(Clone, Debug)]
@@ -786,17 +796,18 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
             };
 
             // Wait for 10 seconds for the transaction to appear on the RPC node.
-            let wait_rpc_timeout = 10_000;
-            let check_every = 1.;
-            let SendMetamaskTx { tx_hash, signed_tx } = coin
-                .metamask_send_transaction(metamask, tx_to_send, wait_rpc_timeout, check_every)
-                .await?;
-
-            let tx_hex = signed_tx
-                .map(|tx| BytesJson::from(rlp::encode(&tx).to_vec()))
-                // Return an empty `tx_hex` if the transaction is still not appeared on the RPC node.
-                .unwrap_or_default();
-            (tx_hash, tx_hex)
+            todo!()
+            // let wait_rpc_timeout = 10_000;
+            // let check_every = 1.;
+            // let SendMetamaskTx { tx_hash, signed_tx } = coin
+            //     .metamask_send_transaction(metamask, tx_to_send, wait_rpc_timeout, check_every)
+            //     .await?;
+            //
+            // let tx_hex = signed_tx
+            //     .map(|tx| BytesJson::from(rlp::encode(&tx).to_vec()))
+            //     // Return an empty `tx_hex` if the transaction is still not appeared on the RPC node.
+            //     .unwrap_or_default();
+            // (tx_hash, tx_hex)
         },
     };
 
@@ -1685,6 +1696,21 @@ async fn sign_and_send_transaction_impl(
 }
 
 impl EthCoin {
+    // TODO
+    // async fn lock_web3_session(&self) -> Web3RpcResult<Web3Session<'_>> {
+    //     #[cfg(target_arch = "wasm32")]
+    //     if self.web3.is_metamask() {
+    //         let metamask = MetamaskSession::lock(&self.web3).await?;
+    //         if let Some(chain_id) = self.chain_id {
+    //             metamask.wallet_switch_ethereum_chain(chain_id).await?;
+    //         }
+    //
+    //         return Ok(Web3Session::Metamask(metamask));
+    //     }
+    //
+    //     Ok(Web3Session::Dummy)
+    // }
+
     /// Downloads and saves ETH transaction history of my_address, relies on Parity trace_filter API
     /// https://wiki.parity.io/JSONRPC-trace-module#trace_filter, this requires tracing to be enabled
     /// in node config. Other ETH clients (Geth, etc.) are `not` supported (yet).
@@ -3218,22 +3244,7 @@ impl EthCoin {
         wait_rpc_timeout_ms: u64,
         check_every: f64,
     ) -> Web3RpcResult<SendMetamaskTx> {
-        let tx_hash = {
-            let metamask_arc = metamask.upgrade().or_mm_err(|| {
-                let error = "MetaMask context with which the coin was activated no longer exists".to_string();
-                Web3RpcError::Internal(error)
-            })?;
-
-            let provider = metamask_arc.metamask_provider();
-            let mut session = provider.session().await;
-
-            // TODO consider changing the chain to mainnet.
-            if let Some(chain_id) = self.chain_id {
-                session.wallet_switch_ethereum_chain(chain_id).await?;
-            }
-
-            session.eth_send_transaction(tx).await?
-        };
+        let tx_hash = todo!();
 
         let wait_until = now_ms() + wait_rpc_timeout_ms;
         while now_ms() < wait_until {

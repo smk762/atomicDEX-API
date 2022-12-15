@@ -1,9 +1,11 @@
 // use crate::metamask_login::{AtomicDEXDomain, AtomicDEXLoginRequest, ADEX_LOGIN_TYPE, ADEX_TYPES};
-use mm2_metamask::MetamaskProvider;
+use mm2_err_handle::prelude::*;
+use mm2_metamask::{Eip1193Provider, EthAccount, MetamaskSession};
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
+use web3::Web3;
 
-pub use mm2_metamask::{EthAccount, MetamaskError, MetamaskResult};
+pub use mm2_metamask::{MetamaskError, MetamaskResult};
 
 #[derive(Clone)]
 pub struct MetamaskArc(Arc<MetamaskCtx>);
@@ -29,16 +31,20 @@ impl MetamaskWeak {
 
 pub struct MetamaskCtx {
     eth_account: EthAccount,
+    /// We'll possibly use it later.
+    #[allow(dead_code)]
+    web3: Web3<Eip1193Provider>,
     // eth_account_pubkey: String,
-    metamask_provider: MetamaskProvider,
 }
 
 impl MetamaskCtx {
     pub async fn init() -> MetamaskResult<MetamaskCtx> {
-        let metamask_provider = MetamaskProvider::detect_metamask_provider()?;
+        let eip_transport = Eip1193Provider::detect().or_mm_err(|| MetamaskError::EthProviderNotFound)?;
+        let web3 = Web3::new(eip_transport);
+
         let eth_account = {
-            let mut session = metamask_provider.session().await;
-            session.eth_request_accounts().await?
+            let metamask_session = MetamaskSession::lock(&web3).await;
+            metamask_session.eth_request_account().await?
         };
 
         // Uncomment this to finish MetaMask login.
@@ -55,14 +61,8 @@ impl MetamaskCtx {
         //     ADEX_LOGIN_TYPE,
         // );
 
-        Ok(MetamaskCtx {
-            eth_account,
-            metamask_provider,
-        })
+        Ok(MetamaskCtx { eth_account, web3 })
     }
-
-    /// TODO later this method will check if the active account is still the same.
-    pub fn metamask_provider(&self) -> MetamaskProvider { self.metamask_provider.clone() }
 
     pub fn eth_account(&self) -> &EthAccount { &self.eth_account }
 }

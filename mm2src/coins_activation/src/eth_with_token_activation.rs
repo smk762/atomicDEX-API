@@ -46,6 +46,10 @@ impl From<EthActivationV2Error> for EnablePlatformCoinWithTokensError {
                 EnablePlatformCoinWithTokensError::PrivKeyPolicyNotAllowed(e)
             },
             #[cfg(target_arch = "wasm32")]
+            EthActivationV2Error::MetamaskError(metamask) => {
+                EnablePlatformCoinWithTokensError::Internal(metamask.to_string())
+            },
+            #[cfg(target_arch = "wasm32")]
             EthActivationV2Error::MetamaskCtxNotInitialized => EnablePlatformCoinWithTokensError::PreparationRequired(
                 "MetaMask context is not initialized. Consider using 'task::init_metamask::init' RPC".to_string(),
             ),

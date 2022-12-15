@@ -40,3 +40,4 @@ trezor = { path = "../trezor" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 mm2_metamask = { path = "../mm2_metamask" }
+web3 = { git = "https://github.com/sergeyboyko0791/rust-web3", default-features = false }

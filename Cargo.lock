@@ -1076,6 +1076,7 @@ dependencies = [
  "mm2_db",
  "mm2_err_handle",
  "mm2_io",
+ "mm2_metamask",
  "mm2_metrics",
  "mm2_net",
  "mm2_number",
@@ -1538,6 +1539,7 @@ dependencies = [
  "serde_json",
  "tiny-bip39",
  "trezor",
+ "web3",
 ]
 
 [[package]]

@@ -1,8 +1,12 @@
 use super::*;
 use common::executor::AbortedError;
 use crypto::{CryptoCtxError, StandardHDPathToCoin};
+use enum_from::EnumFromTrait;
+use mm2_err_handle::common_errors::WithInternal;
+#[cfg(target_arch = "wasm32")]
+use mm2_metamask::{from_metamask_error, MetamaskError, MetamaskRpcError, MetamaskSession, WithMetamaskRpcError};
 
-#[derive(Display, Serialize, SerializeErrorType)]
+#[derive(Display, EnumFromTrait, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum EthActivationV2Error {
     InvalidPayload(String),
@@ -23,8 +27,14 @@ pub enum EthActivationV2Error {
     ErrorDeserializingDerivationPath(String),
     PrivKeyPolicyNotAllowed(PrivKeyPolicyNotAllowed),
     #[cfg(target_arch = "wasm32")]
+    #[from_trait(WithMetamaskRpcError::metamask_rpc_error)]
+    #[display(fmt = "{}", _0)]
+    MetamaskError(MetamaskRpcError),
+    #[cfg(target_arch = "wasm32")]
     #[display(fmt = "MetaMask context is not initialized")]
     MetamaskCtxNotInitialized,
+    #[from_trait(WithInternal::internal)]
+    #[display(fmt = "Internal: {}", _0)]
     InternalError(String),
 }
 
@@ -38,6 +48,11 @@ impl From<AbortedError> for EthActivationV2Error {
 
 impl From<CryptoCtxError> for EthActivationV2Error {
     fn from(e: CryptoCtxError) -> Self { EthActivationV2Error::InternalError(e.to_string()) }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<MetamaskError> for EthActivationV2Error {
+    fn from(e: MetamaskError) -> Self { from_metamask_error(e) }
 }
 
 /// An alternative to `crate::PrivKeyActivationPolicy`, typical only for ETH coin.
@@ -229,20 +244,13 @@ pub async fn eth_coin_from_conf_and_request_v2(
 
     let chain_id = conf["chain_id"].as_u64();
 
-    // Check if MetaMask supports the given `chain_id` if required.
-    // Please note that this request may take a long time.
-    #[cfg(target_arch = "wasm32")]
-    if let EthPrivKeyPolicy::Metamask(ref metamask_ctx) = priv_key_policy {
-        check_metamask_support_chain_id(ticker.clone(), &metamask_ctx, chain_id).await?;
-    }
-
     let (web3, web3_instances) = match (req.rpc_mode, &priv_key_policy) {
         (EthRpcMode::Http, EthPrivKeyPolicy::KeyPair(key_pair)) => {
             build_http_transport(ctx, ticker.clone(), my_address_str, key_pair, &req.nodes).await?
         },
         #[cfg(target_arch = "wasm32")]
         (EthRpcMode::Metamask, EthPrivKeyPolicy::Metamask(metamask_ctx)) => {
-            build_metamask_transport(ctx, metamask_ctx.clone(), ticker.clone())
+            build_metamask_transport(ctx, ticker.clone())?
         },
         #[cfg(target_arch = "wasm32")]
         (_, _) => {
@@ -250,6 +258,13 @@ pub async fn eth_coin_from_conf_and_request_v2(
             return MmError::err(EthActivationV2Error::ActivationFailed { ticker, error });
         },
     };
+
+    // Check if MetaMask supports the given `chain_id` if required.
+    // Please note that this request may take a long time.
+    #[cfg(target_arch = "wasm32")]
+    if let EthPrivKeyPolicy::Metamask(ref metamask_ctx) = priv_key_policy {
+        check_metamask_support_chain_id(ticker.clone(), &web3, chain_id).await?;
+    }
 
     // param from request should override the config
     let required_confirmations = req
@@ -416,12 +431,11 @@ fn build_single_http_transport(
 #[cfg(target_arch = "wasm32")]
 fn build_metamask_transport(
     ctx: &MmArc,
-    metamask_ctx: MetamaskWeak,
     coin_ticker: String,
-) -> (Web3<Web3Transport>, Vec<Web3Instance>) {
+) -> MmResult<(Web3<Web3Transport>, Vec<Web3Instance>), EthActivationV2Error> {
     let event_handlers = rpc_event_handlers_for_eth_transport(ctx, coin_ticker);
 
-    let web3 = Web3::new(Web3Transport::new_metamask(metamask_ctx, event_handlers));
+    let web3 = Web3::new(Web3Transport::new_metamask(event_handlers)?);
 
     // MetaMask doesn't use Parity nodes. So `MetamaskTransport` doesn't support `parity_nextNonce` RPC.
     // An example of the `web3_clientVersion` RPC - `MetaMask/v10.22.1`.
@@ -430,13 +444,13 @@ fn build_metamask_transport(
         is_parity: false,
     }];
 
-    (web3, web3_instances)
+    Ok((web3, web3_instances))
 }
 
 #[cfg(target_arch = "wasm32")]
 async fn check_metamask_support_chain_id(
     ticker: String,
-    metamask_ctx: &MetamaskWeak,
+    web3: &Web3<Web3Transport>,
     chain_id: Option<u64>,
 ) -> MmResult<(), EthActivationV2Error> {
     use jsonrpc_core::ErrorCode;
@@ -451,13 +465,9 @@ async fn check_metamask_support_chain_id(
         None => return Ok(()),
     };
 
-    let metamask = metamask_ctx
-        .upgrade()
-        .or_mm_err(|| EthActivationV2Error::MetamaskCtxNotInitialized)?;
-    let provider = metamask.metamask_provider();
-    let mut session = provider.session().await;
+    let metamask = MetamaskSession::lock(web3).await;
 
-    match session.wallet_switch_ethereum_chain(chain_id).await.split_mm() {
+    match metamask.wallet_switch_ethereum_chain(chain_id).await.split_mm() {
         Ok(()) => Ok(()),
         Err((MetamaskError::Rpc(rpc_err), trace)) if rpc_err.code == CHAIN_IS_NOT_REGISTERED_ERROR => {
             let error = format!("Ethereum chain_id({chain_id}) is not supported");

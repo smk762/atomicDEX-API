@@ -1,34 +1,67 @@
+use crate::eip_1193_provider::Eip1193Provider;
+use crate::metamask_error::{MetamaskError, MetamaskResult};
+use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
+use itertools::Itertools;
+use mm2_err_handle::prelude::*;
+use serde::Serialize;
 use serde_json::json;
+use std::collections::HashMap;
+use std::fmt;
+use std::ops::Deref;
 use web3::helpers::CallFuture;
-use web3::types::Address;
-use web3::Transport;
+use web3::{Transport, Web3};
 
-/// `Metamask` namespace.
-#[derive(Debug)]
-pub struct Metamask<T> {
-    transport: T,
+const EIP712_DOMAIN: &str = "EIP712Domain";
+
+lazy_static::lazy_static! {
+    static ref METAMASK_MUTEX: AsyncMutex<()> = AsyncMutex::new(());
 }
 
-impl<T: Transport> Metamask<T> {
-    pub(crate) fn new(transport: T) -> Self { Metamask { transport } }
+pub fn detect_metamask_provider() -> MetamaskResult<Eip1193Provider> {
+    Eip1193Provider::detect().or_mm_err(|| MetamaskError::EthProviderNotFound)
+}
 
-    /// Get list of available accounts.
-    /// Duplicates `Eth::accounts`.
+/// `MetamaskSession` is designed the way that there can be only one active session at the moment.
+pub struct MetamaskSession<'a, T: Transport> {
+    web3: &'a Web3<T>,
+    _guard: AsyncMutexGuard<'a, ()>,
+}
+
+impl<'a, T: Transport> MetamaskSession<'a, T> {
+    /// Locks the global `METAMASK_MUTEX` to prevent simultaneous requests.
+    pub async fn lock(web3: &'a Web3<T>) -> MetamaskSession<'a, T> {
+        MetamaskSession {
+            web3,
+            _guard: METAMASK_MUTEX.lock().await,
+        }
+    }
+
+    pub fn web3(&self) -> &Web3<T> { self.web3 }
+
+    /// Invokes the `eth_requestAccounts` method. We expect only one active account.
     /// https://docs.metamask.io/guide/rpc-api.html#eth-requestaccounts
-    pub fn accounts(&self) -> CallFuture<Vec<Address>, T::Out> {
-        CallFuture::new(self.transport.execute("eth_accounts", vec![]))
+    pub async fn eth_request_account(&self) -> MetamaskResult<EthAccount> {
+        let accounts: Vec<String> =
+            CallFuture::new(self.web3.transport().execute("eth_requestAccounts", vec![])).await?;
+        accounts
+            .into_iter()
+            .exactly_one()
+            .map(|address| EthAccount { address })
+            .map_to_mm(|_| MetamaskError::ExpectedOneEthAccount)
     }
 
     /// Invokes the `wallet_switchEthereumChain` method.
     /// https://docs.metamask.io/guide/rpc-api.html#wallet-switchethereumchain
-    pub fn switch_ethereum_chain(&self, chain_id: u64) -> CallFuture<(), T::Out> {
+    pub async fn wallet_switch_ethereum_chain(&self, chain_id: u64) -> MetamaskResult<()> {
         let req = json!({
             "chainId": format!("0x{chain_id:x}"),
         });
-        CallFuture::new(self.transport.execute("wallet_switchEthereumChain", vec![req]))
+
+        CallFuture::new(self.web3.transport().execute("wallet_switchEthereumChain", vec![req])).await?;
+        Ok(())
     }
 
-    /// * user_address - Must match user's active address.
+    // * user_address - Must match user's active address.
     /// * types - Defines the types of the domain and data you will be signing.
     /// * domain - Ensures that the signature will be unique across multiple DApps and across Blockchains.
     /// * sign_data - The message signing data content.
@@ -57,8 +90,28 @@ impl<T: Transport> Metamask<T> {
             message: sign_data,
         };
 
-        CallFuture::new(self.transport.execute("eth_signTypedDataV4", vec![user_address, req]))
+        let user_address = serde_json::to_value(user_address)
+            .map_to_mm(|e| MetamaskError::ErrorSerializingArguments(e.to_string()))?;
+        let req = serde_json::to_value(req).map_to_mm(|e| MetamaskError::ErrorSerializingArguments(e.to_string()))?;
+
+        Ok(CallFuture::new(
+            self.web3
+                .transport()
+                .execute("eth_signTypedDataV4", vec![user_address, req]),
+        )
+        .await?)
     }
+}
+
+impl<'a, T: Transport> Deref for MetamaskSession<'a, T> {
+    type Target = Web3<T>;
+
+    fn deref(&self) -> &Self::Target { self.web3 }
+}
+
+#[derive(Clone, Debug)]
+pub struct EthAccount {
+    pub address: String,
 }
 
 /// `ObjectType` is used to describes an object type accordingly to:

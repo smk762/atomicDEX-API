@@ -1,10 +1,10 @@
-use crate::eth_provider::EthProviderError;
 use derive_more::Display;
-use jsonrpc_core::Error as RPCError;
+use jsonrpc_core::{Error as RPCError, ErrorCode as RpcErrorCode};
 use mm2_err_handle::prelude::*;
 use serde_derive::Serialize;
-use web3::error::TransportError;
 use web3::Error as Web3Error;
+
+const USER_CANCELLED_ERROR_CODE: RpcErrorCode = RpcErrorCode::ServerError(4001);
 
 pub type MetamaskResult<T> = MmResult<T, MetamaskError>;
 
@@ -20,32 +20,45 @@ pub enum MetamaskError {
     ErrorSerializingArguments(String),
     #[display(fmt = "Error deserializing RPC result: {}", _0)]
     ErrorDeserializingMethodResult(String),
+    #[display(fmt = "User cancelled request")]
+    UserCancelled,
     #[display(fmt = "RPC error: {:?}", _0)]
     Rpc(RPCError),
+    #[display(fmt = "Transport error: {:?}", _0)]
+    Transport(String),
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
 }
 
-impl From<EthProviderError> for MetamaskError {
-    fn from(value: EthProviderError) -> Self {
-        match value {
-            EthProviderError::ErrorSerializingArguments(ser) => MetamaskError::ErrorSerializingArguments(ser),
-            EthProviderError::ErrorDeserializingMethodResult(de) => MetamaskError::ErrorDeserializingMethodResult(de),
-            EthProviderError::Rpc(rpc) => MetamaskError::Rpc(rpc),
-            EthProviderError::Internal(internal) => MetamaskError::Internal(internal),
+impl From<Web3Error> for MetamaskError {
+    fn from(e: Web3Error) -> Self {
+        match e {
+            Web3Error::Decoder(de) | Web3Error::InvalidResponse(de) => {
+                MetamaskError::ErrorDeserializingMethodResult(de)
+            },
+            Web3Error::Transport(tr) => MetamaskError::Transport(tr.to_string()),
+            Web3Error::Rpc(rpc) => {
+                if rpc.code == USER_CANCELLED_ERROR_CODE {
+                    MetamaskError::UserCancelled
+                } else {
+                    MetamaskError::Rpc(rpc)
+                }
+            },
+            Web3Error::Io(io) => MetamaskError::Transport(io.to_string()),
+            other => MetamaskError::Internal(other.to_string()),
         }
     }
 }
 
-impl From<MetamaskError> for Web3Error {
-    fn from(e: MetamaskError) -> Self {
-        match e {
-            MetamaskError::Rpc(rpc) => Web3Error::Rpc(rpc),
-            MetamaskError::ErrorDeserializingMethodResult(de) => Web3Error::InvalidResponse(de),
-            error => Web3Error::Transport(TransportError::Message(error.to_string())),
-        }
-    }
-}
+// impl From<MetamaskError> for Web3Error {
+//     fn from(e: MetamaskError) -> Self {
+//         match e {
+//             MetamaskError::Rpc(rpc) => Web3Error::Rpc(rpc),
+//             MetamaskError::ErrorDeserializingMethodResult(de) => Web3Error::InvalidResponse(de),
+//             error => Web3Error::Transport(TransportError::Message(error.to_string())),
+//         }
+//     }
+// }
 
 /// This error enumeration is involved to be used as a part of another RPC error.
 /// This enum consists of error types that cli/GUI must handle correctly,
@@ -55,6 +68,8 @@ impl From<MetamaskError> for Web3Error {
 #[derive(Clone, Debug, Display, Serialize, PartialEq)]
 pub enum MetamaskRpcError {
     EthProviderNotFound,
+    #[display(fmt = "User cancelled request")]
+    UserCancelled,
     #[display(fmt = "An unexpected ETH account selected. Please select previous account or re-initialize MetaMask")]
     UnexpectedAccountSelected,
 }
