@@ -3,8 +3,7 @@
 use futures::compat::Future01CompatExt;
 use futures::executor::ThreadPool;
 use futures01::sync::oneshot::{self, Receiver};
-use futures01::{Async, Future, Poll};
-use gstuff::{duration_to_float, now_float};
+use futures01::Future;
 use hyper::client::HttpConnector;
 use hyper::Client;
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};

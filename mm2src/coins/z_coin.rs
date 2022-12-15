@@ -1864,6 +1864,7 @@ impl InitWithdrawCoin for ZCoin {
 
 /// Interpret a string or hex-encoded memo, and return a Memo object.
 /// Inspired by https://github.com/adityapk00/zecwallet-light-cli/blob/v1.7.20/lib/src/lightwallet/utils.rs#L23
+#[allow(clippy::result_large_err)]
 pub fn interpret_memo_string(memo_str: &str) -> MmResult<MemoBytes, WithdrawError> {
     // If the string starts with an "0x", and contains only hex chars ([a-f0-9]+) then
     // interpret it as a hex.
