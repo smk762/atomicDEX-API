@@ -3,8 +3,8 @@
 use futures::compat::Future01CompatExt;
 use futures::executor::ThreadPool;
 use futures01::sync::oneshot::{self, Receiver};
-use futures01::Future;
-use futures_cpupool::CpuPool;
+use futures01::{Async, Future, Poll};
+use gstuff::{duration_to_float, now_float};
 use hyper::client::HttpConnector;
 use hyper::Client;
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
@@ -19,10 +19,6 @@ pub struct Mm2Runtime(pub Runtime);
 lazy_static! {
     /// Shared asynchronous reactor.
     pub static ref CORE: Mm2Runtime = start_core_thread();
-    /// Shared CPU pool to run intensive/sleeping requests on a separate thread.
-    ///
-    /// Deprecated, prefer the futures 0.3 `POOL` instead.
-    pub static ref CPUPOOL: CpuPool = CpuPool::new(8);
     /// Shared CPU pool to run intensive/sleeping requests on s separate thread.
     pub static ref POOL: Mutex<ThreadPool> = Mutex::new(ThreadPool::builder()
         .pool_size(8)
