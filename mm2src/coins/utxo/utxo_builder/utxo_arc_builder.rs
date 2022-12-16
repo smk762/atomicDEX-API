@@ -231,8 +231,7 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
 ) {
     let mut chunk_size = ELECTRUM_MAX_CHUNK_SIZE;
     while let Some(arc) = weak.upgrade() {
-        let genesis_block = arc.0.spv_conf().starting_block.unwrap_or_default();
-        //        let spv_conf = arc.spv_conf();
+        let spv_conf = arc.spv_conf();
         let coin = constructor(arc);
         let ticker = coin.as_ref().conf.ticker.as_str();
         let client = match &coin.as_ref().rpc_client {
@@ -242,8 +241,13 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
 
         let storage = client.block_headers_storage();
 
+        let max_headers_count = spv_conf.max_stored_block_headers();
+        let total_headers_from_storage = storage.get_total_block_headers_from_storage().await.unwrap();
+
+        println!("max_headers_count{max_headers_count}, total_headers_from_storage {total_headers_from_storage:?}");
+
         let from_block_height = match storage.get_last_block_height().await {
-            Ok(h) => h.unwrap_or(genesis_block),
+            Ok(h) => h.unwrap_or_else(|| spv_conf.starting_block()),
             Err(e) => {
                 error!("Error {e:?} on getting the height of the last stored {ticker} header in DB!",);
                 sync_status_loop_handle.notify_on_temp_error(e.to_string());
@@ -330,10 +334,26 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
             }
         };
 
-        ok_or_continue_after_sleep!(
-            storage.add_block_headers_to_storage(block_registry).await,
-            BLOCK_HEADERS_LOOP_SUCCESS_SLEEP_TIMER
-        );
+        let add_block_header_extra = {
+            let headers_from_storage = storage.get_total_block_headers_from_storage().await.unwrap_or_default();
+            if block_count > max_headers_count {
+                if let Err(err) = storage
+                    .remove_block_headers_from_storage((max_headers_count - headers_from_storage) as i64)
+                    .await
+                {
+                    sync_status_loop_handle.notify_on_permanent_error(err.to_string());
+                    break;
+                };
+            };
+
+            println!(
+                "STORAGE COUNT {}",
+                storage.get_total_block_headers_from_storage().await.unwrap_or_default()
+            );
+            storage.add_block_headers_to_storage(block_registry).await
+        };
+
+        ok_or_continue_after_sleep!(add_block_header_extra, BLOCK_HEADERS_LOOP_SUCCESS_SLEEP_TIMER);
     }
 }
 

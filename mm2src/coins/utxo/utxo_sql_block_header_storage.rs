@@ -85,9 +85,19 @@ fn get_block_height_by_hash(for_coin: &str) -> Result<String, BlockHeaderStorage
     Ok(sql)
 }
 
-fn get_total_blocks_count_from_storage(for_coin: &str) -> Result<String, BlockHeaderStorageError> {
+fn get_total_block_headers_from_storage(for_coin: &str) -> Result<String, BlockHeaderStorageError> {
     let table_name = get_table_name_and_validate(for_coin)?;
     let sql = format!("SELECT COUNT(*) as blocks_count FROM {};", table_name);
+
+    Ok(sql)
+}
+
+fn remove_block_headers_from_storage(for_coin: &str, limit: i64) -> Result<String, BlockHeaderStorageError> {
+    let table_name = get_table_name_and_validate(for_coin)?;
+    let sql = format!(
+        "Delete from {table_name} WHERE id IN
+        (SELECT id FROM {table_name} limit {limit};",
+    );
 
     Ok(sql)
 }
@@ -157,6 +167,15 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
     ) -> Result<(), BlockHeaderStorageError> {
         let coin = self.ticker.clone();
         let selfi = self.clone();
+
+        {
+            let limit = 0;
+            let headers_count = self.get_total_block_headers_from_storage().await?;
+            if limit >= headers_count {
+                self.remove_block_headers_from_storage((limit - headers_count) as i64)
+                    .await?;
+            };
+        }
 
         async_blocking(move || {
             let mut conn = selfi.conn.lock().unwrap();
@@ -305,10 +324,10 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         })
     }
 
-    async fn get_total_block_headers_count_from_storage(&self) -> Result<u64, BlockHeaderStorageError> {
+    async fn get_total_block_headers_from_storage(&self) -> Result<u64, BlockHeaderStorageError> {
         let coin = self.ticker.clone();
         let selfi = self.clone();
-        let sql = get_total_blocks_count_from_storage(&coin)?;
+        let sql = get_total_block_headers_from_storage(&coin)?;
 
         async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
@@ -323,6 +342,23 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
             coin: coin.clone(),
             reason: e.to_string(),
         })
+    }
+
+    async fn remove_block_headers_from_storage(&self, limit: i64) -> Result<(), BlockHeaderStorageError> {
+        let coin = self.ticker.clone();
+        let selfi = self.clone();
+        let sql = remove_block_headers_from_storage(&coin, limit)?;
+
+        async_blocking(move || {
+            let conn = selfi.conn.lock().unwrap();
+            conn.execute(&sql, NO_PARAMS)
+                .map_err(|e| BlockHeaderStorageError::AddToStorageError {
+                    coin: coin.clone(),
+                    reason: e.to_string(),
+                })?;
+            Ok(())
+        })
+        .await
     }
 }
 

@@ -495,7 +495,7 @@ pub struct SPVConf {
 }
 
 impl SPVConf {
-    pub fn get_genesis_block(&self) -> u64 { self.starting_block.unwrap_or_default() }
+    pub fn starting_block(&self) -> u64 { self.starting_block.unwrap_or_default() }
 
     pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
 
