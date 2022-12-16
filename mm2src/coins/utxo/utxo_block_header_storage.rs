@@ -87,4 +87,8 @@ impl BlockHeaderStorageOps for BlockHeaderStorage {
     async fn get_block_height_by_hash(&self, hash: H256) -> Result<Option<i64>, BlockHeaderStorageError> {
         self.inner.get_block_height_by_hash(hash).await
     }
+
+    async fn get_total_block_headers_count_from_storage(&self) -> Result<u64, BlockHeaderStorageError> {
+        self.inner.get_total_block_headers_count_from_storage().await
+    }
 }

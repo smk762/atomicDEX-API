@@ -85,6 +85,13 @@ fn get_block_height_by_hash(for_coin: &str) -> Result<String, BlockHeaderStorage
     Ok(sql)
 }
 
+fn get_total_blocks_count_from_storage(for_coin: &str) -> Result<String, BlockHeaderStorageError> {
+    let table_name = get_table_name_and_validate(for_coin)?;
+    let sql = format!("SELECT COUNT(*) as blocks_count FROM {};", table_name);
+
+    Ok(sql)
+}
+
 #[derive(Clone, Debug)]
 pub struct SqliteBlockHeadersStorage {
     pub ticker: String,
@@ -150,6 +157,7 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
     ) -> Result<(), BlockHeaderStorageError> {
         let coin = self.ticker.clone();
         let selfi = self.clone();
+
         async_blocking(move || {
             let mut conn = selfi.conn.lock().unwrap();
             let sql_transaction = conn
@@ -293,6 +301,26 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         .await
         .map_err(|e| BlockHeaderStorageError::GetFromStorageError {
             coin,
+            reason: e.to_string(),
+        })
+    }
+
+    async fn get_total_block_headers_count_from_storage(&self) -> Result<u64, BlockHeaderStorageError> {
+        let coin = self.ticker.clone();
+        let selfi = self.clone();
+        let sql = get_total_blocks_count_from_storage(&coin)?;
+
+        async_blocking(move || {
+            let conn = selfi.conn.lock().unwrap();
+            let mut sql_transaction = conn.prepare(&sql)?;
+            let mut current_count = sql_transaction.query(NO_PARAMS).unwrap();
+            let row = current_count.next()?.unwrap();
+            row.get(0)
+        })
+        .await
+        .map(|res: Option<i64>| res.unwrap_or_default() as u64)
+        .map_err(|e| BlockHeaderStorageError::GetFromStorageError {
+            coin: coin.clone(),
             reason: e.to_string(),
         })
     }

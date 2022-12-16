@@ -232,6 +232,7 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
     let mut chunk_size = ELECTRUM_MAX_CHUNK_SIZE;
     while let Some(arc) = weak.upgrade() {
         let genesis_block = arc.0.spv_conf().starting_block.unwrap_or_default();
+        //        let spv_conf = arc.spv_conf();
         let coin = constructor(arc);
         let ticker = coin.as_ref().conf.ticker.as_str();
         let client = match &coin.as_ref().rpc_client {
@@ -240,6 +241,7 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
         };
 
         let storage = client.block_headers_storage();
+
         let from_block_height = match storage.get_last_block_height().await {
             Ok(h) => h.unwrap_or(genesis_block),
             Err(e) => {
