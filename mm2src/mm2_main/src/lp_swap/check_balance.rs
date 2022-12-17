@@ -221,9 +221,11 @@ impl From<BalanceError> for CheckBalanceError {
             BalanceError::Transport(transport) | BalanceError::InvalidResponse(transport) => {
                 CheckBalanceError::Transport(transport)
             },
-            e @ BalanceError::UnexpectedDerivationMethod(_) | e @ BalanceError::WalletStorageError(_) => {
+            BalanceError::UnexpectedDerivationMethod(_) | BalanceError::WalletStorageError(_) => {
                 CheckBalanceError::InternalError(e.to_string())
             },
+            #[cfg(target_arch = "wasm32")]
+            BalanceError::MetamaskError(metamask) => CheckBalanceError::InternalError(metamask.to_string()),
             BalanceError::Internal(internal) => CheckBalanceError::InternalError(internal),
         }
     }

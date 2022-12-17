@@ -3,7 +3,7 @@ use crate::RpcTransportEventHandlerShared;
 use ethereum_types::U256;
 use futures::future::BoxFuture;
 use jsonrpc_core::Call;
-use mm2_metamask::MetamaskResult;
+#[cfg(target_arch = "wasm32")] use mm2_metamask::MetamaskResult;
 use mm2_net::transport::GuiAuthValidationGenerator;
 use serde_json::Value as Json;
 use serde_json::Value;
@@ -33,8 +33,12 @@ impl Web3Transport {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub fn new_metamask(event_handlers: Vec<RpcTransportEventHandlerShared>) -> MetamaskResult<Web3Transport> {
-        Ok(metamask_transport::MetamaskTransport::detect(event_handlers)?.into())
+    pub fn new_metamask(
+        metamask_weak: MetamaskWeak,
+        chain_id: u64,
+        event_handlers: Vec<RpcTransportEventHandlerShared>,
+    ) -> MetamaskResult<Web3Transport> {
+        Ok(metamask_transport::MetamaskTransport::detect(metamask_weak, chain_id, event_handlers)?.into())
     }
 
     #[cfg(test)]
@@ -54,9 +58,6 @@ impl Web3Transport {
             Web3Transport::Metamask(_) => None,
         }
     }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn is_metamask(&self) -> bool { matches!(self, Web3Transport::Metamask(_)) }
 }
 
 impl Transport for Web3Transport {

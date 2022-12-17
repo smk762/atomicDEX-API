@@ -12,6 +12,7 @@ pub type MetamaskResult<T> = MmResult<T, MetamaskError>;
 pub enum MetamaskError {
     #[display(fmt = "ETH provider not found")]
     EthProviderNotFound,
+    // TODO remove it
     #[display(fmt = "Expected one ETH selected account")]
     ExpectedOneEthAccount,
     #[display(fmt = "Unexpected account selected")]
@@ -72,6 +73,8 @@ pub enum MetamaskRpcError {
     UserCancelled,
     #[display(fmt = "An unexpected ETH account selected. Please select previous account or re-initialize MetaMask")]
     UnexpectedAccountSelected,
+    #[display(fmt = "Metamask context is not initialized. Consider activating it via 'task::connect_metamask::init'")]
+    MetamaskCtxNotInitialized,
 }
 
 pub trait WithMetamaskRpcError {

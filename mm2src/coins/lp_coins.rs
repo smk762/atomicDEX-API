@@ -84,8 +84,9 @@ cfg_native! {
 }
 
 cfg_wasm32! {
-    use mm2_db::indexed_db::{ConstructibleDb, DbLocked, SharedDb};
     use hd_wallet_storage::HDWalletDb;
+    use mm2_db::indexed_db::{ConstructibleDb, DbLocked, SharedDb};
+    use mm2_metamask::MetamaskRpcError;
     use tx_history_storage::wasm::{clear_tx_history, load_tx_history, save_tx_history, TxHistoryDb};
     pub type TxHistoryDbLocked<'a> = DbLocked<'a, TxHistoryDb>;
 }
@@ -282,7 +283,7 @@ pub type SendMakerRefundsPaymentArgs<'a> = SendRefundPaymentArgs<'a>;
 
 pub type IguanaPrivKey = Secp256k1Secret;
 
-#[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
+#[derive(Debug, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum RawTransactionError {
     #[display(fmt = "No such coin {}", coin)]
@@ -293,6 +294,8 @@ pub enum RawTransactionError {
     Transport(String),
     #[display(fmt = "Hash does not exist: {}", _0)]
     HashNotExist(String),
+    #[cfg(target_arch = "wasm32")]
+    MetamaskError(MetamaskRpcError),
     #[display(fmt = "Internal error: {}", _0)]
     InternalError(String),
 }
@@ -306,6 +309,8 @@ impl HttpStatusCode for RawTransactionError {
             RawTransactionError::Transport(_) | RawTransactionError::InternalError(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             },
+            #[cfg(target_arch = "wasm32")]
+            RawTransactionError::MetamaskError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
@@ -1312,6 +1317,8 @@ pub enum BalanceError {
     UnexpectedDerivationMethod(UnexpectedDerivationMethod),
     #[display(fmt = "Wallet storage error: {}", _0)]
     WalletStorageError(String),
+    #[cfg(target_arch = "wasm32")]
+    MetamaskError(MetamaskRpcError),
     #[display(fmt = "Internal: {}", _0)]
     Internal(String),
 }
@@ -1478,6 +1485,8 @@ impl From<BalanceError> for DelegationError {
             BalanceError::UnexpectedDerivationMethod(e) => {
                 DelegationError::DelegationOpsNotSupported { reason: e.to_string() }
             },
+            #[cfg(target_arch = "wasm32")]
+            BalanceError::MetamaskError(metamask) => DelegationError::InternalError(metamask.to_string()),
             e @ BalanceError::WalletStorageError(_) => DelegationError::InternalError(e.to_string()),
             BalanceError::Internal(internal) => DelegationError::InternalError(internal),
         }
@@ -1609,8 +1618,9 @@ pub enum WithdrawError {
     #[display(fmt = "RPC 'task' is awaiting '{}' user action", expected)]
     UnexpectedUserAction { expected: String },
     #[from_trait(WithHwRpcError::hw_rpc_error)]
-    #[display(fmt = "{}", _0)]
     HwError(HwRpcError),
+    #[cfg(target_arch = "wasm32")]
+    MetamaskError(MetamaskRpcError),
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[from_trait(WithInternal::internal)]
@@ -1635,6 +1645,8 @@ impl HttpStatusCode for WithdrawError {
             | WithdrawError::UnknownAccount { .. }
             | WithdrawError::UnexpectedUserAction { .. } => StatusCode::BAD_REQUEST,
             WithdrawError::HwError(_) => StatusCode::GONE,
+            #[cfg(target_arch = "wasm32")]
+            WithdrawError::MetamaskError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             WithdrawError::Transport(_) | WithdrawError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -1649,6 +1661,8 @@ impl From<BalanceError> for WithdrawError {
         match e {
             BalanceError::Transport(error) | BalanceError::InvalidResponse(error) => WithdrawError::Transport(error),
             BalanceError::UnexpectedDerivationMethod(e) => WithdrawError::from(e),
+            #[cfg(target_arch = "wasm32")]
+            BalanceError::MetamaskError(metamask) => WithdrawError::MetamaskError(metamask),
             e @ BalanceError::WalletStorageError(_) => WithdrawError::InternalError(e.to_string()),
             BalanceError::Internal(internal) => WithdrawError::InternalError(internal),
         }

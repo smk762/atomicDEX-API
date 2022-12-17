@@ -40,10 +40,9 @@ pub struct MetamaskCtx {
 impl MetamaskCtx {
     pub async fn init() -> MetamaskResult<MetamaskCtx> {
         let eip_transport = Eip1193Provider::detect().or_mm_err(|| MetamaskError::EthProviderNotFound)?;
-        let web3 = Web3::new(eip_transport);
 
         let eth_account = {
-            let metamask_session = MetamaskSession::lock(&web3).await;
+            let metamask_session = MetamaskSession::lock(&eip_transport).await;
             metamask_session.eth_request_account().await?
         };
 
@@ -61,8 +60,18 @@ impl MetamaskCtx {
         //     ADEX_LOGIN_TYPE,
         // );
 
+        let web3 = Web3::new(eip_transport);
         Ok(MetamaskCtx { eth_account, web3 })
     }
 
     pub fn eth_account(&self) -> &EthAccount { &self.eth_account }
+
+    /// Checks if the `MetamaskCtx::eth_account` is still active.
+    /// This is required to check before sending transactions.
+    /// TODO finish this by subscribing to `accountsChanged` event.
+    pub async fn check_active_eth_account(&self) -> MetamaskResult<&EthAccount> { Ok(&self.eth_account) }
+
+    /// Returns an active chain ID.
+    /// TODO finish this by subscribing to `chainChanged` event.
+    pub async fn get_current_chain_id(&self) -> Result<u64, web3::Error> { Ok(0x1) }
 }

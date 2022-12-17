@@ -42,6 +42,8 @@ impl From<BalanceError> for GetNewAddressRpcError {
             BalanceError::Transport(transport) => GetNewAddressRpcError::Transport(transport),
             BalanceError::InvalidResponse(rpc) => GetNewAddressRpcError::RpcInvalidResponse(rpc),
             BalanceError::UnexpectedDerivationMethod(der_path) => GetNewAddressRpcError::from(der_path),
+            #[cfg(target_arch = "wasm32")]
+            BalanceError::MetamaskError(metamask) => GetNewAddressRpcError::Internal(metamask.to_string()),
             BalanceError::WalletStorageError(internal) | BalanceError::Internal(internal) => {
                 GetNewAddressRpcError::Internal(internal)
             },

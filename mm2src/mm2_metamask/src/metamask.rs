@@ -2,18 +2,20 @@ use crate::eip_1193_provider::Eip1193Provider;
 use crate::metamask_error::{MetamaskError, MetamaskResult};
 use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use itertools::Itertools;
+use lazy_static::lazy_static;
 use mm2_err_handle::prelude::*;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::fmt;
-use std::ops::Deref;
 use web3::helpers::CallFuture;
-use web3::{Transport, Web3};
+use web3::Transport;
 
 const EIP712_DOMAIN: &str = "EIP712Domain";
 
-lazy_static::lazy_static! {
+lazy_static! {
+    /// This mutex is used to limit the number of concurrent requests to one.
+    /// It's required to avoid switching ETH chain ID during the request.
     static ref METAMASK_MUTEX: AsyncMutex<()> = AsyncMutex::new(());
 }
 
@@ -22,27 +24,24 @@ pub fn detect_metamask_provider() -> MetamaskResult<Eip1193Provider> {
 }
 
 /// `MetamaskSession` is designed the way that there can be only one active session at the moment.
-pub struct MetamaskSession<'a, T: Transport> {
-    web3: &'a Web3<T>,
+pub struct MetamaskSession<'a> {
+    transport: &'a Eip1193Provider,
     _guard: AsyncMutexGuard<'a, ()>,
 }
 
-impl<'a, T: Transport> MetamaskSession<'a, T> {
+impl<'a> MetamaskSession<'a> {
     /// Locks the global `METAMASK_MUTEX` to prevent simultaneous requests.
-    pub async fn lock(web3: &'a Web3<T>) -> MetamaskSession<'a, T> {
+    pub async fn lock(transport: &'a Eip1193Provider) -> MetamaskSession<'a> {
         MetamaskSession {
-            web3,
+            transport,
             _guard: METAMASK_MUTEX.lock().await,
         }
     }
 
-    pub fn web3(&self) -> &Web3<T> { self.web3 }
-
     /// Invokes the `eth_requestAccounts` method. We expect only one active account.
     /// https://docs.metamask.io/guide/rpc-api.html#eth-requestaccounts
     pub async fn eth_request_account(&self) -> MetamaskResult<EthAccount> {
-        let accounts: Vec<String> =
-            CallFuture::new(self.web3.transport().execute("eth_requestAccounts", vec![])).await?;
+        let accounts: Vec<String> = CallFuture::new(self.transport.execute("eth_requestAccounts", vec![])).await?;
         accounts
             .into_iter()
             .exactly_one()
@@ -52,13 +51,12 @@ impl<'a, T: Transport> MetamaskSession<'a, T> {
 
     /// Invokes the `wallet_switchEthereumChain` method.
     /// https://docs.metamask.io/guide/rpc-api.html#wallet-switchethereumchain
-    pub async fn wallet_switch_ethereum_chain(&self, chain_id: u64) -> MetamaskResult<()> {
+    pub async fn wallet_switch_ethereum_chain(&self, chain_id: u64) -> Result<(), web3::Error> {
         let req = json!({
             "chainId": format!("0x{chain_id:x}"),
         });
 
-        CallFuture::new(self.web3.transport().execute("wallet_switchEthereumChain", vec![req])).await?;
-        Ok(())
+        CallFuture::new(self.transport.execute("wallet_switchEthereumChain", vec![req])).await
     }
 
     // * user_address - Must match user's active address.
@@ -94,22 +92,11 @@ impl<'a, T: Transport> MetamaskSession<'a, T> {
             .map_to_mm(|e| MetamaskError::ErrorSerializingArguments(e.to_string()))?;
         let req = serde_json::to_value(req).map_to_mm(|e| MetamaskError::ErrorSerializingArguments(e.to_string()))?;
 
-        Ok(CallFuture::new(
-            self.web3
-                .transport()
-                .execute("eth_signTypedDataV4", vec![user_address, req]),
-        )
-        .await?)
+        Ok(CallFuture::new(self.transport.execute("eth_signTypedDataV4", vec![user_address, req])).await?)
     }
 }
 
-impl<'a, T: Transport> Deref for MetamaskSession<'a, T> {
-    type Target = Web3<T>;
-
-    fn deref(&self) -> &Self::Target { self.web3 }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EthAccount {
     pub address: String,
 }

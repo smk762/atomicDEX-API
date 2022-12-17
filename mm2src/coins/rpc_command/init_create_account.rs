@@ -106,6 +106,8 @@ impl From<BalanceError> for CreateAccountRpcError {
             BalanceError::Transport(transport) => CreateAccountRpcError::Transport(transport),
             BalanceError::InvalidResponse(rpc) => CreateAccountRpcError::RpcInvalidResponse(rpc),
             BalanceError::UnexpectedDerivationMethod(der_path) => CreateAccountRpcError::from(der_path),
+            #[cfg(target_arch = "wasm32")]
+            BalanceError::MetamaskError(metamask) => CreateAccountRpcError::Internal(metamask.to_string()),
             BalanceError::WalletStorageError(internal) | BalanceError::Internal(internal) => {
                 CreateAccountRpcError::Internal(internal)
             },

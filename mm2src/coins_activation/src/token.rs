@@ -10,6 +10,8 @@ use common::{HttpStatusCode, StatusCode};
 use derive_more::Display;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use mm2_metamask::MetamaskRpcError;
 use ser_error_derive::SerializeErrorType;
 use serde_derive::{Deserialize, Serialize};
 
@@ -59,8 +61,10 @@ pub enum EnableTokenError {
     #[display(fmt = "{}", _0)]
     UnexpectedDerivationMethod(UnexpectedDerivationMethod),
     CouldNotFetchBalance(String),
-    Transport(String),
     InvalidConfig(String),
+    #[cfg(target_arch = "wasm32")]
+    MetamaskError(MetamaskRpcError),
+    Transport(String),
     Internal(String),
 }
 
@@ -95,6 +99,8 @@ impl From<BalanceError> for EnableTokenError {
         match e {
             BalanceError::Transport(e) | BalanceError::InvalidResponse(e) => EnableTokenError::Transport(e),
             BalanceError::UnexpectedDerivationMethod(e) => EnableTokenError::UnexpectedDerivationMethod(e),
+            #[cfg(target_arch = "wasm32")]
+            BalanceError::MetamaskError(metamask) => EnableTokenError::MetamaskError(metamask),
             BalanceError::Internal(e) | BalanceError::WalletStorageError(e) => EnableTokenError::Internal(e),
         }
     }
@@ -169,6 +175,8 @@ impl HttpStatusCode for EnableTokenError {
             | EnableTokenError::CouldNotFetchBalance(_)
             | EnableTokenError::InvalidConfig(_)
             | EnableTokenError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            #[cfg(target_arch = "wasm32")]
+            EnableTokenError::MetamaskError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

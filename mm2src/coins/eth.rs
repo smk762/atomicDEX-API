@@ -28,6 +28,7 @@ use common::{get_utc_timestamp, now_ms, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
 use crypto::privkey::key_pair_from_secret;
 use crypto::{CryptoCtx, CryptoCtxError, GlobalHDAccountArc, KeyPairPolicy};
 use derive_more::Display;
+use enum_from::EnumFromTrait;
 use ethabi::{Contract, Function, Token};
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 use ethcore_transaction::{Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
@@ -39,7 +40,7 @@ use futures::future::{join_all, select, Either, FutureExt, TryFutureExt};
 use futures01::Future;
 use http::StatusCode;
 use mm2_core::mm_ctx::{MmArc, MmWeak};
-use mm2_err_handle::prelude::*;
+use mm2_err_handle::{common_errors::WithInternal, prelude::*};
 use mm2_net::transport::{slurp_url, GuiAuthValidation, GuiAuthValidationGenerator, SlurpError};
 use mm2_number::{BigDecimal, MmNumber};
 #[cfg(test)] use mocktopus::macros::*;
@@ -62,8 +63,9 @@ use web3::{self, Web3};
 use web3_transport::{http_transport::HttpTransportNode, EthFeeHistoryNamespace, Web3Transport};
 
 cfg_wasm32! {
-    use crypto::{MetamaskArc, MetamaskError, MetamaskWeak};
-    use mm2_metamask::MetamaskSession;
+    use crypto::{MetamaskArc, MetamaskWeak};
+    use enum_from::EnumFromInner;
+    use mm2_metamask::{from_metamask_error, MetamaskError, MetamaskRpcError, WithMetamaskRpcError};
     use web3::types::TransactionRequest;
 }
 
@@ -169,13 +171,19 @@ impl From<SlurpError> for GasStationReqErr {
     }
 }
 
-#[derive(Debug, Display)]
+#[derive(Debug, Display, EnumFromTrait)]
+#[cfg_attr(target_arch = "wasm32", derive(EnumFromInner))]
 pub enum Web3RpcError {
     #[display(fmt = "Transport: {}", _0)]
     Transport(String),
     #[display(fmt = "Invalid response: {}", _0)]
     InvalidResponse(String),
+    #[cfg(target_arch = "wasm32")]
+    #[from_trait(WithMetamaskRpcError::metamask_rpc_error)]
+    #[from_inner]
+    MetamaskError(MetamaskRpcError),
     #[display(fmt = "Internal: {}", _0)]
+    #[from_trait(WithInternal::internal)]
     Internal(String),
 }
 
@@ -210,6 +218,17 @@ impl From<web3::Error> for RawTransactionError {
     fn from(e: web3::Error) -> Self { RawTransactionError::Transport(e.to_string()) }
 }
 
+impl From<Web3RpcError> for RawTransactionError {
+    fn from(e: Web3RpcError) -> Self {
+        match e {
+            Web3RpcError::Transport(tr) | Web3RpcError::InvalidResponse(tr) => RawTransactionError::Transport(tr),
+            #[cfg(target_arch = "wasm32")]
+            Web3RpcError::MetamaskError(metamask) => RawTransactionError::MetamaskError(metamask),
+            Web3RpcError::Internal(internal) => RawTransactionError::InternalError(internal),
+        }
+    }
+}
+
 impl From<ethabi::Error> for Web3RpcError {
     fn from(e: ethabi::Error) -> Web3RpcError {
         // Currently, we use the `ethabi` crate to work with a smart contract ABI known at compile time.
@@ -218,10 +237,10 @@ impl From<ethabi::Error> for Web3RpcError {
     }
 }
 
-// #[cfg(target_arch = "wasm32")]
-// impl From<MetamaskError> for Web3RpcError {
-//     fn from(e: MetamaskError) -> Self { Web3RpcError::from(web3::Error::from(e)) }
-// }
+#[cfg(target_arch = "wasm32")]
+impl From<MetamaskError> for Web3RpcError {
+    fn from(e: MetamaskError) -> Self { from_metamask_error(e) }
+}
 
 impl From<ethabi::Error> for WithdrawError {
     fn from(e: ethabi::Error) -> Self {
@@ -239,6 +258,8 @@ impl From<Web3RpcError> for WithdrawError {
     fn from(e: Web3RpcError) -> Self {
         match e {
             Web3RpcError::Transport(err) | Web3RpcError::InvalidResponse(err) => WithdrawError::Transport(err),
+            #[cfg(target_arch = "wasm32")]
+            Web3RpcError::MetamaskError(metamask) => WithdrawError::MetamaskError(metamask),
             Web3RpcError::Internal(internal) => WithdrawError::InternalError(internal),
         }
     }
@@ -252,6 +273,8 @@ impl From<Web3RpcError> for TradePreimageError {
     fn from(e: Web3RpcError) -> Self {
         match e {
             Web3RpcError::Transport(err) | Web3RpcError::InvalidResponse(err) => TradePreimageError::Transport(err),
+            #[cfg(target_arch = "wasm32")]
+            Web3RpcError::MetamaskError(metamask) => TradePreimageError::InternalError(metamask.to_string()),
             Web3RpcError::Internal(internal) => TradePreimageError::InternalError(internal),
         }
     }
@@ -274,7 +297,18 @@ impl From<ethabi::Error> for BalanceError {
 }
 
 impl From<web3::Error> for BalanceError {
-    fn from(e: web3::Error) -> Self { BalanceError::Transport(e.to_string()) }
+    fn from(e: web3::Error) -> Self { BalanceError::from(Web3RpcError::from(e)) }
+}
+
+impl From<Web3RpcError> for BalanceError {
+    fn from(e: Web3RpcError) -> Self {
+        match e {
+            Web3RpcError::Transport(tr) | Web3RpcError::InvalidResponse(tr) => BalanceError::Transport(tr),
+            #[cfg(target_arch = "wasm32")]
+            Web3RpcError::MetamaskError(metamask) => BalanceError::MetamaskError(metamask),
+            Web3RpcError::Internal(internal) => BalanceError::Internal(internal),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -375,8 +409,6 @@ pub struct EthCoinImpl {
     sign_message_prefix: Option<String>,
     swap_contract_address: Address,
     fallback_swap_contract: Option<Address>,
-    /// Consider using [`EthCoin::lock_web3_session`] instead.
-    /// TODO rename to `_web3`.
     web3: Web3<Web3Transport>,
     /// The separate web3 instances kept to get nonce, will replace the web3 completely soon
     web3_instances: Vec<Web3Instance>,
@@ -403,12 +435,6 @@ pub struct EthCoinImpl {
 pub struct Web3Instance {
     web3: Web3<Web3Transport>,
     is_parity: bool,
-}
-
-pub enum Web3Session<'a> {
-    Dummy,
-    #[cfg(target_arch = "wasm32")]
-    Metamask(MetamaskSession<'a, Web3Transport>),
 }
 
 #[derive(Clone, Debug)]
@@ -443,7 +469,6 @@ async fn make_gas_station_request(url: &str) -> GasStationResult {
     Ok(result)
 }
 
-#[cfg_attr(test, mockable)]
 impl EthCoinImpl {
     /// Gets Transfer events from ERC20 smart contract `addr` between `from_block` and `to_block`
     fn erc20_transfer_events(
@@ -659,7 +684,7 @@ impl EthCoinImpl {
         self.erc20_tokens_infos.lock().unwrap().insert(ticker, info);
     }
 
-    /// ### WARNING
+    /// # Warning
     /// Be very careful using this function since it returns dereferenced clone
     /// of value behind the MutexGuard and makes it non-thread-safe.
     pub fn get_erc_tokens_infos(&self) -> HashMap<String, Erc20TokenInfo> {
@@ -783,7 +808,7 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
             (signed.hash, BytesJson::from(bytes.to_vec()))
         },
         #[cfg(target_arch = "wasm32")]
-        EthPrivKeyPolicy::Metamask(ref metamask) => {
+        EthPrivKeyPolicy::Metamask(_) => {
             let tx_to_send = TransactionRequest {
                 from: coin.my_address,
                 to: Some(to_addr),
@@ -796,18 +821,17 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
             };
 
             // Wait for 10 seconds for the transaction to appear on the RPC node.
-            todo!()
-            // let wait_rpc_timeout = 10_000;
-            // let check_every = 1.;
-            // let SendMetamaskTx { tx_hash, signed_tx } = coin
-            //     .metamask_send_transaction(metamask, tx_to_send, wait_rpc_timeout, check_every)
-            //     .await?;
-            //
-            // let tx_hex = signed_tx
-            //     .map(|tx| BytesJson::from(rlp::encode(&tx).to_vec()))
-            //     // Return an empty `tx_hex` if the transaction is still not appeared on the RPC node.
-            //     .unwrap_or_default();
-            // (tx_hash, tx_hex)
+            let wait_rpc_timeout = 10_000;
+            let check_every = 1.;
+            let SendMetamaskTx { tx_hash, signed_tx } = coin
+                .metamask_send_transaction(tx_to_send, wait_rpc_timeout, check_every)
+                .await?;
+
+            let tx_hex = signed_tx
+                .map(|tx| BytesJson::from(rlp::encode(&tx).to_vec()))
+                // Return an empty `tx_hex` if the transaction is still not appeared on the RPC node.
+                .unwrap_or_default();
+            (tx_hash, tx_hex)
         },
     };
 
@@ -1696,21 +1720,6 @@ async fn sign_and_send_transaction_impl(
 }
 
 impl EthCoin {
-    // TODO
-    // async fn lock_web3_session(&self) -> Web3RpcResult<Web3Session<'_>> {
-    //     #[cfg(target_arch = "wasm32")]
-    //     if self.web3.is_metamask() {
-    //         let metamask = MetamaskSession::lock(&self.web3).await?;
-    //         if let Some(chain_id) = self.chain_id {
-    //             metamask.wallet_switch_ethereum_chain(chain_id).await?;
-    //         }
-    //
-    //         return Ok(Web3Session::Metamask(metamask));
-    //     }
-    //
-    //     Ok(Web3Session::Dummy)
-    // }
-
     /// Downloads and saves ETH transaction history of my_address, relies on Parity trace_filter API
     /// https://wiki.parity.io/JSONRPC-trace-module#trace_filter, this requires tracing to be enabled
     /// in node config. Other ETH clients (Geth, etc.) are `not` supported (yet).
@@ -3239,12 +3248,11 @@ impl EthCoin {
     #[cfg(target_arch = "wasm32")]
     async fn metamask_send_transaction(
         &self,
-        metamask: &MetamaskWeak,
         tx: TransactionRequest,
         wait_rpc_timeout_ms: u64,
         check_every: f64,
     ) -> Web3RpcResult<SendMetamaskTx> {
-        let tx_hash = todo!();
+        let tx_hash = self.web3.eth().send_transaction(tx).await?;
 
         let wait_until = now_ms() + wait_rpc_timeout_ms;
         while now_ms() < wait_until {
@@ -3845,7 +3853,7 @@ pub async fn eth_coin_from_conf_and_request(
         }
     }
 
-    let (my_address, key_pair) = try_s!(build_address_and_priv_key_policy(conf, priv_key_policy));
+    let (my_address, key_pair) = try_s!(build_address_and_priv_key_policy(conf, priv_key_policy).await);
 
     let mut web3_instances = vec![];
     let event_handlers = rpc_event_handlers_for_eth_transport(ctx, ticker.to_string());
