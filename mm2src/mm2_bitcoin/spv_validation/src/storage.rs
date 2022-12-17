@@ -21,6 +21,15 @@ pub enum BlockHeaderStorageError {
         coin: String,
         reason: String,
     },
+    #[display(
+        fmt = "Unable to delete block headers from storage for {} - reason: {}",
+        coin,
+        reason
+    )]
+    UnableToDeleteHeaders {
+        coin: String,
+        reason: String,
+    },
     #[display(fmt = "Can't query from the storage - query: {} - reason: {}", query, reason)]
     QueryError {
         query: String,

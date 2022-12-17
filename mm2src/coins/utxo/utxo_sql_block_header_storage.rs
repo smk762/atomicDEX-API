@@ -95,8 +95,8 @@ fn get_total_block_headers_from_storage(for_coin: &str) -> Result<String, BlockH
 fn remove_block_headers_from_storage(for_coin: &str, limit: i64) -> Result<String, BlockHeaderStorageError> {
     let table_name = get_table_name_and_validate(for_coin)?;
     let sql = format!(
-        "Delete from {table_name} WHERE id IN
-        (SELECT id FROM {table_name} limit {limit};",
+        "DELETE FROM {table_name} WHERE block_height IN
+        (SELECT block_height FROM {table_name} limit {limit});",
     );
 
     Ok(sql)
@@ -267,13 +267,14 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
             reason: e.to_string(),
         })?;
 
-        if let Some(h) = res {
-            return Ok(Some(h.try_into().map_err(|e: TryFromIntError| {
-                BlockHeaderStorageError::DecodeError {
+        if let Some(height) = res {
+            let height = height
+                .try_into()
+                .map_err(|e: TryFromIntError| BlockHeaderStorageError::DecodeError {
                     coin,
                     reason: e.to_string(),
-                }
-            })?));
+                })?;
+            return Ok(Some(height));
         }
 
         Ok(None)
@@ -352,7 +353,7 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
             conn.execute(&sql, NO_PARAMS)
-                .map_err(|e| BlockHeaderStorageError::AddToStorageError {
+                .map_err(|e| BlockHeaderStorageError::UnableToDeleteHeaders {
                     coin: coin.clone(),
                     reason: e.to_string(),
                 })?;

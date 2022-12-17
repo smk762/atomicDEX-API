@@ -7,7 +7,7 @@ use crate::{DerivationMethod, PrivKeyBuildPolicy, UtxoActivationParams};
 use async_trait::async_trait;
 use chain::TransactionOutput;
 use common::executor::{AbortSettings, SpawnAbortable, Timer};
-use common::log::{error, info, warn};
+use common::log::{error, info, warn, LogOnError};
 use futures::compat::Future01CompatExt;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
@@ -240,12 +240,6 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
         };
 
         let storage = client.block_headers_storage();
-
-        let max_headers_count = spv_conf.max_stored_block_headers();
-        let total_headers_from_storage = storage.get_total_block_headers_from_storage().await.unwrap();
-
-        println!("max_headers_count{max_headers_count}, total_headers_from_storage {total_headers_from_storage:?}");
-
         let from_block_height = match storage.get_last_block_height().await {
             Ok(h) => h.unwrap_or_else(|| spv_conf.starting_block()),
             Err(e) => {
@@ -275,6 +269,13 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
             }
         }
         drop_mutability!(to_block_height);
+
+        println!(
+            "STORAGE COUNT {}, from_block_height{from_block_height}, to_block_height{to_block_height:?},
+            get_block_count{}",
+            storage.get_total_block_headers_from_storage().await.unwrap_or_default(),
+            coin.as_ref().rpc_client.get_block_count().compat().await.unwrap()
+        );
 
         // Todo: Add code for the case if a chain reorganization happens
         if from_block_height == block_count {
@@ -334,21 +335,20 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
             }
         };
 
+        let max_stored_block_headers = spv_conf.max_stored_block_headers();
+        let storage_headers_count = storage.get_total_block_headers_from_storage().await.unwrap();
         let add_block_header_extra = {
-            let headers_from_storage = storage.get_total_block_headers_from_storage().await.unwrap_or_default();
-            if block_count > max_headers_count {
-                if let Err(err) = storage
-                    .remove_block_headers_from_storage((max_headers_count - headers_from_storage) as i64)
+            if max_stored_block_headers > 0 && storage_headers_count > max_stored_block_headers {
+                storage
+                    .remove_block_headers_from_storage(
+                        ((storage_headers_count - max_stored_block_headers) - block_registry.len() as u64) as i64,
+                    )
                     .await
-                {
-                    sync_status_loop_handle.notify_on_permanent_error(err.to_string());
-                    break;
-                };
+                    .error_log();
             };
-
             println!(
-                "STORAGE COUNT {}",
-                storage.get_total_block_headers_from_storage().await.unwrap_or_default()
+                "max_stored_block_headers {}, storage_headers_count{}",
+                max_stored_block_headers, storage_headers_count
             );
             storage.add_block_headers_to_storage(block_registry).await
         };
