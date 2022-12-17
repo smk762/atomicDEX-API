@@ -118,7 +118,7 @@ pub(super) fn utxo_coin_fields_for_test(
             mature_confirmations: MATURE_CONFIRMATIONS_DEFAULT,
             estimate_fee_blocks: 1,
             trezor_coin: None,
-            enable_spv_proof: false,
+            spv_conf: None,
             block_headers_verification_params: None,
         },
         decimals: TEST_COIN_DECIMALS,
@@ -135,6 +135,7 @@ pub(super) fn utxo_coin_fields_for_test(
         block_headers_status_notifier: None,
         block_headers_status_watcher: None,
         abortable_system: AbortableQueue::default(),
+        spv_conf: None,
     }
 }
 

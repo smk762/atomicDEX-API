@@ -270,13 +270,6 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
         }
         drop_mutability!(to_block_height);
 
-        println!(
-            "STORAGE COUNT {}, from_block_height{from_block_height}, to_block_height{to_block_height:?},
-            get_block_count{}",
-            storage.get_total_block_headers_from_storage().await.unwrap_or_default(),
-            coin.as_ref().rpc_client.get_block_count().compat().await.unwrap()
-        );
-
         // Todo: Add code for the case if a chain reorganization happens
         if from_block_height == block_count {
             sync_status_loop_handle.notify_sync_finished(to_block_height);
@@ -336,24 +329,39 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
         };
 
         let max_stored_block_headers = spv_conf.max_stored_block_headers();
-        let storage_headers_count = storage.get_total_block_headers_from_storage().await.unwrap();
-        let add_block_header_extra = {
-            if max_stored_block_headers > 0 && storage_headers_count > max_stored_block_headers {
-                storage
-                    .remove_block_headers_from_storage(
-                        ((storage_headers_count - max_stored_block_headers) - block_registry.len() as u64) as i64,
-                    )
-                    .await
-                    .error_log();
+        let mut storage_headers_count = storage.get_total_block_headers_from_storage().await.unwrap_or_default();
+        let block_registry_len = block_registry.len() as u64;
+        let add_block_header_extra = || async move {
+            let mut limit = 0;
+            if max_stored_block_headers > 0 && storage_headers_count >= max_stored_block_headers {
+                if storage_headers_count > max_stored_block_headers {
+                    let value = storage_headers_count - max_stored_block_headers;
+                    limit += value;
+                    storage_headers_count -= value;
+                }
+
+                let storage_plus_registry = storage_headers_count + block_registry_len;
+                if storage_plus_registry > max_stored_block_headers {
+                    let value = storage_plus_registry - max_stored_block_headers;
+                    limit += value;
+                    storage_headers_count -= value;
+                }
+
+                if storage_headers_count == max_stored_block_headers {
+                    let value = storage_headers_count - block_registry_len;
+                    limit += value;
+                }
             };
-            println!(
-                "max_stored_block_headers {}, storage_headers_count{}",
-                max_stored_block_headers, storage_headers_count
-            );
+            drop_mutability!(limit);
+
+            storage
+                .remove_block_headers_from_storage(limit as i64)
+                .await
+                .error_log();
             storage.add_block_headers_to_storage(block_registry).await
         };
 
-        ok_or_continue_after_sleep!(add_block_header_extra, BLOCK_HEADERS_LOOP_SUCCESS_SLEEP_TIMER);
+        ok_or_continue_after_sleep!(add_block_header_extra().await, BLOCK_HEADERS_LOOP_SUCCESS_SLEEP_TIMER);
     }
 }
 

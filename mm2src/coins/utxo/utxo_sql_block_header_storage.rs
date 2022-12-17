@@ -512,6 +512,6 @@ mod sql_block_headers_storage_tests {
         assert!(!storage.is_table_empty(&table));
 
         let last_block_height = block_on(storage.get_last_block_height()).unwrap();
-        assert_eq!(last_block_height, 201595);
+        assert_eq!(last_block_height.unwrap(), 201595);
     }
 }
