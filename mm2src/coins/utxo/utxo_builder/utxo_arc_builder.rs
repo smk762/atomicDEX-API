@@ -328,41 +328,56 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
             }
         };
 
-        let max_stored_block_headers = spv_conf.max_stored_block_headers();
-        let mut storage_headers_count = storage.get_total_block_headers_from_storage().await.unwrap_or_default();
-        let block_registry_len = block_registry.len() as u64;
-        let add_block_header_extra = || async move {
-            let mut limit = 0;
-            if max_stored_block_headers > 0 && storage_headers_count >= max_stored_block_headers {
-                if storage_headers_count > max_stored_block_headers {
-                    let value = storage_headers_count - max_stored_block_headers;
-                    limit += value;
-                    storage_headers_count -= value;
-                }
-
-                let storage_plus_registry = storage_headers_count + block_registry_len;
-                if storage_plus_registry > max_stored_block_headers {
-                    let value = storage_plus_registry - max_stored_block_headers;
-                    limit += value;
-                    storage_headers_count -= value;
-                }
-
-                if storage_headers_count == max_stored_block_headers {
-                    let value = storage_headers_count - block_registry_len;
-                    limit += value;
-                }
-            };
-            drop_mutability!(limit);
-
+        let limit = block_headers_limit_to_remove(
+            spv_conf.max_stored_block_headers(),
+            storage.get_total_block_headers_from_storage().await.unwrap_or_default(),
+            block_registry.len() as u64,
+        );
+        if limit > 0 {
             storage
                 .remove_block_headers_from_storage(limit as i64)
                 .await
                 .error_log();
-            storage.add_block_headers_to_storage(block_registry).await
-        };
+        }
 
-        ok_or_continue_after_sleep!(add_block_header_extra().await, BLOCK_HEADERS_LOOP_SUCCESS_SLEEP_TIMER);
+        ok_or_continue_after_sleep!(
+            storage.add_block_headers_to_storage(block_registry).await,
+            BLOCK_HEADERS_LOOP_SUCCESS_SLEEP_TIMER
+        );
     }
+}
+
+fn block_headers_limit_to_remove(mut storage_headers_count: u64, node_max: u64, new_headers_count: u64) -> u64 {
+    let mut limit = 0;
+    if node_max > 0 && storage_headers_count >= node_max {
+        // Storage_leaders before this functionality might be greater than node_max headers user
+        // want stored.
+        if storage_headers_count > node_max {
+            let value = storage_headers_count - node_max;
+            limit += value;
+            storage_headers_count -= value;
+        }
+
+        // We need to confirm that the current storage_headers_count(storage_headers_count) + the new header that will
+        // be added do not surpass
+        // node_max
+        let total = storage_headers_count + new_headers_count;
+        if total > node_max {
+            let value = total - node_max;
+            limit += value;
+            storage_headers_count -= value;
+        }
+
+        // Finally, if current storage_headers_count(storage_headers_count) == node_max then we need to remove current
+        // storage_headers_count - the length of new headers(new_headers_count) (
+        if storage_headers_count == node_max {
+            let value = storage_headers_count - new_headers_count;
+            limit += value;
+        }
+    };
+    drop_mutability!(limit);
+
+    limit
 }
 
 pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
