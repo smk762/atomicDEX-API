@@ -171,7 +171,6 @@ pub trait UtxoFieldsWithIguanaPrivKeyBuilder: UtxoCoinBuilderCommonOps {
         let check_utxo_maturity = self.check_utxo_maturity();
         let tx_cache = self.tx_cache();
         let (block_headers_status_notifier, block_headers_status_watcher) = self.block_header_status_channel();
-        let spv_conf = self.spv_conf();
 
         let coin = UtxoCoinFields {
             conf,
@@ -189,7 +188,6 @@ pub trait UtxoFieldsWithIguanaPrivKeyBuilder: UtxoCoinBuilderCommonOps {
             block_headers_status_notifier,
             block_headers_status_watcher,
             abortable_system,
-            spv_conf,
         };
         Ok(coin)
     }
@@ -243,7 +241,6 @@ pub trait UtxoFieldsWithHardwareWalletBuilder: UtxoCoinBuilderCommonOps {
         let check_utxo_maturity = self.check_utxo_maturity();
         let tx_cache = self.tx_cache();
         let (block_headers_status_notifier, block_headers_status_watcher) = self.block_header_status_channel();
-        let spv_conf = self.spv_conf();
 
         let coin = UtxoCoinFields {
             conf,
@@ -261,7 +258,6 @@ pub trait UtxoFieldsWithHardwareWalletBuilder: UtxoCoinBuilderCommonOps {
             block_headers_status_notifier,
             block_headers_status_watcher,
             abortable_system,
-            spv_conf,
         };
         Ok(coin)
     }

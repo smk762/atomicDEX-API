@@ -289,7 +289,7 @@ impl<'a> UtxoConfBuilder<'a> {
 
     // Todo: implement spv for wasm
     #[cfg(target_arch = "wasm32")]
-    fn enable_spv_proof(&self) -> bool { false }
+    fn spv_conf(&self) -> Option<SPVConf> { None }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn spv_conf(&self) -> Option<SPVConf> { serde_json::from_value::<SPVConf>(self.conf["spv_conf"].clone()).ok() }

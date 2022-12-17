@@ -495,11 +495,9 @@ pub struct SPVConf {
 }
 
 impl SPVConf {
-    pub fn starting_block(&self) -> u64 { self.starting_block.unwrap_or_default() }
-
     pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
 
-    pub fn is_spv_enabled(&self) -> bool { self.enable_spv_proof }
+    pub fn starting_block(&self) -> u64 { self.starting_block.unwrap_or_default() }
 }
 
 #[derive(Debug)]
@@ -578,6 +576,10 @@ pub struct UtxoCoinConf {
     pub block_headers_verification_params: Option<BlockHeaderVerificationParams>,
 }
 
+impl UtxoCoinConf {
+    pub fn spv_conf(&self) -> SPVConf { self.spv_conf.clone().unwrap_or_default() }
+}
+
 pub struct UtxoCoinFields {
     /// UTXO coin config
     pub conf: UtxoCoinConf,
@@ -616,7 +618,6 @@ pub struct UtxoCoinFields {
     /// This abortable system is used to spawn coin's related futures that should be aborted on coin deactivation
     /// and on [`MmArc::stop`].
     pub abortable_system: AbortableQueue,
-    pub spv_conf: Option<SPVConf>,
 }
 
 #[derive(Debug, Display)]
@@ -814,8 +815,6 @@ impl UtxoCoinFields {
             hash_algo: self.tx_hash_algo.into(),
         }
     }
-
-    pub fn spv_conf(&self) -> SPVConf { self.spv_conf.clone().unwrap_or_default() }
 }
 
 #[derive(Debug, Display)]

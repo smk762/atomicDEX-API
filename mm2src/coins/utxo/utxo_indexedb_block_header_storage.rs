@@ -24,7 +24,7 @@ impl BlockHeaderStorageOps for IndexedDBBlockHeadersStorage {
 
     async fn get_block_header_raw(&self, _height: u64) -> Result<Option<String>, BlockHeaderStorageError> { Ok(None) }
 
-    async fn get_last_block_height(&self) -> Result<u64, BlockHeaderStorageError> {
+    async fn get_last_block_height(&self) -> Result<Option<u64>, BlockHeaderStorageError> {
         Err(BlockHeaderStorageError::Internal("Not implemented".into()))
     }
 
@@ -33,4 +33,8 @@ impl BlockHeaderStorageOps for IndexedDBBlockHeadersStorage {
     }
 
     async fn get_block_height_by_hash(&self, _hash: H256) -> Result<Option<i64>, BlockHeaderStorageError> { Ok(None) }
+
+    async fn get_total_block_headers_from_storage(&self) -> Result<u64, BlockHeaderStorageError> { Ok(0) }
+
+    async fn remove_block_headers_from_storage(&self, _limit: i64) -> Result<(), BlockHeaderStorageError> { Ok(()) }
 }
