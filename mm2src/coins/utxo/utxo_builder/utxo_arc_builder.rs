@@ -270,6 +270,12 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
         }
         drop_mutability!(to_block_height);
 
+        println!(
+            "from_block_height{}, to_block_height{to_block_height}, total_block_headers_from_storage{:?}",
+            from_block_height,
+            storage.get_total_block_headers_from_storage().await
+        );
+
         // Todo: Add code for the case if a chain reorganization happens
         if from_block_height == block_count {
             sync_status_loop_handle.notify_sync_finished(to_block_height);
@@ -333,12 +339,10 @@ async fn block_header_utxo_loop<T: UtxoCommonOps>(
             storage.get_total_block_headers_from_storage().await.unwrap_or_default(),
             block_registry.len() as u64,
         );
-        if limit > 0 {
-            storage
-                .remove_block_headers_from_storage(limit as i64)
-                .await
-                .error_log();
-        }
+        storage
+            .remove_block_headers_from_storage(limit as i64)
+            .await
+            .error_log();
 
         ok_or_continue_after_sleep!(
             storage.add_block_headers_to_storage(block_registry).await,

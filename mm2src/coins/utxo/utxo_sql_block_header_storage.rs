@@ -332,9 +332,9 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
 
         async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
-            let mut sql_transaction = conn.prepare(&sql)?;
-            let mut current_count = sql_transaction.query(NO_PARAMS).unwrap();
-            let row = current_count.next()?.unwrap();
+            let mut sql_statement = conn.prepare(&sql)?;
+            let mut count = sql_statement.query(NO_PARAMS).unwrap();
+            let row = count.next()?.unwrap();
             row.get(0)
         })
         .await
@@ -346,6 +346,10 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
     }
 
     async fn remove_block_headers_from_storage(&self, limit: i64) -> Result<(), BlockHeaderStorageError> {
+        if limit < 1 {
+            return Ok(());
+        }
+
         let coin = self.ticker.clone();
         let selfi = self.clone();
         let sql = remove_block_headers_from_storage(&coin, limit)?;
