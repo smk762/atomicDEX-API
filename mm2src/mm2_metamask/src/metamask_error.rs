@@ -51,16 +51,6 @@ impl From<Web3Error> for MetamaskError {
     }
 }
 
-// impl From<MetamaskError> for Web3Error {
-//     fn from(e: MetamaskError) -> Self {
-//         match e {
-//             MetamaskError::Rpc(rpc) => Web3Error::Rpc(rpc),
-//             MetamaskError::ErrorDeserializingMethodResult(de) => Web3Error::InvalidResponse(de),
-//             error => Web3Error::Transport(TransportError::Message(error.to_string())),
-//         }
-//     }
-// }
-
 /// This error enumeration is involved to be used as a part of another RPC error.
 /// This enum consists of error types that cli/GUI must handle correctly,
 /// so please extend it if it's required **only**.

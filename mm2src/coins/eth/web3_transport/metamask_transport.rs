@@ -9,7 +9,10 @@ use std::sync::Arc;
 use web3::{RequestId, Transport};
 
 pub struct EthConfig {
-    pub chain_id: u64,
+    /// Whether to check if an active `ChainId` is expected and to switch it.
+    pub chain_id: Option<u64>,
+    /// Whether to check if an active ETH account is expected.
+    pub eth_account: Option<String>,
 }
 
 #[derive(Clone)]
@@ -28,13 +31,13 @@ struct MetamaskTransportInner {
 impl MetamaskTransport {
     pub fn detect(
         metamask_weak: MetamaskWeak,
-        chain_id: u64,
+        eth_config: EthConfig,
         event_handlers: Vec<RpcTransportEventHandlerShared>,
     ) -> MetamaskResult<MetamaskTransport> {
         let eip1193 = detect_metamask_provider()?;
         let inner = MetamaskTransportInner {
             metamask_weak,
-            eth_config: EthConfig { chain_id },
+            eth_config,
             eip1193,
             _event_handlers: event_handlers,
         };
@@ -68,9 +71,10 @@ impl MetamaskTransport {
     }
 
     /// Checks if the MetaMask wallet is targeted to [`EthConfig::chain_id`],
-    /// TODO and the ETH account is still the same, i.e. [`EthCoin::my_address`].
+    /// and the ETH account is still the same, i.e. [`EthConfig::eth_account`].
     ///
-    /// Please note [`MetamaskCtx::check_active_eth_account`] is relatively chip operation.
+    /// Please note [`MetamaskCtx::get_current_eth_account`] and [`MetamaskCtx::get_current_chain_id`]
+    /// are relatively chip operations.
     async fn request_preparation(&self) -> Result<MetamaskSession<'_>, web3::Error> {
         let metamask_ctx = self
             .inner
@@ -81,11 +85,19 @@ impl MetamaskTransport {
         // Lock the MetaMask session and keep it until the RPC is not finished.
         let metamask_session = MetamaskSession::lock(&self.inner.eip1193).await;
 
-        let expected_chain_id = self.inner.eth_config.chain_id;
-        let current_chain_id = metamask_ctx.get_current_chain_id().await?;
+        if let Some(ref expected_account) = self.inner.eth_config.eth_account {
+            let current_account = metamask_ctx.get_current_eth_account()?;
+            if current_account.address != *expected_account {
+                let error = format!("An active MetaMask account has been changed. Expected '{expected_account}', found '{current_account:?}'");
+                return Err(web3_transport_err(error));
+            }
+        }
 
-        if current_chain_id != expected_chain_id {
-            metamask_session.wallet_switch_ethereum_chain(expected_chain_id).await?;
+        if let Some(expected_chain_id) = self.inner.eth_config.chain_id {
+            let current_chain_id = metamask_ctx.get_current_chain_id()?;
+            if current_chain_id != expected_chain_id {
+                metamask_session.wallet_switch_ethereum_chain(expected_chain_id).await?;
+            }
         }
 
         Ok(metamask_session)

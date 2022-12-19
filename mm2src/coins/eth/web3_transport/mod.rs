@@ -35,10 +35,10 @@ impl Web3Transport {
     #[cfg(target_arch = "wasm32")]
     pub fn new_metamask(
         metamask_weak: MetamaskWeak,
-        chain_id: u64,
+        eth_config: metamask_transport::EthConfig,
         event_handlers: Vec<RpcTransportEventHandlerShared>,
     ) -> MetamaskResult<Web3Transport> {
-        Ok(metamask_transport::MetamaskTransport::detect(metamask_weak, chain_id, event_handlers)?.into())
+        Ok(metamask_transport::MetamaskTransport::detect(metamask_weak, eth_config, event_handlers)?.into())
     }
 
     #[cfg(test)]

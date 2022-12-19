@@ -68,10 +68,20 @@ impl MetamaskCtx {
 
     /// Checks if the `MetamaskCtx::eth_account` is still active.
     /// This is required to check before sending transactions.
+    pub fn check_active_eth_account(&self) -> MetamaskResult<&EthAccount> {
+        let current_account = self.get_current_eth_account()?;
+        if current_account == self.eth_account {
+            Ok(&self.eth_account)
+        } else {
+            MmError::err(MetamaskError::UnexpectedAccountSelected)
+        }
+    }
+
+    /// Returns an active ETH account.
     /// TODO finish this by subscribing to `accountsChanged` event.
-    pub async fn check_active_eth_account(&self) -> MetamaskResult<&EthAccount> { Ok(&self.eth_account) }
+    pub fn get_current_eth_account(&self) -> Result<EthAccount, web3::Error> { Ok(self.eth_account.clone()) }
 
     /// Returns an active chain ID.
     /// TODO finish this by subscribing to `chainChanged` event.
-    pub async fn get_current_chain_id(&self) -> Result<u64, web3::Error> { Ok(0x1) }
+    pub fn get_current_chain_id(&self) -> Result<u64, web3::Error> { Ok(0x1) }
 }

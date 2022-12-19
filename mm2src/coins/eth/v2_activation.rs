@@ -255,7 +255,7 @@ pub async fn eth_coin_from_conf_and_request_v2(
             let chain_id = chain_id.unwrap_or(0x1);
 
             let (web3, web3_instances) =
-                build_metamask_transport(ctx, metamask_weak.clone(), ticker.clone(), chain_id)?;
+                build_metamask_transport(ctx, metamask_weak.clone(), ticker.clone(), my_address_str, chain_id)?;
 
             // Check if MetaMask supports the given `chain_id`.
             // Please note that this request may take a long time.
@@ -336,7 +336,7 @@ pub(crate) async fn build_address_and_priv_key_policy(
         },
         #[cfg(target_arch = "wasm32")]
         EthPrivKeyBuildPolicy::Metamask(metamask_ctx) => {
-            let address_str = metamask_ctx.check_active_eth_account().await?.address.as_str();
+            let address_str = metamask_ctx.check_active_eth_account()?.address.as_str();
             let address = addr_from_str(address_str).map_to_mm(EthActivationV2Error::InternalError)?;
             return Ok((address, EthPrivKeyPolicy::Metamask(metamask_ctx.downgrade())));
         },
@@ -437,11 +437,16 @@ fn build_metamask_transport(
     ctx: &MmArc,
     metamask_weak: MetamaskWeak,
     coin_ticker: String,
+    my_address: String,
     chain_id: u64,
 ) -> MmResult<(Web3<Web3Transport>, Vec<Web3Instance>), EthActivationV2Error> {
     let event_handlers = rpc_event_handlers_for_eth_transport(ctx, coin_ticker);
 
-    let web3 = Web3::new(Web3Transport::new_metamask(metamask_weak, chain_id, event_handlers)?);
+    let eth_config = web3_transport::metamask_transport::EthConfig {
+        chain_id: Some(chain_id),
+        eth_account: Some(my_address),
+    };
+    let web3 = Web3::new(Web3Transport::new_metamask(metamask_weak, eth_config, event_handlers)?);
 
     // MetaMask doesn't use Parity nodes. So `MetamaskTransport` doesn't support `parity_nextNonce` RPC.
     // An example of the `web3_clientVersion` RPC - `MetaMask/v10.22.1`.
