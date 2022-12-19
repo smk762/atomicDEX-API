@@ -36,9 +36,11 @@
 use async_trait::async_trait;
 use base58::FromBase58Error;
 use common::executor::{abortable_queue::{AbortableQueue, WeakSpawner},
-                       AbortSettings, SpawnAbortable, SpawnFuture};
+                       AbortSettings, AbortedError, SpawnAbortable, SpawnFuture};
+use common::log::LogOnError;
 use common::{calc_total_pages, now_ms, ten, HttpStatusCode};
-use crypto::{Bip32Error, CryptoCtx, DerivationPath, HwRpcError, WithHwRpcError};
+use crypto::{Bip32Error, CryptoCtx, CryptoCtxError, DerivationPath, GlobalHDAccountArc, HwRpcError, KeyPairPolicy,
+             Secp256k1Secret, WithHwRpcError};
 use derive_more::Display;
 use enum_from::EnumFromTrait;
 use futures::compat::Future01CompatExt;
@@ -52,11 +54,13 @@ use mm2_err_handle::prelude::*;
 use mm2_metrics::MetricsWeak;
 use mm2_number::{bigdecimal::{BigDecimal, ParseBigDecimalError, Zero},
                  MmNumber};
+use parking_lot::Mutex as PaMutex;
 use rpc::v1::types::{Bytes as BytesJson, H256 as H256Json};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{self as json, Value as Json};
 use std::cmp::Ordering;
 use std::collections::hash_map::{HashMap, RawEntryMut};
+use std::collections::HashSet;
 use std::fmt;
 use std::future::Future as Future03;
 use std::num::NonZeroUsize;
@@ -207,7 +211,7 @@ pub mod hd_wallet_storage;
 pub mod my_tx_history_v2;
 
 pub mod qrc20;
-use qrc20::{qrc20_coin_from_conf_and_params, Qrc20ActivationParams, Qrc20Coin, Qrc20FeeDetails};
+use qrc20::{qrc20_coin_with_policy, Qrc20ActivationParams, Qrc20Coin, Qrc20FeeDetails};
 
 pub mod rpc_command;
 use rpc_command::{init_account_balance::{AccountBalanceTaskManager, AccountBalanceTaskManagerShared},
@@ -216,8 +220,8 @@ use rpc_command::{init_account_balance::{AccountBalanceTaskManager, AccountBalan
                   init_withdraw::{WithdrawTaskManager, WithdrawTaskManagerShared}};
 
 pub mod tendermint;
-use tendermint::{CosmosTransaction, TendermintCoin, TendermintFeeDetails, TendermintProtocolInfo, TendermintToken,
-                 TendermintTokenProtocolInfo};
+use tendermint::{CosmosTransaction, CustomTendermintMsgType, TendermintCoin, TendermintFeeDetails,
+                 TendermintProtocolInfo, TendermintToken, TendermintTokenProtocolInfo};
 
 #[doc(hidden)]
 #[allow(unused_variables)]
@@ -233,23 +237,24 @@ pub mod solana;
 #[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
 pub use solana::spl::SplToken;
 #[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
-pub use solana::{solana_coin_from_conf_and_params, SolanaActivationParams, SolanaCoin, SolanaFeeDetails};
+pub use solana::{SolanaActivationParams, SolanaCoin, SolanaFeeDetails};
 
 pub mod utxo;
-use utxo::bch::{bch_coin_from_conf_and_params, BchActivationRequest, BchCoin};
-use utxo::qtum::{self, qtum_coin_with_priv_key, Qrc20AddressError, QtumCoin, QtumDelegationOps, QtumDelegationRequest,
+use utxo::bch::{bch_coin_with_policy, BchActivationRequest, BchCoin};
+use utxo::qtum::{self, qtum_coin_with_policy, Qrc20AddressError, QtumCoin, QtumDelegationOps, QtumDelegationRequest,
                  QtumStakingInfosDetails, ScriptHashTypeNotSupported};
 use utxo::rpc_clients::UtxoRpcError;
 use utxo::slp::SlpToken;
 use utxo::slp::{slp_addr_from_pubkey_str, SlpFeeDetails};
 use utxo::utxo_common::big_decimal_from_sat_unsigned;
-use utxo::utxo_standard::{utxo_standard_coin_with_priv_key, UtxoStandardCoin};
+use utxo::utxo_standard::{utxo_standard_coin_with_policy, UtxoStandardCoin};
 use utxo::UtxoActivationParams;
 use utxo::{BlockchainNetwork, GenerateTxError, UtxoFeeDetails, UtxoTx};
 
 #[cfg(not(target_arch = "wasm32"))] pub mod z_coin;
 #[cfg(not(target_arch = "wasm32"))] use z_coin::ZCoin;
 
+pub type TransactionFut = Box<dyn Future<Item = TransactionEnum, Error = TransactionErr> + Send>;
 pub type BalanceResult<T> = Result<T, MmError<BalanceError>>;
 pub type BalanceFut<T> = Box<dyn Future<Item = T, Error = MmError<BalanceError>> + Send>;
 pub type NonZeroBalanceFut<T> = Box<dyn Future<Item = T, Error = MmError<GetNonZeroBalance>> + Send>;
@@ -274,6 +279,8 @@ pub type SendMakerSpendsTakerPaymentArgs<'a> = SendSpendPaymentArgs<'a>;
 pub type SendTakerSpendsMakerPaymentArgs<'a> = SendSpendPaymentArgs<'a>;
 pub type SendTakerRefundsPaymentArgs<'a> = SendRefundPaymentArgs<'a>;
 pub type SendMakerRefundsPaymentArgs<'a> = SendRefundPaymentArgs<'a>;
+
+pub type IguanaPrivKey = Secp256k1Secret;
 
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
@@ -341,18 +348,27 @@ pub enum TxHistoryError {
     InternalError(String),
 }
 
-#[derive(Debug, Display)]
-pub enum PrivKeyNotAllowed {
+#[derive(Clone, Debug, Display)]
+pub enum PrivKeyPolicyNotAllowed {
     #[display(fmt = "Hardware Wallet is not supported")]
     HardwareWalletNotSupported,
 }
 
+impl Serialize for PrivKeyPolicyNotAllowed {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 #[derive(Clone, Debug, Display, PartialEq, Serialize)]
 pub enum UnexpectedDerivationMethod {
-    #[display(fmt = "Iguana private key is unavailable")]
-    IguanaPrivKeyUnavailable,
-    #[display(fmt = "HD wallet is unavailable")]
-    HDWalletUnavailable,
+    #[display(fmt = "Expected 'SingleAddress' derivation method")]
+    ExpectedSingleAddress,
+    #[display(fmt = "Expected 'HDWallet' derivationMethod")]
+    ExpectedHDWallet,
 }
 
 pub trait Transaction: fmt::Debug + 'static {
@@ -443,8 +459,6 @@ impl TransactionErr {
     }
 }
 
-pub type TransactionFut = Box<dyn Future<Item = TransactionEnum, Error = TransactionErr> + Send>;
-
 #[derive(Debug, PartialEq)]
 pub enum FoundSwapTxSpend {
     Spent(TransactionEnum),
@@ -473,25 +487,24 @@ pub enum ValidateOtherPubKeyErr {
 }
 
 #[derive(Clone, Debug)]
+pub struct WatcherValidateTakerFeeInput {
+    pub taker_fee_hash: Vec<u8>,
+    pub sender_pubkey: Vec<u8>,
+    pub min_block_number: u64,
+    pub fee_addr: Vec<u8>,
+    pub lock_duration: u64,
+}
+
+#[derive(Clone, Debug)]
 pub struct WatcherValidatePaymentInput {
     pub payment_tx: Vec<u8>,
+    pub taker_payment_refund_preimage: Vec<u8>,
     pub time_lock: u32,
     pub taker_pub: Vec<u8>,
     pub maker_pub: Vec<u8>,
     pub secret_hash: Vec<u8>,
-    pub amount: BigDecimal,
     pub try_spv_proof_until: u64,
     pub confirmations: u64,
-}
-
-pub struct WatcherSearchForSwapTxSpendInput<'a> {
-    pub time_lock: u32,
-    pub taker_pub: &'a [u8],
-    pub maker_pub: &'a [u8],
-    pub secret_hash: &'a [u8],
-    pub tx: &'a [u8],
-    pub search_from_block: u64,
-    pub swap_contract_address: &'a Option<BytesJson>,
 }
 
 #[derive(Clone, Debug)]
@@ -506,6 +519,16 @@ pub struct ValidatePaymentInput {
     pub try_spv_proof_until: u64,
     pub confirmations: u64,
     pub unique_swap_data: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WatcherSearchForSwapTxSpendInput<'a> {
+    pub time_lock: u32,
+    pub taker_pub: &'a [u8],
+    pub maker_pub: &'a [u8],
+    pub secret_hash: &'a [u8],
+    pub tx: &'a [u8],
+    pub search_from_block: u64,
 }
 
 pub struct SearchForSwapTxSpendInput<'a> {
@@ -660,7 +683,7 @@ pub trait SwapOps {
 
     async fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String>;
 
-    fn check_tx_signed_by_pub(&self, tx: &[u8], expected_pub: &[u8]) -> Result<bool, String>;
+    fn check_tx_signed_by_pub(&self, tx: &[u8], expected_pub: &[u8]) -> Result<bool, MmError<ValidatePaymentError>>;
 
     /// Whether the refund transaction can be sent now
     /// For example: there are no additional conditions for ETH, but for some UTXO coins we should wait for
@@ -684,13 +707,32 @@ pub trait SwapOps {
 
     fn validate_other_pubkey(&self, raw_pubkey: &[u8]) -> MmResult<(), ValidateOtherPubKeyErr>;
 
-    async fn payment_instructions(
+    /// Instructions from the taker on how the maker should send his payment.
+    async fn maker_payment_instructions(
         &self,
         secret_hash: &[u8],
         amount: &BigDecimal,
+        maker_lock_duration: u64,
+        expires_in: u64,
     ) -> Result<Option<Vec<u8>>, MmError<PaymentInstructionsErr>>;
 
-    fn validate_instructions(
+    /// Instructions from the maker on how the taker should send his payment.
+    async fn taker_payment_instructions(
+        &self,
+        secret_hash: &[u8],
+        amount: &BigDecimal,
+        expires_in: u64,
+    ) -> Result<Option<Vec<u8>>, MmError<PaymentInstructionsErr>>;
+
+    fn validate_maker_payment_instructions(
+        &self,
+        instructions: &[u8],
+        secret_hash: &[u8],
+        amount: BigDecimal,
+        maker_lock_duration: u64,
+    ) -> Result<PaymentInstructions, MmError<ValidateInstructionsErr>>;
+
+    fn validate_taker_payment_instructions(
         &self,
         instructions: &[u8],
         secret_hash: &[u8],
@@ -698,15 +740,17 @@ pub trait SwapOps {
     ) -> Result<PaymentInstructions, MmError<ValidateInstructionsErr>>;
 
     fn is_supported_by_watchers(&self) -> bool;
+
+    fn maker_locktime_multiplier(&self) -> f64 { 2.0 }
 }
 
 #[async_trait]
 pub trait WatcherOps {
-    fn send_taker_spends_maker_payment_preimage(&self, preimage: &[u8], secret: &[u8]) -> TransactionFut;
+    fn send_maker_payment_spend_preimage(&self, preimage: &[u8], secret: &[u8]) -> TransactionFut;
 
-    fn send_watcher_refunds_taker_payment_preimage(&self, _taker_refunds_payment: &[u8]) -> TransactionFut;
+    fn send_taker_payment_refund_preimage(&self, preimage: &[u8]) -> TransactionFut;
 
-    fn create_taker_refunds_payment_preimage(
+    fn create_taker_payment_refund_preimage(
         &self,
         _taker_payment_tx: &[u8],
         _time_lock: u32,
@@ -716,7 +760,7 @@ pub trait WatcherOps {
         _swap_unique_data: &[u8],
     ) -> TransactionFut;
 
-    fn create_taker_spends_maker_payment_preimage(
+    fn create_maker_payment_spend_preimage(
         &self,
         _maker_payment_tx: &[u8],
         _time_lock: u32,
@@ -725,9 +769,14 @@ pub trait WatcherOps {
         _swap_unique_data: &[u8],
     ) -> TransactionFut;
 
-    fn watcher_validate_taker_fee(&self, _taker_fee_hash: Vec<u8>, _verified_pub: Vec<u8>) -> ValidatePaymentFut<()>;
+    fn watcher_validate_taker_fee(&self, input: WatcherValidateTakerFeeInput) -> ValidatePaymentFut<()>;
 
     fn watcher_validate_taker_payment(&self, _input: WatcherValidatePaymentInput) -> ValidatePaymentFut<()>;
+
+    async fn watcher_search_for_swap_tx_spend(
+        &self,
+        input: WatcherSearchForSwapTxSpendInput<'_>,
+    ) -> Result<Option<FoundSwapTxSpend>, String>;
 }
 
 /// Operations that coins have independently from the MarketMaker.
@@ -788,6 +837,7 @@ pub trait MarketCoinOps {
         wait_until: u64,
         from_block: u64,
         swap_contract_address: &Option<BytesJson>,
+        check_every: f64,
     ) -> TransactionFut;
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, MmError<TxMarshalingErr>>;
@@ -919,6 +969,26 @@ pub struct VerificationRequest {
 }
 
 impl WithdrawRequest {
+    pub fn new(
+        coin: String,
+        from: Option<WithdrawFrom>,
+        to: String,
+        amount: BigDecimal,
+        max: bool,
+        fee: Option<WithdrawFee>,
+        memo: Option<String>,
+    ) -> WithdrawRequest {
+        WithdrawRequest {
+            coin,
+            from,
+            to,
+            amount,
+            max,
+            fee,
+            memo,
+        }
+    }
+
     pub fn new_max(coin: String, to: String) -> WithdrawRequest {
         WithdrawRequest {
             coin,
@@ -1035,16 +1105,18 @@ impl KmdRewardsDetails {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Default, Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum TransactionType {
     StakingDelegation,
     RemoveDelegation,
+    #[default]
     StandardTransfer,
     TokenTransfer(BytesJson),
-}
-
-impl Default for TransactionType {
-    fn default() -> Self { TransactionType::StandardTransfer }
+    FeeForTokenTx,
+    CustomTendermintMsg {
+        msg_type: CustomTendermintMsgType,
+        token_id: Option<BytesJson>,
+    },
 }
 
 /// Transaction details
@@ -1168,12 +1240,12 @@ pub enum FeeApproxStage {
     WithoutApprox,
     /// Increase the trade fee slightly.
     StartSwap,
+    /// Increase the trade fee slightly
+    WatcherPreimage,
     /// Increase the trade fee significantly.
     OrderIssue,
     /// Increase the trade fee largely.
     TradePreimage,
-    /// Increase the trade fee very largely
-    WatcherPreimage,
 }
 
 #[derive(Debug)]
@@ -1480,8 +1552,8 @@ impl From<UtxoSignWithKeyPairError> for DelegationError {
     }
 }
 
-impl From<PrivKeyNotAllowed> for DelegationError {
-    fn from(e: PrivKeyNotAllowed) -> Self { DelegationError::DelegationOpsNotSupported { reason: e.to_string() } }
+impl From<PrivKeyPolicyNotAllowed> for DelegationError {
+    fn from(e: PrivKeyPolicyNotAllowed) -> Self { DelegationError::DelegationOpsNotSupported { reason: e.to_string() } }
 }
 
 impl From<UnexpectedDerivationMethod> for DelegationError {
@@ -1584,6 +1656,8 @@ pub enum WithdrawError {
     InvalidAddress(String),
     #[display(fmt = "Invalid fee policy: {}", _0)]
     InvalidFeePolicy(String),
+    #[display(fmt = "Invalid memo field: {}", _0)]
+    InvalidMemo(String),
     #[display(fmt = "No such coin {}", coin)]
     NoSuchCoin { coin: String },
     #[from_trait(WithTimeout::timeout)]
@@ -1619,6 +1693,7 @@ impl HttpStatusCode for WithdrawError {
             | WithdrawError::AmountTooLow { .. }
             | WithdrawError::InvalidAddress(_)
             | WithdrawError::InvalidFeePolicy(_)
+            | WithdrawError::InvalidMemo(_)
             | WithdrawError::FromAddressNotFound
             | WithdrawError::UnexpectedFromAddress(_)
             | WithdrawError::UnknownAccount { .. }
@@ -1663,8 +1738,8 @@ impl From<UnexpectedDerivationMethod> for WithdrawError {
     fn from(e: UnexpectedDerivationMethod) -> Self { WithdrawError::InternalError(e.to_string()) }
 }
 
-impl From<PrivKeyNotAllowed> for WithdrawError {
-    fn from(e: PrivKeyNotAllowed) -> Self { WithdrawError::InternalError(e.to_string()) }
+impl From<PrivKeyPolicyNotAllowed> for WithdrawError {
+    fn from(e: PrivKeyPolicyNotAllowed) -> Self { WithdrawError::InternalError(e.to_string()) }
 }
 
 impl WithdrawError {
@@ -1743,8 +1818,8 @@ impl From<ethkey::Error> for SignatureError {
     fn from(e: ethkey::Error) -> Self { SignatureError::InternalError(e.to_string()) }
 }
 
-impl From<PrivKeyNotAllowed> for SignatureError {
-    fn from(e: PrivKeyNotAllowed) -> Self { SignatureError::InternalError(e.to_string()) }
+impl From<PrivKeyPolicyNotAllowed> for SignatureError {
+    fn from(e: PrivKeyPolicyNotAllowed) -> Self { SignatureError::InternalError(e.to_string()) }
 }
 
 impl From<CoinFindError> for SignatureError {
@@ -1842,6 +1917,8 @@ pub trait MmCoin: SwapOps + WatcherOps + MarketCoinOps + Send + Sync + 'static {
 
     fn get_raw_transaction(&self, req: RawTransactionRequest) -> RawTransactionFut;
 
+    fn get_tx_hex_by_hash(&self, tx_hash: Vec<u8>) -> RawTransactionFut;
+
     /// Maximum number of digits after decimal point used to denominate integer coin units (satoshis, wei, etc.)
     fn decimals(&self) -> u8;
 
@@ -1907,7 +1984,7 @@ pub trait MmCoin: SwapOps + WatcherOps + MarketCoinOps + Send + Sync + 'static {
     ) -> TradePreimageResult<TradeFee>;
 
     /// Get fee to be paid by receiver per whole swap and check if the wallet has sufficient balance to pay the fee.
-    fn get_receiver_trade_fee(&self, stage: FeeApproxStage) -> TradePreimageFut<TradeFee>;
+    fn get_receiver_trade_fee(&self, send_amount: BigDecimal, stage: FeeApproxStage) -> TradePreimageFut<TradeFee>;
 
     /// Get transaction fee the Taker has to pay to send a `TakerFee` transaction and check if the wallet has sufficient balance to pay the fee.
     async fn get_fee_to_send_taker_fee(
@@ -1942,6 +2019,12 @@ pub trait MmCoin: SwapOps + WatcherOps + MarketCoinOps + Send + Sync + 'static {
 
     /// Check if serialized coin protocol info is supported by current version.
     fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool;
+
+    /// Abort all coin related futures on coin deactivation.
+    fn on_disabled(&self) -> Result<(), AbortedError>;
+
+    /// For Handling the removal/deactivation of token on platform coin deactivation.
+    fn on_token_deactivated(&self, _ticker: &str);
 }
 
 /// The coin futures spawner. It's used to spawn futures that can be aborted immediately or after a timeout
@@ -2112,17 +2195,13 @@ pub struct CoinsContext {
     balance_update_handlers: AsyncMutex<Vec<Box<dyn BalanceTradeFeeUpdatedHandler + Send + Sync>>>,
     account_balance_task_manager: AccountBalanceTaskManagerShared,
     create_account_manager: CreateAccountTaskManagerShared,
+    platform_coin_tokens: PaMutex<HashMap<String, HashSet<String>>>,
     scan_addresses_manager: ScanAddressesTaskManagerShared,
     withdraw_task_manager: WithdrawTaskManagerShared,
     #[cfg(target_arch = "wasm32")]
     tx_history_db: SharedDb<TxHistoryDb>,
     #[cfg(target_arch = "wasm32")]
     hd_wallet_db: SharedDb<HDWalletDb>,
-}
-
-#[derive(Debug)]
-pub struct CoinIsAlreadyActivatedErr {
-    pub ticker: String,
 }
 
 #[derive(Debug)]
@@ -2135,6 +2214,7 @@ impl CoinsContext {
     pub fn from_ctx(ctx: &MmArc) -> Result<Arc<CoinsContext>, String> {
         Ok(try_s!(from_ctx(&ctx.coins_ctx, move || {
             Ok(CoinsContext {
+                platform_coin_tokens: PaMutex::new(HashMap::new()),
                 coins: AsyncMutex::new(HashMap::new()),
                 balance_update_handlers: AsyncMutex::new(vec![]),
                 account_balance_task_manager: AccountBalanceTaskManager::new_shared(),
@@ -2149,16 +2229,29 @@ impl CoinsContext {
         })))
     }
 
-    pub async fn add_coin(&self, coin: MmCoinEnum) -> Result<(), MmError<CoinIsAlreadyActivatedErr>> {
+    pub async fn add_token(&self, coin: MmCoinEnum) -> Result<(), MmError<RegisterCoinError>> {
         let mut coins = self.coins.lock().await;
         if coins.contains_key(coin.ticker()) {
-            return MmError::err(CoinIsAlreadyActivatedErr {
-                ticker: coin.ticker().into(),
+            return MmError::err(RegisterCoinError::CoinIsInitializedAlready {
+                coin: coin.ticker().into(),
             });
         }
+        let ticker = coin.ticker();
 
-        coins.insert(coin.ticker().into(), coin);
+        let mut platform_coin_tokens = self.platform_coin_tokens.lock();
+        // Here, we try to add a token to platform_coin_tokens if the token belongs to a platform coin.
+        if let Some(platform) = platform_coin_tokens.get_mut(coin.platform_ticker()) {
+            platform.insert(ticker.to_owned());
+        }
+
+        coins.insert(ticker.into(), coin);
         Ok(())
+    }
+
+    /// Adds a Layer 2 coin that depends on a standalone platform.
+    /// The process of adding l2 coins is identical to that of adding tokens.
+    pub async fn add_l2(&self, coin: MmCoinEnum) -> Result<(), MmError<RegisterCoinError>> {
+        self.add_token(coin).await
     }
 
     pub async fn add_platform_with_tokens(
@@ -2167,19 +2260,77 @@ impl CoinsContext {
         tokens: Vec<MmCoinEnum>,
     ) -> Result<(), MmError<PlatformIsAlreadyActivatedErr>> {
         let mut coins = self.coins.lock().await;
+        let mut platform_coin_tokens = self.platform_coin_tokens.lock();
+
         if coins.contains_key(platform.ticker()) {
             return MmError::err(PlatformIsAlreadyActivatedErr {
                 ticker: platform.ticker().into(),
             });
         }
 
-        coins.insert(platform.ticker().into(), platform);
+        let platform_ticker = platform.ticker().to_string();
+        coins.insert(platform_ticker.clone(), platform);
 
         // Tokens can't be activated without platform coin so we can safely insert them without checking prior existence
+        let mut token_tickers = Vec::with_capacity(tokens.len());
+        // TODO
+        // Handling for these case:
+        // USDT was activated via enable RPC
+        // We try to activate ETH coin and USDT token via enable_eth_with_tokens
         for token in tokens {
+            token_tickers.push(token.ticker().to_string());
             coins.insert(token.ticker().into(), token);
         }
+
+        platform_coin_tokens
+            .entry(platform_ticker)
+            .or_default()
+            .extend(token_tickers);
         Ok(())
+    }
+
+    /// Get enabled coins to disable.
+    pub async fn get_tokens_to_disable(&self, ticker: &str) -> HashSet<String> {
+        let coins = self.platform_coin_tokens.lock();
+        coins.get(ticker).cloned().unwrap_or_default()
+    }
+
+    pub async fn remove_coin(&self, coin: MmCoinEnum) {
+        let ticker = coin.ticker();
+        let platform_ticker = coin.platform_ticker();
+        let mut coins_storage = self.coins.lock().await;
+        let mut platform_tokens_storage = self.platform_coin_tokens.lock();
+
+        // Check if ticker is a platform coin and remove from it platform's token list
+        if ticker == platform_ticker {
+            if let Some(tokens_to_remove) = platform_tokens_storage.remove(ticker) {
+                tokens_to_remove.iter().for_each(|token| {
+                    if let Some(token) = coins_storage.remove(token) {
+                        // Abort all token related futures on token deactivation
+                        token
+                            .on_disabled()
+                            .error_log_with_msg(&format!("Error aborting coin({ticker}) futures"));
+                    }
+                });
+            };
+        } else {
+            if let Some(tokens) = platform_tokens_storage.get_mut(platform_ticker) {
+                tokens.remove(ticker);
+            }
+            if let Some(platform_coin) = coins_storage.get(platform_ticker) {
+                platform_coin.on_token_deactivated(ticker);
+            }
+        };
+
+        //  Remove coin from coin list
+        coins_storage
+            .remove(ticker)
+            .ok_or(format!("{} is disabled already", ticker))
+            .error_log();
+
+        // Abort all coin related futures on coin deactivation
+        coin.on_disabled()
+            .error_log_with_msg(&format!("Error aborting coin({ticker}) futures"));
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -2191,18 +2342,12 @@ impl CoinsContext {
 /// This enum is used in coin activation requests.
 #[derive(Copy, Clone, Debug, Deserialize, Serialize)]
 pub enum PrivKeyActivationPolicy {
-    IguanaPrivKey,
+    ContextPrivKey,
     Trezor,
 }
 
-impl PrivKeyActivationPolicy {
-    /// The function can be used as a default deserialization constructor:
-    /// `#[serde(default = "PrivKeyActivationPolicy::iguana_priv_key")]`
-    pub fn iguana_priv_key() -> PrivKeyActivationPolicy { PrivKeyActivationPolicy::IguanaPrivKey }
-
-    /// The function can be used as a default deserialization constructor:
-    /// `#[serde(default = "PrivKeyActivationPolicy::trezor")]`
-    pub fn trezor() -> PrivKeyActivationPolicy { PrivKeyActivationPolicy::Trezor }
+impl Default for PrivKeyActivationPolicy {
+    fn default() -> Self { PrivKeyActivationPolicy::ContextPrivKey }
 }
 
 #[derive(Debug)]
@@ -2219,59 +2364,69 @@ impl<T> PrivKeyPolicy<T> {
         }
     }
 
-    pub fn key_pair_or_err(&self) -> Result<&T, MmError<PrivKeyNotAllowed>> {
+    pub fn key_pair_or_err(&self) -> Result<&T, MmError<PrivKeyPolicyNotAllowed>> {
         self.key_pair()
-            .or_mm_err(|| PrivKeyNotAllowed::HardwareWalletNotSupported)
+            .or_mm_err(|| PrivKeyPolicyNotAllowed::HardwareWalletNotSupported)
     }
 }
 
 #[derive(Clone)]
-pub enum PrivKeyBuildPolicy<'a> {
-    IguanaPrivKey(&'a [u8]),
+pub enum PrivKeyBuildPolicy {
+    IguanaPrivKey(IguanaPrivKey),
+    GlobalHDAccount(GlobalHDAccountArc),
     Trezor,
 }
 
-impl<'a> PrivKeyBuildPolicy<'a> {
-    pub fn iguana_priv_key(crypto_ctx: &'a CryptoCtx) -> Self {
-        PrivKeyBuildPolicy::IguanaPrivKey(crypto_ctx.iguana_ctx().secp256k1_privkey_bytes())
+impl PrivKeyBuildPolicy {
+    /// Detects the `PrivKeyBuildPolicy` with which the given `MmArc` is initialized.
+    pub fn detect_priv_key_policy(ctx: &MmArc) -> MmResult<PrivKeyBuildPolicy, CryptoCtxError> {
+        let crypto_ctx = CryptoCtx::from_ctx(ctx)?;
+
+        match crypto_ctx.key_pair_policy() {
+            // Use an internal private key as the coin secret.
+            KeyPairPolicy::Iguana => Ok(PrivKeyBuildPolicy::IguanaPrivKey(
+                crypto_ctx.mm2_internal_privkey_secret(),
+            )),
+            KeyPairPolicy::GlobalHDAccount(global_hd) => Ok(PrivKeyBuildPolicy::GlobalHDAccount(global_hd.clone())),
+        }
     }
 }
 
 #[derive(Debug)]
 pub enum DerivationMethod<Address, HDWallet> {
-    Iguana(Address),
+    SingleAddress(Address),
     HDWallet(HDWallet),
 }
 
 impl<Address, HDWallet> DerivationMethod<Address, HDWallet> {
-    pub fn iguana(&self) -> Option<&Address> {
+    pub fn single_addr(&self) -> Option<&Address> {
         match self {
-            DerivationMethod::Iguana(my_address) => Some(my_address),
+            DerivationMethod::SingleAddress(my_address) => Some(my_address),
             DerivationMethod::HDWallet(_) => None,
         }
     }
 
-    pub fn iguana_or_err(&self) -> MmResult<&Address, UnexpectedDerivationMethod> {
-        self.iguana()
-            .or_mm_err(|| UnexpectedDerivationMethod::IguanaPrivKeyUnavailable)
+    pub fn single_addr_or_err(&self) -> MmResult<&Address, UnexpectedDerivationMethod> {
+        self.single_addr()
+            .or_mm_err(|| UnexpectedDerivationMethod::ExpectedSingleAddress)
     }
 
     pub fn hd_wallet(&self) -> Option<&HDWallet> {
         match self {
-            DerivationMethod::Iguana(_) => None,
+            DerivationMethod::SingleAddress(_) => None,
             DerivationMethod::HDWallet(hd_wallet) => Some(hd_wallet),
         }
     }
 
     pub fn hd_wallet_or_err(&self) -> MmResult<&HDWallet, UnexpectedDerivationMethod> {
         self.hd_wallet()
-            .or_mm_err(|| UnexpectedDerivationMethod::HDWalletUnavailable)
+            .or_mm_err(|| UnexpectedDerivationMethod::ExpectedHDWallet)
     }
 
     /// # Panic
     ///
     /// Panic if the address mode is [`DerivationMethod::HDWallet`].
-    pub fn unwrap_iguana(&self) -> &Address { self.iguana_or_err().unwrap() }
+    pub fn unwrap_single_addr(&self) -> &Address { self.single_addr_or_err().unwrap() }
 }
 
 #[async_trait]
@@ -2316,6 +2471,7 @@ pub enum CoinProtocol {
     LIGHTNING {
         platform: String,
         network: BlockchainNetwork,
+        avg_block_time: u64,
         confirmation_targets: PlatformCoinConfirmationTargets,
     },
     #[cfg(not(target_arch = "wasm32"))]
@@ -2509,10 +2665,9 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             "assuming that coin is not supported"
         ));
     }
-    let secret = try_s!(CryptoCtx::from_ctx(ctx))
-        .iguana_ctx()
-        .secp256k1_privkey_bytes()
-        .to_vec();
+
+    // The legacy electrum/enable RPCs don't support Hardware Wallet policy.
+    let priv_key_policy = try_s!(PrivKeyBuildPolicy::detect_priv_key_policy(ctx));
 
     if coins_en["protocol"].is_null() {
         return ERR!(
@@ -2524,14 +2679,14 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
     let coin: MmCoinEnum = match &protocol {
         CoinProtocol::UTXO => {
             let params = try_s!(UtxoActivationParams::from_legacy_req(req));
-            try_s!(utxo_standard_coin_with_priv_key(ctx, ticker, &coins_en, &params, &secret).await).into()
+            try_s!(utxo_standard_coin_with_policy(ctx, ticker, &coins_en, &params, priv_key_policy).await).into()
         },
         CoinProtocol::QTUM => {
             let params = try_s!(UtxoActivationParams::from_legacy_req(req));
-            try_s!(qtum_coin_with_priv_key(ctx, ticker, &coins_en, &params, &secret).await).into()
+            try_s!(qtum_coin_with_policy(ctx, ticker, &coins_en, &params, priv_key_policy).await).into()
         },
         CoinProtocol::ETH | CoinProtocol::ERC20 { .. } => {
-            try_s!(eth_coin_from_conf_and_request(ctx, ticker, &coins_en, req, &secret, protocol).await).into()
+            try_s!(eth_coin_from_conf_and_request(ctx, ticker, &coins_en, req, protocol, priv_key_policy).await).into()
         },
         CoinProtocol::QRC20 {
             platform,
@@ -2541,8 +2696,16 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             let contract_address = try_s!(qtum::contract_addr_from_str(contract_address));
 
             try_s!(
-                qrc20_coin_from_conf_and_params(ctx, ticker, platform, &coins_en, &params, &secret, contract_address)
-                    .await
+                qrc20_coin_with_policy(
+                    ctx,
+                    ticker,
+                    platform,
+                    &coins_en,
+                    &params,
+                    priv_key_policy,
+                    contract_address
+                )
+                .await
             )
             .into()
         },
@@ -2550,7 +2713,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
             let prefix = try_s!(CashAddrPrefix::from_str(slp_prefix));
             let params = try_s!(BchActivationRequest::from_legacy_req(req));
 
-            let bch = try_s!(bch_coin_from_conf_and_params(ctx, ticker, &coins_en, params, prefix, &secret).await);
+            let bch = try_s!(bch_coin_with_policy(ctx, ticker, &coins_en, params, prefix, priv_key_policy).await);
             bch.into()
         },
         CoinProtocol::SLPTOKEN {
@@ -2634,8 +2797,15 @@ pub async fn lp_register_coin(
         RawEntryMut::Occupied(_oe) => {
             return MmError::err(RegisterCoinError::CoinIsInitializedAlready { coin: ticker.clone() })
         },
-        RawEntryMut::Vacant(ve) => ve.insert(ticker.clone(), coin),
+        RawEntryMut::Vacant(ve) => ve.insert(ticker.clone(), coin.clone()),
     };
+
+    if coin.ticker() == coin.platform_ticker() {
+        let mut platform_coin_tokens = cctx.platform_coin_tokens.lock();
+        platform_coin_tokens
+            .entry(coin.ticker().to_string())
+            .or_insert_with(HashSet::new);
+    }
     Ok(())
 }
 
@@ -2955,15 +3125,6 @@ pub async fn get_enabled_coins(ctx: MmArc) -> Result<Response<Vec<u8>>, String> 
 
     let res = try_s!(json::to_vec(&json!({ "result": enabled_coins })));
     Ok(try_s!(Response::builder().body(res)))
-}
-
-pub async fn disable_coin(ctx: &MmArc, ticker: &str) -> Result<(), String> {
-    let coins_ctx = try_s!(CoinsContext::from_ctx(ctx));
-    let mut coins = coins_ctx.coins.lock().await;
-    match coins.remove(ticker) {
-        Some(_) => Ok(()),
-        None => ERR!("{} is disabled already", ticker),
-    }
 }
 
 #[derive(Deserialize)]

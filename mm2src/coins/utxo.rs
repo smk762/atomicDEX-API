@@ -50,8 +50,8 @@ use common::first_char_to_upper;
 use common::jsonrpc_client::JsonRpcError;
 use common::log::LogOnError;
 use common::now_ms;
-use crypto::{Bip32DerPathOps, Bip32Error, Bip44Chain, Bip44DerPathError, Bip44PathToAccount, Bip44PathToCoin,
-             ChildNumber, DerivationPath, Secp256k1ExtendedPublicKey};
+use crypto::{Bip32DerPathOps, Bip32Error, Bip44Chain, ChildNumber, DerivationPath, Secp256k1ExtendedPublicKey,
+             StandardHDPathError, StandardHDPathToAccount, StandardHDPathToCoin};
 use derive_more::Display;
 #[cfg(not(target_arch = "wasm32"))] use dirs::home_dir;
 use futures::channel::mpsc::{Receiver as AsyncReceiver, Sender as AsyncSender, UnboundedSender};
@@ -97,11 +97,11 @@ use self::rpc_clients::{electrum_script_hash, ElectrumClient, ElectrumRpcRequest
                         UtxoRpcResult};
 use super::{big_decimal_from_sat_unsigned, BalanceError, BalanceFut, BalanceResult, CoinBalance, CoinFutSpawner,
             CoinsContext, DerivationMethod, FeeApproxStage, FoundSwapTxSpend, HistorySyncState, KmdRewardsDetails,
-            MarketCoinOps, MmCoin, NumConversError, NumConversResult, PrivKeyActivationPolicy, PrivKeyNotAllowed,
-            PrivKeyPolicy, RawTransactionFut, RawTransactionRequest, RawTransactionResult, RpcTransportEventHandler,
-            RpcTransportEventHandlerShared, TradeFee, TradePreimageError, TradePreimageFut, TradePreimageResult,
-            Transaction, TransactionDetails, TransactionEnum, TransactionErr, UnexpectedDerivationMethod,
-            VerificationError, WithdrawError, WithdrawRequest};
+            MarketCoinOps, MmCoin, NumConversError, NumConversResult, PrivKeyActivationPolicy, PrivKeyPolicy,
+            PrivKeyPolicyNotAllowed, RawTransactionFut, RawTransactionRequest, RawTransactionResult,
+            RpcTransportEventHandler, RpcTransportEventHandlerShared, TradeFee, TradePreimageError, TradePreimageFut,
+            TradePreimageResult, Transaction, TransactionDetails, TransactionEnum, TransactionErr,
+            UnexpectedDerivationMethod, VerificationError, WithdrawError, WithdrawRequest};
 use crate::coin_balance::{EnableCoinScanPolicy, EnabledCoinBalanceParams, HDAddressBalanceScanner};
 use crate::hd_wallet::{HDAccountOps, HDAccountsMutex, HDAddress, HDAddressId, HDWalletCoinOps, HDWalletOps,
                        InvalidBip44ChainError};
@@ -109,10 +109,6 @@ use crate::hd_wallet_storage::{HDAccountStorageItem, HDWalletCoinStorage, HDWall
 use crate::utxo::tx_cache::UtxoVerboseCacheShared;
 
 pub mod tx_cache;
-#[cfg(target_arch = "wasm32")]
-pub mod utxo_indexedb_block_header_storage;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod utxo_sql_block_header_storage;
 
 #[cfg(any(test, target_arch = "wasm32"))]
 pub mod utxo_common_tests;
@@ -229,8 +225,8 @@ impl From<UtxoRpcError> for TxProviderError {
     }
 }
 
-impl From<Bip44DerPathError> for HDWalletStorageError {
-    fn from(e: Bip44DerPathError) -> Self { HDWalletStorageError::ErrorDeserializing(e.to_string()) }
+impl From<StandardHDPathError> for HDWalletStorageError {
+    fn from(e: StandardHDPathError) -> Self { HDWalletStorageError::ErrorDeserializing(e.to_string()) }
 }
 
 impl From<Bip32Error> for HDWalletStorageError {
@@ -574,6 +570,11 @@ pub struct UtxoCoinConf {
     /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
     /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
     pub block_headers_verification_params: Option<BlockHeaderVerificationParams>,
+    /// Derivation path of the coin.
+    /// This derivation path consists of `purpose` and `coin_type` only
+    /// where the full `BIP44` address has the following structure:
+    /// `m/purpose'/coin_type'/account'/change/address_index`.
+    pub derivation_path: Option<StandardHDPathToCoin>,
 }
 
 impl UtxoCoinConf {
@@ -1366,7 +1367,7 @@ pub struct UtxoActivationParams {
     pub gap_limit: Option<u32>,
     #[serde(flatten)]
     pub enable_params: EnabledCoinBalanceParams,
-    #[serde(default = "PrivKeyActivationPolicy::iguana_priv_key")]
+    #[serde(default)]
     pub priv_key_policy: PrivKeyActivationPolicy,
     /// The flag determines whether to use mature unspent outputs *only* to generate transactions.
     /// https://github.com/KomodoPlatform/atomicDEX-API/issues/1181
@@ -1422,7 +1423,7 @@ impl UtxoActivationParams {
         };
         let priv_key_policy = json::from_value::<Option<PrivKeyActivationPolicy>>(req["priv_key_policy"].clone())
             .map_to_mm(UtxoFromLegacyReqErr::InvalidPrivKeyPolicy)?
-            .unwrap_or(PrivKeyActivationPolicy::IguanaPrivKey);
+            .unwrap_or(PrivKeyActivationPolicy::ContextPrivKey);
 
         Ok(UtxoActivationParams {
             mode,
@@ -1477,7 +1478,7 @@ pub struct UtxoHDWallet {
     /// This derivation path consists of `purpose` and `coin_type` only
     /// where the full `BIP44` address has the following structure:
     /// `m/purpose'/coin_type'/account'/change/address_index`.
-    pub derivation_path: Bip44PathToCoin,
+    pub derivation_path: StandardHDPathToCoin,
     /// User accounts.
     pub accounts: HDAccountsMutex<UtxoHDAccount>,
     // The max number of empty addresses in a row.
@@ -1517,7 +1518,7 @@ pub struct UtxoHDAccount {
     /// `m/purpose'/coin_type'/account'`.
     pub extended_pubkey: Secp256k1ExtendedPublicKey,
     /// [`UtxoHDWallet::derivation_path`] derived by [`UtxoHDAccount::account_id`].
-    pub account_derivation_path: Bip44PathToAccount,
+    pub account_derivation_path: StandardHDPathToAccount,
     /// The number of addresses that we know have been used by the user.
     /// This is used in order not to check the transaction history for each address,
     /// but to request the balance of addresses whose index is less than `address_number`.
@@ -1543,7 +1544,7 @@ impl HDAccountOps for UtxoHDAccount {
 
 impl UtxoHDAccount {
     pub fn try_from_storage_item(
-        wallet_der_path: &Bip44PathToCoin,
+        wallet_der_path: &StandardHDPathToCoin,
         account_info: &HDAccountStorageItem,
     ) -> HDWalletStorageResult<UtxoHDAccount> {
         const ACCOUNT_CHILD_HARDENED: bool = true;
@@ -1551,7 +1552,7 @@ impl UtxoHDAccount {
         let account_child = ChildNumber::new(account_info.account_id, ACCOUNT_CHILD_HARDENED)?;
         let account_derivation_path = wallet_der_path
             .derive(account_child)
-            .map_to_mm(Bip44DerPathError::from)?;
+            .map_to_mm(StandardHDPathError::from)?;
         let extended_pubkey = Secp256k1ExtendedPublicKey::from_str(&account_info.account_xpub)?;
         let capacity =
             account_info.external_addresses_number + account_info.internal_addresses_number + DEFAULT_GAP_LIMIT;
@@ -1696,7 +1697,7 @@ pub async fn kmd_rewards_info<T: UtxoCommonOps>(coin: &T) -> Result<Vec<KmdRewar
     }
 
     let utxo = coin.as_ref();
-    let my_address = try_s!(utxo.derivation_method.iguana_or_err());
+    let my_address = try_s!(utxo.derivation_method.single_addr_or_err());
     let rpc_client = &utxo.rpc_client;
     let mut unspents = try_s!(rpc_client.list_unspent(my_address, utxo.decimals).compat().await);
     // Reorder from highest to lowest unspent outputs.
@@ -1763,7 +1764,7 @@ async fn send_outputs_from_my_address_impl<T>(
 where
     T: UtxoCommonOps + GetUtxoListOps,
 {
-    let my_address = try_tx_s!(coin.as_ref().derivation_method.iguana_or_err());
+    let my_address = try_tx_s!(coin.as_ref().derivation_method.single_addr_or_err());
     let (unspents, recently_sent_txs) = try_tx_s!(coin.get_unspent_ordered_list(my_address).await);
     generate_and_send_tx(&coin, unspents, None, FeePolicy::SendExact, recently_sent_txs, outputs).await
 }
@@ -1780,7 +1781,7 @@ async fn generate_and_send_tx<T>(
 where
     T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps + UtxoTxBroadcastOps,
 {
-    let my_address = try_tx_s!(coin.as_ref().derivation_method.iguana_or_err());
+    let my_address = try_tx_s!(coin.as_ref().derivation_method.single_addr_or_err());
     let key_pair = try_tx_s!(coin.as_ref().priv_key_policy.key_pair_or_err());
 
     let mut builder = UtxoTxBuilder::new(coin)
@@ -1851,7 +1852,7 @@ pub fn address_by_conf_and_pubkey_str(
         address_format: None,
         gap_limit: None,
         enable_params: EnabledCoinBalanceParams::default(),
-        priv_key_policy: PrivKeyActivationPolicy::IguanaPrivKey,
+        priv_key_policy: PrivKeyActivationPolicy::ContextPrivKey,
         check_utxo_maturity: None,
     };
     let conf_builder = UtxoConfBuilder::new(conf, &params, coin);

@@ -5,6 +5,7 @@ use common::executor::Timer;
 use common::log::debug;
 use common::{cfg_native, now_float, now_ms, PagingOptionsEnum};
 use common::{get_utc_timestamp, log};
+use crypto::CryptoCtx;
 use gstuff::{try_s, ERR, ERRL};
 use http::{HeaderMap, StatusCode};
 use lazy_static::lazy_static;
@@ -120,12 +121,19 @@ pub const ZOMBIE_LIGHTWALLETD_URLS: &[&str] = &["http://zombie.sirseven.me:443"]
 pub const PIRATE_ELECTRUMS: &[&str] = &["pirate.sirseven.me:10032"];
 pub const PIRATE_LIGHTWALLETD_URLS: &[&str] = &["http://pirate.sirseven.me:443"];
 const DEFAULT_RPC_PASSWORD: &str = "pass";
+pub const QRC20_ELECTRUMS: &[&str] = &[
+    "electrum1.cipig.net:10071",
+    "electrum2.cipig.net:10071",
+    "electrum3.cipig.net:10071",
+];
 
 pub const ETH_MAINNET_NODE: &str = "https://mainnet.infura.io/v3/c01c1b4cf66642528547624e1d6d9d6b";
 pub const ETH_MAINNET_SWAP_CONTRACT: &str = "0x24abe4c71fc658c91313b6552cd40cd808b3ea80";
 
 pub const ETH_DEV_NODES: &[&str] = &["http://195.201.0.6:8565"];
 pub const ETH_DEV_SWAP_CONTRACT: &str = "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd";
+
+pub const BCHD_TESTNET_URLS: &[&str] = &["https://bchd-testnet.greyh.at:18335"];
 
 pub struct Mm2TestConf {
     pub conf: Json,
@@ -162,6 +170,21 @@ impl Mm2TestConf {
         }
     }
 
+    pub fn seednode_with_hd_account(passphrase: &str, hd_account_id: u32, coins: &Json) -> Self {
+        Mm2TestConf {
+            conf: json!({
+                "gui": "nogui",
+                "netid": 9998,
+                "passphrase": passphrase,
+                "coins": coins,
+                "rpc_password": DEFAULT_RPC_PASSWORD,
+                "i_am_seed": true,
+                "hd_account_id": hd_account_id,
+            }),
+            rpc_password: DEFAULT_RPC_PASSWORD.into(),
+        }
+    }
+
     pub fn light_node(passphrase: &str, coins: &Json, seednodes: &[&str]) -> Self {
         Mm2TestConf {
             conf: json!({
@@ -176,7 +199,15 @@ impl Mm2TestConf {
         }
     }
 
-    pub fn watcher_light_node(passphrase: &str, coins: &Json, seednodes: &[&str]) -> Self {
+    pub fn watcher_light_node(
+        passphrase: &str,
+        coins: &Json,
+        seednodes: &[&str],
+        wait_maker_payment_spend_factor: f64,
+        refund_start_factor: f64,
+        search_interval: f64,
+        wait_taker_payment: f64,
+    ) -> Self {
         Mm2TestConf {
             conf: json!({
                 "gui": "nogui",
@@ -185,7 +216,28 @@ impl Mm2TestConf {
                 "coins": coins,
                 "rpc_password": DEFAULT_RPC_PASSWORD,
                 "seednodes": seednodes,
-                "is_watcher": true
+                "is_watcher": true,
+                "watcher_conf": {
+                    "wait_maker_payment_spend_factor": wait_maker_payment_spend_factor,
+                    "refund_start_factor": refund_start_factor,
+                    "search_interval": search_interval,
+                    "wait_taker_payment": wait_taker_payment
+                }
+            }),
+            rpc_password: DEFAULT_RPC_PASSWORD.into(),
+        }
+    }
+
+    pub fn light_node_with_hd_account(passphrase: &str, hd_account_id: u32, coins: &Json, seednodes: &[&str]) -> Self {
+        Mm2TestConf {
+            conf: json!({
+                "gui": "nogui",
+                "netid": 9998,
+                "passphrase": passphrase,
+                "coins": coins,
+                "rpc_password": DEFAULT_RPC_PASSWORD,
+                "seednodes": seednodes,
+                "hd_account_id": hd_account_id,
             }),
             rpc_password: DEFAULT_RPC_PASSWORD.into(),
         }
@@ -203,6 +255,46 @@ impl Mm2TestConf {
             rpc_password: DEFAULT_RPC_PASSWORD.into(),
         }
     }
+}
+
+pub struct Mm2TestConfForSwap;
+
+impl Mm2TestConfForSwap {
+    /// TODO consider moving it to read it from a env file.
+    const BOB_HD_PASSPHRASE: &'static str =
+        "involve work eager scene give acoustic tooth mimic dance smoke hold foster";
+    /// TODO consider moving it to read it from a env file.
+    const ALICE_HD_PASSPHRASE: &'static str =
+        "tank abandon bind salon remove wisdom net size aspect direct source fossil";
+
+    pub fn bob_conf_with_policy(priv_key_policy: Mm2InitPrivKeyPolicy, coins: &Json) -> Mm2TestConf {
+        match priv_key_policy {
+            Mm2InitPrivKeyPolicy::Iguana => {
+                let bob_passphrase = crate::get_passphrase!(".env.seed", "BOB_PASSPHRASE").unwrap();
+                Mm2TestConf::seednode(&bob_passphrase, coins)
+            },
+            Mm2InitPrivKeyPolicy::GlobalHDAccount(hd_account_id) => {
+                Mm2TestConf::seednode_with_hd_account(Self::BOB_HD_PASSPHRASE, hd_account_id, coins)
+            },
+        }
+    }
+
+    pub fn alice_conf_with_policy(priv_key_policy: Mm2InitPrivKeyPolicy, coins: &Json, bob_ip: &str) -> Mm2TestConf {
+        match priv_key_policy {
+            Mm2InitPrivKeyPolicy::Iguana => {
+                let alice_passphrase = crate::get_passphrase!(".env.client", "ALICE_PASSPHRASE").unwrap();
+                Mm2TestConf::light_node(&alice_passphrase, coins, &[bob_ip])
+            },
+            Mm2InitPrivKeyPolicy::GlobalHDAccount(hd_account_id) => {
+                Mm2TestConf::light_node_with_hd_account(Self::ALICE_HD_PASSPHRASE, hd_account_id, coins, &[bob_ip])
+            },
+        }
+    }
+}
+
+pub enum Mm2InitPrivKeyPolicy {
+    Iguana,
+    GlobalHDAccount(u32),
 }
 
 pub fn zombie_conf() -> Json {
@@ -234,9 +326,11 @@ pub fn zombie_conf() -> Json {
                     "hash": "106BAA72C53E7FA52E30E6D3D15B37001207E3CF3B9FCE9BAB6C6D4AF9ED9200",
                     "sapling_tree": "017797D05B070D29A47EFEBE3FAD3F29345D31BE608C46A5131CD55D201A631C13000D000119CE6220D0CB0F82AD6466B677828A0B4C2983662DAB181A86F913F7E9FB9C28000139C4399E4CA741CBABBDDAEB6DCC3541BA902343E394160EEECCDF20C289BA65011823D28B592E9612A6C3CF4778F174E10B1B714B4FF85E6E58EE19DD4A0D5734016FA4682B0007E61B63A0442B85E0B8C0CE2409E665F219013B5E24E385F6066B00000001A325043E11CD6A431A0BD99141C4C6E9632A156185EB9B0DBEF665EEC803DD6F00000103C11FCCC90C2EC1A126635F708311EDEF9B93D3E752E053D3AA9EFA0AF9D526"
                 },
+                "z_derivation_path": "m/32'/133'",
             }
         },
-        "required_confirmations":0
+        "required_confirmations":0,
+        "derivation_path": "m/44'/133'",
     })
 }
 
@@ -282,6 +376,7 @@ pub fn rick_conf() -> Json {
         "required_confirmations":0,
         "txversion":4,
         "overwintered":1,
+        "derivation_path": "m/44'/141'",
         "protocol":{
             "type":"UTXO"
         }
@@ -295,6 +390,45 @@ pub fn morty_conf() -> Json {
         "required_confirmations":0,
         "txversion":4,
         "overwintered":1,
+        "derivation_path": "m/44'/141'",
+        "protocol":{
+            "type":"UTXO"
+        }
+    })
+}
+
+pub fn kmd_conf(tx_fee: u64) -> Json {
+    json!({
+        "coin":"KMD",
+        "txversion":4,
+        "overwintered":1,
+        "txfee":tx_fee,
+        "protocol":{
+            "type":"UTXO"
+        }
+    })
+}
+
+pub fn mycoin_conf(tx_fee: u64) -> Json {
+    json!({
+        "coin":"MYCOIN",
+        "asset":"MYCOIN",
+        "txversion":4,
+        "overwintered":1,
+        "txfee":tx_fee,
+        "protocol":{
+            "type":"UTXO"
+        }
+    })
+}
+
+pub fn mycoin1_conf(tx_fee: u64) -> Json {
+    json!({
+        "coin":"MYCOIN1",
+        "asset":"MYCOIN1",
+        "txversion":4,
+        "overwintered":1,
+        "txfee":tx_fee,
         "protocol":{
             "type":"UTXO"
         }
@@ -304,7 +438,7 @@ pub fn morty_conf() -> Json {
 pub fn atom_testnet_conf() -> Json {
     json!({
         "coin":"ATOM",
-        "avg_block_time": 5,
+        "avg_blocktime": 5,
         "protocol":{
             "type":"TENDERMINT",
             "protocol_data": {
@@ -313,6 +447,40 @@ pub fn atom_testnet_conf() -> Json {
                 "account_prefix": "cosmos",
                 "chain_id": "theta-testnet-001",
             },
+        }
+    })
+}
+
+pub fn btc_segwit_conf() -> Json {
+    json!({
+        "coin": "BTC-segwit",
+        "name": "bitcoin",
+        "fname": "Bitcoin",
+        "rpcport": 8332,
+        "pubtype": 0,
+        "p2shtype": 5,
+        "wiftype": 128,
+        "segwit": true,
+        "bech32_hrp": "bc",
+        "address_format": {
+            "format": "segwit"
+        },
+        "orderbook_ticker": "BTC",
+        "txfee": 0,
+        "estimate_fee_mode": "ECONOMICAL",
+        "mm2": 1,
+        "enable_spv_proof": true,
+        "block_headers_verification_params": {
+            "difficulty_check": true,
+            "constant_difficulty": false,
+            "difficulty_algorithm": "Bitcoin Mainnet",
+            "genesis_block_header": "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299"
+        },
+        "required_confirmations": 1,
+        "avg_blocktime": 10,
+        "derivation_path": "m/84'/0'",
+        "protocol": {
+            "type": "UTXO"
         }
     })
 }
@@ -367,10 +535,37 @@ pub fn tbtc_with_spv_conf() -> Json {
     })
 }
 
+pub fn eth_testnet_conf() -> Json {
+    json!({
+        "coin": "ETH",
+        "name": "ethereum",
+        "derivation_path": "m/44'/60'",
+        "protocol": {
+            "type": "ETH"
+        }
+    })
+}
+
+pub fn eth_jst_testnet_conf() -> Json {
+    json!({
+        "coin": "JST",
+        "name": "jst",
+        "derivation_path": "m/44'/60'",
+        "protocol": {
+            "type": "ERC20",
+            "protocol_data": {
+                "platform": "ETH",
+                "contract_address": "0x2b294F029Fde858b2c62184e8390591755521d8E"
+            }
+        }
+    })
+}
+
 pub fn iris_testnet_conf() -> Json {
     json!({
-        "coin":"IRIS-TEST",
-        "avg_block_time": 5,
+        "coin": "IRIS-TEST",
+        "avg_blocktime": 5,
+        "derivation_path": "m/44'/566'",
         "protocol":{
             "type":"TENDERMINT",
             "protocol_data": {
@@ -384,9 +579,11 @@ pub fn iris_testnet_conf() -> Json {
 }
 
 pub fn iris_nimda_testnet_conf() -> Json {
-    json!({"coin":"IRIS-NIMDA",
-        "protocol":{
-            "type":"TENDERMINTTOKEN",
+    json!({
+        "coin": "IRIS-NIMDA",
+        "derivation_path": "m/44'/566'",
+        "protocol": {
+            "type": "TENDERMINTTOKEN",
             "protocol_data": {
                 "platform": "IRIS-TEST",
                 "decimals": 6,
@@ -410,6 +607,42 @@ pub fn usdc_ibc_iris_testnet_conf() -> Json {
     })
 }
 
+/// `245` is SLP coin type within the derivation path.
+pub fn tbch_for_slp_conf() -> Json {
+    json!({
+        "coin": "tBCH",
+        "pubtype": 0,
+        "p2shtype": 5,
+        "mm2": 1,
+        "derivation_path": "m/44'/245'",
+        "protocol": {
+            "type": "BCH",
+            "protocol_data": {
+                "slp_prefix": "slptest"
+            }
+        },
+        "address_format": {
+            "format": "cashaddress",
+            "network": "bchtest"
+        }
+    })
+}
+
+pub fn tbch_usdf_conf() -> Json {
+    json!({
+        "coin": "USDF",
+        "protocol": {
+            "type": "SLPTOKEN",
+            "protocol_data": {
+                "decimals": 4,
+                "token_id": "bb309e48930671582bea508f9a1d9b491e49b69be3d6f372dc08da2ac6e90eb7",
+                "platform": "tBCH",
+                "required_confirmations": 1
+            }
+        }
+    })
+}
+
 pub fn tbnb_conf() -> Json {
     json!({
         "coin": "tBNB",
@@ -422,6 +655,35 @@ pub fn tbnb_conf() -> Json {
             "type": "ETH"
         }
     })
+}
+
+pub fn tqrc20_conf() -> Json {
+    json!({
+        "coin": "QRC20",
+        "required_confirmations": 0,
+        "pubtype": 120,
+        "p2shtype": 50,
+        "wiftype": 128,
+        "txfee": 0,
+        "mm2": 1,
+        "mature_confirmations": 2000,
+        "derivation_path": "m/44'/2301'",
+        "protocol": {
+            "type": "QRC20",
+            "protocol_data": {
+                "platform": "QTUM",
+                "contract_address": "0xd362e096e873eb7907e205fadc6175c6fec7bc44"
+            }
+        }
+    })
+}
+
+pub fn mm_ctx_with_iguana(passphrase: Option<&str>) -> MmArc {
+    const DEFAULT_IGUANA_PASSPHRASE: &str = "123";
+
+    let ctx = MmCtxBuilder::default().into_mm_arc();
+    CryptoCtx::init_with_iguana_passphrase(ctx.clone(), passphrase.unwrap_or(DEFAULT_IGUANA_PASSPHRASE)).unwrap();
+    ctx
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1158,7 +1420,9 @@ pub fn from_env_file(env: Vec<u8>) -> (Option<String>, Option<String>) {
 #[cfg(target_arch = "wasm32")]
 macro_rules! get_passphrase {
     ($_env_file:literal, $env:literal) => {
-        option_env!($env).ok_or_else(|| ERRL!("No such '{}' environment variable", $env))
+        option_env!($env)
+            .map(|pass| pass.to_string())
+            .ok_or_else(|| ERRL!("No such '{}' environment variable", $env))
     };
 }
 
@@ -1497,6 +1761,7 @@ pub async fn init_lightning_status(mm: &MarketMakerIt, task_id: u64) -> Json {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn new_mm2_temp_folder_path(ip: Option<IpAddr>) -> PathBuf {
     let now = common::now_ms();
+    #[allow(deprecated)]
     let now = Local.timestamp((now / 1000) as i64, (now % 1000) as u32 * 1_000_000);
     let folder = match ip {
         Some(ip) => format!("mm2_{}_{}", now.format("%Y-%m-%d_%H-%M-%S-%3f"), ip),
@@ -1967,7 +2232,13 @@ pub async fn my_balance(mm: &MarketMakerIt, coin: &str) -> Json {
     json::from_str(&request.1).unwrap()
 }
 
-pub async fn enable_tendermint(mm: &MarketMakerIt, coin: &str, ibc_assets: &[&str], rpc_urls: &[&str]) -> Json {
+pub async fn enable_tendermint(
+    mm: &MarketMakerIt,
+    coin: &str,
+    ibc_assets: &[&str],
+    rpc_urls: &[&str],
+    tx_history: bool,
+) -> Json {
     let ibc_requests: Vec<_> = ibc_assets.iter().map(|ticker| json!({ "ticker": ticker })).collect();
 
     let request = json!({
@@ -1978,6 +2249,7 @@ pub async fn enable_tendermint(mm: &MarketMakerIt, coin: &str, ibc_assets: &[&st
             "ticker": coin,
             "tokens_params": ibc_requests,
             "rpc_urls": rpc_urls,
+            "tx_history": tx_history
         }
     });
     println!(
@@ -1993,6 +2265,36 @@ pub async fn enable_tendermint(mm: &MarketMakerIt, coin: &str, ibc_assets: &[&st
         request.1
     );
     println!("enable_tendermint_with_assets response {}", request.1);
+    json::from_str(&request.1).unwrap()
+}
+
+pub async fn get_tendermint_my_tx_history(mm: &MarketMakerIt, coin: &str, limit: usize, page_number: usize) -> Json {
+    let request = json!({
+        "userpass": mm.userpass,
+        "method": "my_tx_history",
+        "mmrpc": "2.0",
+        "params": {
+            "coin": coin,
+            "limit": limit,
+            "paging_options": {
+                "PageNumber": page_number
+            },
+        }
+    });
+    println!(
+        "tendermint 'my_tx_history' request {}",
+        json::to_string(&request).unwrap()
+    );
+
+    let request = mm.rpc(&request).await.unwrap();
+    assert_eq!(
+        request.0,
+        StatusCode::OK,
+        "tendermint 'my_tx_history' failed: {}",
+        request.1
+    );
+
+    println!("tendermint 'my_tx_history' response {}", request.1);
     json::from_str(&request.1).unwrap()
 }
 
@@ -2089,8 +2391,8 @@ pub async fn start_swaps(
     maker: &mut MarketMakerIt,
     taker: &mut MarketMakerIt,
     pairs: &[(&'static str, &'static str)],
-    maker_price: i32,
-    taker_price: i32,
+    maker_price: f64,
+    taker_price: f64,
     volume: f64,
 ) -> Vec<String> {
     let mut uuids = vec![];
@@ -2122,8 +2424,11 @@ pub async fn start_swaps(
             .rpc(&json!({
                 "userpass": taker.userpass,
                 "method": "orderbook",
-                "base": base,
-                "rel": rel,
+                "mmrpc": "2.0",
+                "params": {
+                    "base": base,
+                    "rel": rel,
+                },
             }))
             .await
             .unwrap();

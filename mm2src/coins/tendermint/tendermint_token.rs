@@ -11,8 +11,9 @@ use crate::{big_decimal_from_sat_unsigned, utxo::sat_from_big_decimal, BalanceFu
             TradePreimageFut, TradePreimageResult, TradePreimageValue, TransactionDetails, TransactionEnum,
             TransactionErr, TransactionFut, TransactionType, TxFeeDetails, TxMarshalingErr,
             UnexpectedDerivationMethod, ValidateAddressResult, ValidateFeeArgs, ValidateInstructionsErr,
-            ValidateOtherPubKeyErr, ValidatePaymentFut, ValidatePaymentInput, VerificationResult, WatcherOps,
-            WatcherValidatePaymentInput, WithdrawError, WithdrawFut, WithdrawRequest};
+            ValidateOtherPubKeyErr, ValidatePaymentError, ValidatePaymentFut, ValidatePaymentInput,
+            VerificationResult, WatcherOps, WatcherSearchForSwapTxSpendInput, WatcherValidatePaymentInput,
+            WatcherValidateTakerFeeInput, WithdrawError, WithdrawFut, WithdrawRequest};
 use async_trait::async_trait;
 use bitcrypto::sha256;
 use common::executor::abortable_queue::AbortableQueue;
@@ -36,7 +37,7 @@ use std::sync::Arc;
 
 pub struct TendermintTokenImpl {
     pub ticker: String,
-    platform_coin: TendermintCoin,
+    pub platform_coin: TendermintCoin,
     pub decimals: u8,
     pub denom: Denom,
     /// This spawner is used to spawn coin's related futures that should be aborted on coin deactivation
@@ -208,7 +209,7 @@ impl SwapOps for TendermintToken {
         self.platform_coin.extract_secret(secret_hash, spend_tx).await
     }
 
-    fn check_tx_signed_by_pub(&self, tx: &[u8], expected_pub: &[u8]) -> Result<bool, String> {
+    fn check_tx_signed_by_pub(&self, tx: &[u8], expected_pub: &[u8]) -> Result<bool, MmError<ValidatePaymentError>> {
         unimplemented!();
     }
 
@@ -227,15 +228,36 @@ impl SwapOps for TendermintToken {
         self.platform_coin.validate_other_pubkey(raw_pubkey)
     }
 
-    async fn payment_instructions(
+    async fn maker_payment_instructions(
         &self,
         _secret_hash: &[u8],
         _amount: &BigDecimal,
+        _maker_lock_duration: u64,
+        _expires_in: u64,
     ) -> Result<Option<Vec<u8>>, MmError<PaymentInstructionsErr>> {
         Ok(None)
     }
 
-    fn validate_instructions(
+    async fn taker_payment_instructions(
+        &self,
+        _secret_hash: &[u8],
+        _amount: &BigDecimal,
+        _expires_in: u64,
+    ) -> Result<Option<Vec<u8>>, MmError<PaymentInstructionsErr>> {
+        Ok(None)
+    }
+
+    fn validate_maker_payment_instructions(
+        &self,
+        _instructions: &[u8],
+        _secret_hash: &[u8],
+        _amount: BigDecimal,
+        _maker_lock_duration: u64,
+    ) -> Result<PaymentInstructions, MmError<ValidateInstructionsErr>> {
+        MmError::err(ValidateInstructionsErr::UnsupportedCoin(self.ticker().to_string()))
+    }
+
+    fn validate_taker_payment_instructions(
         &self,
         _instructions: &[u8],
         _secret_hash: &[u8],
@@ -248,9 +270,8 @@ impl SwapOps for TendermintToken {
 }
 
 #[async_trait]
-#[allow(unused_variables)]
 impl WatcherOps for TendermintToken {
-    fn create_taker_spends_maker_payment_preimage(
+    fn create_maker_payment_spend_preimage(
         &self,
         _maker_payment_tx: &[u8],
         _time_lock: u32,
@@ -261,11 +282,11 @@ impl WatcherOps for TendermintToken {
         unimplemented!();
     }
 
-    fn send_taker_spends_maker_payment_preimage(&self, preimage: &[u8], secret: &[u8]) -> TransactionFut {
+    fn send_maker_payment_spend_preimage(&self, _preimage: &[u8], _secret: &[u8]) -> TransactionFut {
         unimplemented!();
     }
 
-    fn create_taker_refunds_payment_preimage(
+    fn create_taker_payment_refund_preimage(
         &self,
         _taker_payment_tx: &[u8],
         _time_lock: u32,
@@ -277,15 +298,22 @@ impl WatcherOps for TendermintToken {
         unimplemented!();
     }
 
-    fn send_watcher_refunds_taker_payment_preimage(&self, _taker_refunds_payment: &[u8]) -> TransactionFut {
+    fn send_taker_payment_refund_preimage(&self, _taker_refunds_payment: &[u8]) -> TransactionFut {
         unimplemented!();
     }
 
-    fn watcher_validate_taker_fee(&self, _taker_fee_hash: Vec<u8>, _verified_pub: Vec<u8>) -> ValidatePaymentFut<()> {
+    fn watcher_validate_taker_fee(&self, _input: WatcherValidateTakerFeeInput) -> ValidatePaymentFut<()> {
         unimplemented!();
     }
 
     fn watcher_validate_taker_payment(&self, _input: WatcherValidatePaymentInput) -> ValidatePaymentFut<()> {
+        unimplemented!();
+    }
+
+    async fn watcher_search_for_swap_tx_spend(
+        &self,
+        _input: WatcherSearchForSwapTxSpendInput<'_>,
+    ) -> Result<Option<FoundSwapTxSpend>, String> {
         unimplemented!();
     }
 }
@@ -350,6 +378,7 @@ impl MarketCoinOps for TendermintToken {
         wait_until: u64,
         from_block: u64,
         swap_contract_address: &Option<BytesJson>,
+        check_every: f64,
     ) -> TransactionFut {
         self.platform_coin.wait_for_htlc_tx_spend(
             transaction,
@@ -357,6 +386,7 @@ impl MarketCoinOps for TendermintToken {
             wait_until,
             from_block,
             swap_contract_address,
+            check_every,
         )
     }
 
@@ -503,6 +533,7 @@ impl MmCoin for TendermintToken {
                 fee_details: Some(TxFeeDetails::Tendermint(TendermintFeeDetails {
                     coin: platform.ticker().to_string(),
                     amount: fee_amount_dec,
+                    uamount: fee_amount_u64,
                     gas_limit: GAS_LIMIT_DEFAULT,
                 })),
                 coin: token.ticker.clone(),
@@ -518,6 +549,8 @@ impl MmCoin for TendermintToken {
         self.platform_coin.get_raw_transaction(req)
     }
 
+    fn get_tx_hex_by_hash(&self, tx_hash: Vec<u8>) -> RawTransactionFut { unimplemented!() }
+
     fn decimals(&self) -> u8 { self.decimals }
 
     fn convert_to_address(&self, from: &str, to_address_format: Json) -> Result<String, String> {
@@ -527,48 +560,51 @@ impl MmCoin for TendermintToken {
     fn validate_address(&self, address: &str) -> ValidateAddressResult { self.platform_coin.validate_address(address) }
 
     fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send> {
-        // TODO
-        warn!("process_history_loop is not implemented");
+        warn!("process_history_loop is deprecated, tendermint uses tx_history_v2");
         Box::new(futures01::future::err(()))
     }
 
     fn history_sync_status(&self) -> HistorySyncState { HistorySyncState::NotEnabled }
 
     fn get_trade_fee(&self) -> Box<dyn Future<Item = TradeFee, Error = String> + Send> {
-        // TODO
         Box::new(futures01::future::err("Not implemented".into()))
     }
 
     async fn get_sender_trade_fee(
         &self,
         value: TradePreimageValue,
-        stage: FeeApproxStage,
+        _stage: FeeApproxStage,
     ) -> TradePreimageResult<TradeFee> {
-        Ok(TradeFee {
-            coin: self.platform_coin.ticker().into(),
-            amount: "0.0002".into(),
-            paid_from_trading_vol: false,
-        })
+        let amount = match value {
+            TradePreimageValue::Exact(decimal) | TradePreimageValue::UpperBound(decimal) => decimal,
+        };
+
+        self.platform_coin
+            .get_sender_trade_fee_for_denom(self.ticker.clone(), self.denom.clone(), self.decimals, amount)
+            .await
     }
 
-    fn get_receiver_trade_fee(&self, stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
-        Box::new(futures01::future::ok(TradeFee {
-            coin: self.platform_coin.ticker().into(),
-            amount: "0.0002".into(),
-            paid_from_trading_vol: false,
-        }))
+    fn get_receiver_trade_fee(&self, send_amount: BigDecimal, _stage: FeeApproxStage) -> TradePreimageFut<TradeFee> {
+        let token = self.clone();
+        let fut = async move {
+            // We can't simulate Claim Htlc without having information about broadcasted htlc tx.
+            // Since create and claim htlc fees are almost same, we can simply simulate create htlc tx.
+            token
+                .platform_coin
+                .get_sender_trade_fee_for_denom(token.ticker.clone(), token.denom.clone(), token.decimals, send_amount)
+                .await
+        };
+        Box::new(fut.boxed().compat())
     }
 
     async fn get_fee_to_send_taker_fee(
         &self,
         dex_fee_amount: BigDecimal,
-        stage: FeeApproxStage,
+        _stage: FeeApproxStage,
     ) -> TradePreimageResult<TradeFee> {
-        Ok(TradeFee {
-            coin: self.platform_coin.ticker().into(),
-            amount: "0.0002".into(),
-            paid_from_trading_vol: false,
-        })
+        self.platform_coin
+            .get_fee_to_send_taker_fee_for_denom(self.ticker.clone(), self.denom.clone(), self.decimals, dex_fee_amount)
+            .await
     }
 
     fn required_confirmations(&self) -> u64 { self.platform_coin.required_confirmations() }
@@ -576,8 +612,7 @@ impl MmCoin for TendermintToken {
     fn requires_notarization(&self) -> bool { self.platform_coin.requires_notarization() }
 
     fn set_required_confirmations(&self, confirmations: u64) {
-        // TODO
-        warn!("set_required_confirmations has no effect for now")
+        warn!("set_required_confirmations is not supported for tendermint")
     }
 
     fn set_requires_notarization(&self, requires_nota: bool) {
@@ -595,4 +630,8 @@ impl MmCoin for TendermintToken {
     fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
         self.platform_coin.is_coin_protocol_supported(info)
     }
+
+    fn on_disabled(&self) -> Result<(), AbortedError> { AbortableSystem::abort_all(&self.abortable_system) }
+
+    fn on_token_deactivated(&self, _ticker: &str) {}
 }

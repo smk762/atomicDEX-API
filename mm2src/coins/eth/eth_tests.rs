@@ -1,4 +1,5 @@
 use super::*;
+use crate::IguanaPrivKey;
 use common::block_on;
 use mm2_core::mm_ctx::{MmArc, MmCtxBuilder};
 use mm2_test_helpers::for_tests::{ETH_MAINNET_NODE, ETH_MAINNET_SWAP_CONTRACT};
@@ -12,6 +13,8 @@ const GAS_PRICE_APPROXIMATION_ON_START_SWAP: u64 = 51_500_000_000;
 const GAS_PRICE_APPROXIMATION_ON_ORDER_ISSUE: u64 = 52_500_000_000;
 // `GAS_PRICE` increased by 7%
 const GAS_PRICE_APPROXIMATION_ON_TRADE_PREIMAGE: u64 = 53_500_000_000;
+
+const TAKER_PAYMENT_SPEND_SEARCH_INTERVAL: f64 = 1.;
 
 fn check_sum(addr: &str, expected: &str) {
     let actual = checksum_address(addr);
@@ -30,14 +33,14 @@ fn eth_coin_for_test(
 
     let mut nodes = vec![];
     for url in urls.iter() {
-        nodes.push(Web3TransportNode {
+        nodes.push(HttpTransportNode {
             uri: url.parse().unwrap(),
             gui_auth: false,
         });
     }
     drop_mutability!(nodes);
 
-    let transport = Web3Transport::new(nodes);
+    let transport = Web3Transport::with_nodes(nodes);
     let web3 = Web3::new(transport);
     let conf = json!({
         "coins":[
@@ -60,7 +63,7 @@ fn eth_coin_for_test(
         gas_station_policy: GasStationPricePolicy::MeanAverageFast,
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
+        priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         fallback_swap_contract,
         ticker,
@@ -226,7 +229,7 @@ fn send_and_refund_erc20_payment() {
         },
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
+        priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         fallback_swap_contract: None,
         web3_instances: vec![Web3Instance {
@@ -293,7 +296,7 @@ fn send_and_refund_eth_payment() {
         coin_type: EthCoinType::Eth,
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
+        priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         fallback_swap_contract: None,
         web3_instances: vec![Web3Instance {
@@ -368,7 +371,7 @@ fn test_nonce_several_urls() {
         coin_type: EthCoinType::Eth,
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
+        priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         fallback_swap_contract: None,
         web3_instances: vec![
@@ -433,7 +436,7 @@ fn test_wait_for_payment_spend_timeout() {
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
+        priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         fallback_swap_contract: None,
         ticker: "ETH".into(),
@@ -469,7 +472,14 @@ fn test_wait_for_payment_spend_timeout() {
     ];
 
     assert!(coin
-        .wait_for_htlc_tx_spend(&tx_bytes, &[], wait_until, from_block, &coin.swap_contract_address())
+        .wait_for_htlc_tx_spend(
+            &tx_bytes,
+            &[],
+            wait_until,
+            from_block,
+            &coin.swap_contract_address(),
+            TAKER_PAYMENT_SPEND_SEARCH_INTERVAL
+        )
         .wait()
         .is_err());
 }
@@ -496,7 +506,7 @@ fn test_search_for_swap_tx_spend_was_spent() {
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
+        priv_key_policy: key_pair.into(),
         swap_contract_address,
         fallback_swap_contract: None,
         ticker: "ETH".into(),
@@ -607,7 +617,7 @@ fn test_search_for_swap_tx_spend_was_refunded() {
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
+        priv_key_policy: key_pair.into(),
         swap_contract_address,
         fallback_swap_contract: None,
         ticker: "BAT".into(),
@@ -931,7 +941,7 @@ fn get_receiver_trade_preimage() {
     };
 
     let actual = coin
-        .get_receiver_trade_fee(FeeApproxStage::WithoutApprox)
+        .get_receiver_trade_fee(Default::default(), FeeApproxStage::WithoutApprox)
         .wait()
         .expect("!get_sender_trade_fee");
     assert_eq!(actual, expected_fee);
@@ -1230,14 +1240,14 @@ fn polygon_check_if_my_payment_sent() {
         "swap_contract_address": "0x9130b257d37a52e52f21054c4da3450c72f595ce",
     });
 
-    let priv_key = [1; 32];
+    let priv_key_policy = PrivKeyBuildPolicy::IguanaPrivKey(IguanaPrivKey::from([1; 32]));
     let coin = block_on(eth_coin_from_conf_and_request(
         &ctx,
         "MATIC",
         &conf,
         &request,
-        &priv_key,
         CoinProtocol::ETH,
+        priv_key_policy,
     ))
     .unwrap();
 
@@ -1277,7 +1287,7 @@ fn test_message_hash() {
         coin_type: EthCoinType::Eth,
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
+        priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         fallback_swap_contract: None,
         web3_instances: vec![Web3Instance {
@@ -1321,7 +1331,7 @@ fn test_sign_verify_message() {
         coin_type: EthCoinType::Eth,
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
+        priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
         fallback_swap_contract: None,
         web3_instances: vec![Web3Instance {
@@ -1376,7 +1386,7 @@ fn test_eth_extract_secret() {
         history_sync_state: Mutex::new(HistorySyncState::NotEnabled),
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
+        priv_key_policy: key_pair.into(),
         swap_contract_address,
         fallback_swap_contract: None,
         ticker: "ETH".into(),
@@ -1445,13 +1455,14 @@ fn test_eth_validate_valid_and_invalid_pubkey() {
         3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144, 72,
         172, 110, 180, 13, 123, 179, 10, 49,
     ];
+    let priv_key_policy = PrivKeyBuildPolicy::IguanaPrivKey(IguanaPrivKey::from(priv_key));
     let coin = block_on(eth_coin_from_conf_and_request(
         &ctx,
         "MATIC",
         &conf,
         &request,
-        &priv_key,
         CoinProtocol::ETH,
+        priv_key_policy,
     ))
     .unwrap();
     // Test expected to pass at this point as we're using a valid pubkey to validate against a valid pubkey
