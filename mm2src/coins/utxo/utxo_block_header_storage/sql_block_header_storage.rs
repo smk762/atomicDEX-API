@@ -248,27 +248,21 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         let sql = get_last_block_height_sql(&coin)?;
         let selfi = self.clone();
 
-        let res = async_blocking(move || {
+        async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
-            query_single_row(&conn, &sql, NO_PARAMS, |row| row.get::<usize, i64>(0))
+            let h = query_single_row(&conn, &sql, NO_PARAMS, |row| row.get::<usize, i64>(0))?;
+            if let Some(height) = h {
+                let height = height
+                    .try_into()
+                    .map_err(|e: TryFromIntError| BlockHeaderStorageError::DecodeError {
+                        coin,
+                        reason: e.to_string(),
+                    })?;
+                return Ok(Some(height));
+            };
+            Ok(None)
         })
         .await
-        .map_err(|e| BlockHeaderStorageError::GetFromStorageError {
-            coin: coin.clone(),
-            reason: e.to_string(),
-        })?;
-
-        if let Some(height) = res {
-            let height = height
-                .try_into()
-                .map_err(|e: TryFromIntError| BlockHeaderStorageError::DecodeError {
-                    coin,
-                    reason: e.to_string(),
-                })?;
-            return Ok(Some(height));
-        }
-
-        Ok(None)
     }
 
     async fn get_last_block_header_with_non_max_bits(&self) -> Result<Option<BlockHeader>, BlockHeaderStorageError> {
@@ -539,8 +533,8 @@ mod sql_block_headers_storage_tests {
         block_on(storage.add_block_headers_to_storage(headers)).unwrap();
         assert!(!storage.is_table_empty(&table));
 
-        let last_block_height = block_on(storage.get_total_block_headers_from_storage()).unwrap();
-        assert_eq!(last_block_height, 3);
+        let headers_count = block_on(storage.get_total_block_headers_from_storage()).unwrap();
+        assert_eq!(headers_count, 3);
     }
 
     #[test]
@@ -573,9 +567,9 @@ mod sql_block_headers_storage_tests {
         // Remove 2 headers from storage.
         block_on(storage.remove_block_headers_from_storage(2)).unwrap();
 
-        // Get total block headers in storage..should be 1!
-        let last_block_height = block_on(storage.get_total_block_headers_from_storage()).unwrap();
-        assert_eq!(last_block_height, 1);
+        // Get total block headers in storage..should be 1 after removing 2!
+        let headers_count = block_on(storage.get_total_block_headers_from_storage()).unwrap();
+        assert_eq!(headers_count, 1);
 
         // Last height should be 201595
         let last_block_height = block_on(storage.get_last_block_height()).unwrap();
