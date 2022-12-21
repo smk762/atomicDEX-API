@@ -306,13 +306,36 @@ pub(crate) fn merkle_prove(
 
 fn validate_header_prev_hash(actual: &H256, to_compare_with: &H256) -> bool { actual == to_compare_with }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct SPVConf {
+    // Determine if spv proof should be enable. Default to false.
+    pub enable_spv_proof: bool,
+    // Max headers count a node want stored. Default to None.
+    pub max_stored_block_headers: Option<u64>,
+    /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
+    /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
+    pub verification_params: Option<BlockHeaderVerificationParams>,
+}
+
+impl SPVConf {
+    pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
+
+    pub fn starting_block_height(&self) -> u64 {
+        self.verification_params
+            .clone()
+            .unwrap_or_default()
+            .starting_block_height
+    }
+}
+
 /// SPV headers verification parameters
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Default)]
 pub struct BlockHeaderVerificationParams {
     pub difficulty_check: bool,
     pub constant_difficulty: bool,
     pub difficulty_algorithm: Option<DifficultyAlgorithm>,
-    pub genesis_block_header: String,
+    pub starting_block_height: u64,
+    pub starting_block_header_hex: String,
 }
 
 /// Checks validity of header chain.
@@ -339,9 +362,10 @@ pub async fn validate_headers(
     storage: &dyn BlockHeaderStorageOps,
     params: &BlockHeaderVerificationParams,
 ) -> Result<(), SPVError> {
+    let params = params.clone();
     let mut previous_height = previous_height;
     let mut previous_header = if previous_height == 0 {
-        BlockHeader::try_from(params.genesis_block_header.clone()).map_err(|e| SPVError::Internal(e.to_string()))?
+        BlockHeader::try_from(params.starting_block_header_hex).map_err(|e| SPVError::Internal(e.to_string()))?
     } else {
         storage
             .get_block_header(previous_height)
@@ -595,7 +619,8 @@ mod tests {
             constant_difficulty: false,
             difficulty_algorithm: None,
             // Will not be used since previous_height is not 0
-            genesis_block_header: "".into(),
+            starting_block_height: 0,
+            starting_block_header_hex: "".into(),
         };
         block_on(validate_headers(
             "MORTY",
@@ -618,7 +643,8 @@ mod tests {
             constant_difficulty: false,
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
             // Will not be used since previous_height is not 0
-            genesis_block_header: "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299".into()
+            starting_block_height: 0,
+            starting_block_header_hex: "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299".into(),
         };
         block_on(validate_headers(
             "BTC",

@@ -15,7 +15,7 @@ use mm2_err_handle::prelude::*;
 #[cfg(test)] use mocktopus::macros::*;
 use script::Builder;
 use serde_json::Value as Json;
-use spv_validation::helpers_validation::validate_headers;
+use spv_validation::helpers_validation::{validate_headers, SPVConf};
 use spv_validation::storage::BlockHeaderStorageOps;
 
 const FETCH_BLOCK_HEADERS_ATTEMPTS: u64 = 3;
@@ -100,6 +100,7 @@ where
         let utxo = self.build_utxo_fields().await?;
         let sync_status_loop_handle = utxo.block_headers_status_notifier.clone();
         let utxo_arc = UtxoArc::new(utxo);
+        let spv_conf = utxo_arc.conf.spv_conf.clone().unwrap_or_default();
 
         self.spawn_merge_utxo_loop_if_required(&utxo_arc, self.constructor.clone());
 
@@ -115,6 +116,7 @@ where
             self.spawn_block_header_utxo_loop(
                 &utxo_arc,
                 self.constructor.clone(),
+                spv_conf,
                 sync_status_loop_handle,
                 block_count,
             );
@@ -247,13 +249,13 @@ impl Default for BlockHeaderUtxoLoopExtraArgs {
 pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     weak: UtxoWeak,
     constructor: impl Fn(UtxoArc) -> T,
+    spv_conf: SPVConf,
     mut sync_status_loop_handle: UtxoSyncStatusLoopHandle,
     mut block_count: u64,
 ) {
     let args = BlockHeaderUtxoLoopExtraArgs::default();
     let mut chunk_size = args.chunk_size;
     while let Some(arc) = weak.upgrade() {
-        let spv_conf = arc.conf.spv_conf();
         let coin = constructor(arc);
         let ticker = coin.as_ref().conf.ticker.as_str();
         let client = match &coin.as_ref().rpc_client {
@@ -263,7 +265,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
 
         let storage = client.block_headers_storage();
         let from_block_height = match storage.get_last_block_height().await {
-            Ok(h) => h.unwrap_or_else(|| spv_conf.starting_block()),
+            Ok(h) => h.unwrap_or_else(|| spv_conf.starting_block_height()),
             Err(e) => {
                 error!("Error {e:?} on getting the height of the last stored {ticker} header in DB!",);
                 sync_status_loop_handle.notify_on_temp_error(e.to_string());
@@ -291,12 +293,6 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
             }
         }
         drop_mutability!(to_block_height);
-
-        println!(
-            "from_block_height{}, to_block_height{to_block_height}, total_block_headers_from_storage{:?}",
-            from_block_height,
-            storage.get_total_block_headers_from_storage().await
-        );
 
         // Todo: Add code for the case if a chain reorganization happens
         if from_block_height == block_count {
@@ -347,44 +343,40 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         };
 
         // Validate retrieved block headers
-        if let Some(params) = &coin.as_ref().conf.block_headers_verification_params {
+        if let Some(params) = &spv_conf.verification_params {
             if let Err(e) = validate_headers(ticker, from_block_height, block_headers, storage, params).await {
                 error!("Error {e:?} on validating the latest headers for {ticker}!");
                 // Todo: remove this electrum server and use another in this case since the headers from this server are invalid
                 sync_status_loop_handle.notify_on_permanent_error(e.to_string());
                 break;
-            }
-        };
+            };
+        }
 
-        let limit = block_headers_limit_to_remove(
-            spv_conf.max_stored_block_headers(),
+        let limit = calc_block_headers_limit_to_remove(
             storage.get_total_block_headers_from_storage().await.unwrap_or_default(),
-            block_registry.len() as u64,
+            spv_conf.max_stored_block_headers(),
+            block_registry.len(),
         );
-        storage
-            .remove_block_headers_from_storage(limit as i64)
-            .await
-            .error_log();
+        storage.remove_block_headers_from_storage(limit).await.error_log();
 
         let sleep = args.success_sleep;
         ok_or_continue_after_sleep!(storage.add_block_headers_to_storage(block_registry).await, sleep);
     }
 }
 
-fn block_headers_limit_to_remove(mut storage_headers_count: u64, node_max: u64, new_headers_count: u64) -> u64 {
+fn calc_block_headers_limit_to_remove(mut storage_headers_count: u64, node_max: u64, new_headers_count: usize) -> i64 {
+    let new_headers_count = new_headers_count as u64;
     let mut limit = 0;
     if node_max > 0 && storage_headers_count >= node_max {
-        // Storage_leaders before this functionality might be greater than node_max headers user
-        // want stored.
+        // storage_headers_count before this functionality might be greater than node_max
         if storage_headers_count > node_max {
             let value = storage_headers_count - node_max;
             limit += value;
             storage_headers_count -= value;
         }
 
-        // We need to confirm that the current storage_headers_count(storage_headers_count) + the new header that will
-        // be added do not surpass
-        // node_max
+        // We need to confirm that the current (storage_headers_count + new_headers_count) does
+        // not surpass node_max
         let total = storage_headers_count + new_headers_count;
         if total > node_max {
             let value = total - node_max;
@@ -392,8 +384,8 @@ fn block_headers_limit_to_remove(mut storage_headers_count: u64, node_max: u64, 
             storage_headers_count -= value;
         }
 
-        // Finally, if current storage_headers_count(storage_headers_count) == node_max then we need to remove current
-        // storage_headers_count - the length of new headers(new_headers_count) (
+        // Finally, if current storage_headers_count == node_max then we need to remove current
+        // (storage_headers_count - new_headers_count)
         if storage_headers_count == node_max {
             let value = storage_headers_count - new_headers_count;
             limit += value;
@@ -401,7 +393,7 @@ fn block_headers_limit_to_remove(mut storage_headers_count: u64, node_max: u64, 
     };
     drop_mutability!(limit);
 
-    limit
+    limit as i64
 }
 
 pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
@@ -409,6 +401,7 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
         &self,
         utxo_arc: &UtxoArc,
         constructor: F,
+        spv_conf: SPVConf,
         sync_status_loop_handle: UtxoSyncStatusLoopHandle,
         block_count: u64,
     ) where
@@ -419,7 +412,7 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
         info!("Starting UTXO block header loop for coin {ticker}");
 
         let utxo_weak = utxo_arc.downgrade();
-        let fut = block_header_utxo_loop(utxo_weak, constructor, sync_status_loop_handle, block_count);
+        let fut = block_header_utxo_loop(utxo_weak, constructor, spv_conf, sync_status_loop_handle, block_count);
 
         let settings = AbortSettings::info_on_abort(format!("spawn_block_header_utxo_loop stopped for {ticker}"));
         utxo_arc
@@ -427,4 +420,14 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
             .weak_spawner()
             .spawn_with_settings(fut, settings);
     }
+}
+
+#[test]
+fn test_calc_block_headers_limit_to_remove() {
+    let storage_headers_count = 400;
+    let node_max = 200;
+    let new_headers_count = 50;
+
+    let count = calc_block_headers_limit_to_remove(storage_headers_count, node_max, new_headers_count);
+    assert_eq!(250, count);
 }

@@ -10,7 +10,6 @@ pub use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHashEnum, Key
 use mm2_err_handle::prelude::*;
 use script::SignatureVersion;
 use serde_json::{self as json, Value as Json};
-use spv_validation::helpers_validation::BlockHeaderVerificationParams;
 use std::num::NonZeroU64;
 use std::sync::atomic::AtomicBool;
 
@@ -87,7 +86,6 @@ impl<'a> UtxoConfBuilder<'a> {
         let estimate_fee_blocks = self.estimate_fee_blocks();
         let trezor_coin = self.trezor_coin();
         let spv_conf = self.spv_conf();
-        let block_headers_verification_params = self.block_headers_verification_params();
         let derivation_path = self.derivation_path()?;
 
         Ok(UtxoCoinConf {
@@ -121,7 +119,6 @@ impl<'a> UtxoConfBuilder<'a> {
             estimate_fee_blocks,
             trezor_coin,
             spv_conf,
-            block_headers_verification_params,
             derivation_path,
         })
     }
@@ -283,11 +280,7 @@ impl<'a> UtxoConfBuilder<'a> {
     fn spv_conf(&self) -> Option<SPVConf> { None }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn spv_conf(&self) -> Option<SPVConf> { serde_json::from_value::<SPVConf>(self.conf["spv_conf"].clone()).ok() }
-
-    fn block_headers_verification_params(&self) -> Option<BlockHeaderVerificationParams> {
-        json::from_value(self.conf["block_headers_verification_params"].clone()).unwrap_or(None)
-    }
+    fn spv_conf(&self) -> Option<SPVConf> { json::from_value(self.conf["spv_conf"].clone()).unwrap_or(None) }
 
     fn derivation_path(&self) -> UtxoConfResult<Option<StandardHDPathToCoin>> {
         json::from_value(self.conf["derivation_path"].clone())

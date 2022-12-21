@@ -4315,6 +4315,7 @@ fn test_block_header_utxo_loop() {
         UtxoRpcClientEnum::Electrum(electrum) => electrum.clone(),
         UtxoRpcClientEnum::Native(_) => unreachable!(),
     };
+    let spv_conf = arc.conf.spv_conf.clone().unwrap_or_default();
 
     let (sync_status_notifier, _) = channel::<UtxoSyncStatus>(1);
     let loop_handle = UtxoSyncStatusLoopHandle::new(sync_status_notifier);
@@ -4324,6 +4325,7 @@ fn test_block_header_utxo_loop() {
             block_header_utxo_loop(
                 arc.downgrade(),
                 UtxoStandardCoin::from,
+                spv_conf,
                 loop_handle,
                 CURRENT_BLOCK_COUNT,
             )
@@ -4335,28 +4337,48 @@ fn test_block_header_utxo_loop() {
         *expected_steps.lock().unwrap() = vec![(1, 4), (5, 8), (9, 12), (13, 13)];
         unsafe { CURRENT_BLOCK_COUNT = 13 }
         Timer::sleep(2.).await;
-        let get_headers_count = client.block_headers_storage().get_last_block_height().await.unwrap();
+        let get_headers_count = client
+            .block_headers_storage()
+            .get_last_block_height()
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(get_headers_count, 13);
         assert!(expected_steps.lock().unwrap().is_empty());
 
         *expected_steps.lock().unwrap() = vec![(14, 17)];
         unsafe { CURRENT_BLOCK_COUNT = 17 }
         Timer::sleep(2.).await;
-        let get_headers_count = client.block_headers_storage().get_last_block_height().await.unwrap();
+        let get_headers_count = client
+            .block_headers_storage()
+            .get_last_block_height()
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(get_headers_count, 17);
         assert!(expected_steps.lock().unwrap().is_empty());
 
         *expected_steps.lock().unwrap() = vec![(18, 18)];
         unsafe { CURRENT_BLOCK_COUNT = 18 }
         Timer::sleep(2.).await;
-        let get_headers_count = client.block_headers_storage().get_last_block_height().await.unwrap();
+        let get_headers_count = client
+            .block_headers_storage()
+            .get_last_block_height()
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(get_headers_count, 18);
         assert!(expected_steps.lock().unwrap().is_empty());
 
         *expected_steps.lock().unwrap() = vec![(19, 22), (23, 25)];
         unsafe { CURRENT_BLOCK_COUNT = 25 }
         Timer::sleep(3.).await;
-        let get_headers_count = client.block_headers_storage().get_last_block_height().await.unwrap();
+        let get_headers_count = client
+            .block_headers_storage()
+            .get_last_block_height()
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(get_headers_count, 25);
         assert!(expected_steps.lock().unwrap().is_empty());
     };

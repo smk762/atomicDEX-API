@@ -168,15 +168,6 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         let coin = self.ticker.clone();
         let selfi = self.clone();
 
-        {
-            let limit = 0;
-            let headers_count = self.get_total_block_headers_from_storage().await?;
-            if limit >= headers_count {
-                self.remove_block_headers_from_storage((limit - headers_count) as i64)
-                    .await?;
-            };
-        }
-
         async_blocking(move || {
             let mut conn = selfi.conn.lock().unwrap();
             let sql_transaction = conn
@@ -334,11 +325,13 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
             let conn = selfi.conn.lock().unwrap();
             let mut sql_statement = conn.prepare(&sql)?;
             let mut count = sql_statement.query(NO_PARAMS).unwrap();
-            let row = count.next()?.unwrap();
-            row.get(0)
+            count
+                .next()?
+                .unwrap()
+                .get(0)
+                .map(|res: Option<i64>| res.unwrap_or_default() as u64)
         })
         .await
-        .map(|res: Option<i64>| res.unwrap_or_default() as u64)
         .map_err(|e| BlockHeaderStorageError::GetFromStorageError {
             coin: coin.clone(),
             reason: e.to_string(),
@@ -357,14 +350,13 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
             conn.execute(&sql, NO_PARAMS)
+                .map_err(|e| BlockHeaderStorageError::UnableToDeleteHeaders {
+                    coin: coin.clone(),
+                    reason: e.to_string(),
+                })?;
+            Ok(())
         })
         .await
-        .map_err(|e| BlockHeaderStorageError::UnableToDeleteHeaders {
-            coin: coin.clone(),
-            reason: e.to_string(),
-        })?;
-
-        Ok(())
     }
 }
 

@@ -74,7 +74,7 @@ use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as 
 use script::{Builder, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::{serialize, serialize_with_flags, Error as SerError, SERIALIZE_TRANSACTION_WITNESS};
-use spv_validation::helpers_validation::{BlockHeaderVerificationParams, SPVError};
+use spv_validation::helpers_validation::{SPVConf, SPVError};
 use spv_validation::storage::BlockHeaderStorageError;
 use std::array::TryFromSliceError;
 use std::collections::{HashMap, HashSet};
@@ -483,19 +483,6 @@ impl UtxoSyncStatusLoopHandle {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
-pub struct SPVConf {
-    pub enable_spv_proof: bool,
-    pub starting_block: Option<u64>,
-    pub max_stored_block_headers: Option<u64>,
-}
-
-impl SPVConf {
-    pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
-
-    pub fn starting_block(&self) -> u64 { self.starting_block.unwrap_or_default() }
-}
-
 #[derive(Debug)]
 pub struct UtxoCoinConf {
     pub ticker: String,
@@ -567,9 +554,6 @@ pub struct UtxoCoinConf {
     /// Whether to verify swaps and lightning transactions using spv or not. When enabled, block headers will be retrieved, verified according
     /// to block_headers_verification_params and stored in the DB. Can be false if the coin's RPC server is trusted.
     pub spv_conf: Option<SPVConf>,
-    /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
-    /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
-    pub block_headers_verification_params: Option<BlockHeaderVerificationParams>,
     /// Derivation path of the coin.
     /// This derivation path consists of `purpose` and `coin_type` only
     /// where the full `BIP44` address has the following structure:

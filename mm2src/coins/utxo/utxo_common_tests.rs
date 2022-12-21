@@ -119,7 +119,6 @@ pub(super) fn utxo_coin_fields_for_test(
             estimate_fee_blocks: 1,
             trezor_coin: None,
             spv_conf: None,
-            block_headers_verification_params: None,
             derivation_path: None,
         },
         decimals: TEST_COIN_DECIMALS,
