@@ -364,29 +364,33 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     }
 }
 
-fn calc_block_headers_limit_to_remove(mut storage_headers_count: u64, node_max: u64, new_headers_count: usize) -> i64 {
+fn calc_block_headers_limit_to_remove(
+    mut storage_headers_count: u64,
+    max_stored_block_headers: u64,
+    new_headers_count: usize,
+) -> i64 {
     let new_headers_count = new_headers_count as u64;
     let mut limit = 0;
-    if node_max > 0 && storage_headers_count >= node_max {
-        // storage_headers_count before this functionality might be greater than node_max
-        if storage_headers_count > node_max {
-            let value = storage_headers_count - node_max;
+    if max_stored_block_headers > 0 && storage_headers_count >= max_stored_block_headers {
+        // storage_headers_count before this functionality might be greater than max_stored_block_headers
+        if storage_headers_count > max_stored_block_headers {
+            let value = storage_headers_count - max_stored_block_headers;
             limit += value;
             storage_headers_count -= value;
         }
 
         // We need to confirm that the current (storage_headers_count + new_headers_count) does
-        // not surpass node_max
+        // not surpass max_stored_block_headers
         let total = storage_headers_count + new_headers_count;
-        if total > node_max {
-            let value = total - node_max;
+        if total > max_stored_block_headers {
+            let value = total - max_stored_block_headers;
             limit += value;
             storage_headers_count -= value;
         }
 
-        // Finally, if current storage_headers_count == node_max then we need to remove current
+        // Finally, if current storage_headers_count == max_stored_block_headers then we need to remove
         // (storage_headers_count - new_headers_count)
-        if storage_headers_count == node_max {
+        if storage_headers_count == max_stored_block_headers {
             let value = storage_headers_count - new_headers_count;
             limit += value;
         }
@@ -425,9 +429,9 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
 #[test]
 fn test_calc_block_headers_limit_to_remove() {
     let storage_headers_count = 400;
-    let node_max = 200;
+    let max_stored_block_headers = 200;
     let new_headers_count = 50;
 
-    let count = calc_block_headers_limit_to_remove(storage_headers_count, node_max, new_headers_count);
+    let count = calc_block_headers_limit_to_remove(storage_headers_count, max_stored_block_headers, new_headers_count);
     assert_eq!(250, count);
 }

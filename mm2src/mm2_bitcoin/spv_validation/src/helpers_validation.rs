@@ -311,7 +311,7 @@ pub struct SPVConf {
     // Determine if spv proof should be enable. Default to false.
     pub enable_spv_proof: bool,
     // Max headers count a node want stored. Default to None.
-    pub max_stored_block_headers: Option<u64>,
+    max_stored_block_headers: Option<u64>,
     /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
     /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
     pub verification_params: Option<BlockHeaderVerificationParams>,
@@ -335,7 +335,7 @@ pub struct BlockHeaderVerificationParams {
     pub constant_difficulty: bool,
     pub difficulty_algorithm: Option<DifficultyAlgorithm>,
     pub starting_block_height: u64,
-    pub starting_block_header_hex: String,
+    pub starting_block_header_hex: Option<String>,
 }
 
 /// Checks validity of header chain.
@@ -363,9 +363,13 @@ pub async fn validate_headers(
     params: &BlockHeaderVerificationParams,
 ) -> Result<(), SPVError> {
     let params = params.clone();
+    let Some(starting_block_header_hex) = params.starting_block_header_hex else {
+        return Err(SPVError::Internal("Expected block header hex".to_string()));
+    };
+
     let mut previous_height = previous_height;
     let mut previous_header = if previous_height == 0 {
-        BlockHeader::try_from(params.starting_block_header_hex).map_err(|e| SPVError::Internal(e.to_string()))?
+        BlockHeader::try_from(starting_block_header_hex).map_err(|e| SPVError::Internal(e.to_string()))?
     } else {
         storage
             .get_block_header(previous_height)
