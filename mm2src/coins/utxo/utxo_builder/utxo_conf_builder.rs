@@ -29,6 +29,7 @@ pub enum UtxoConfError {
     InvalidVersionGroupId(String),
     InvalidAddressFormat(String),
     InvalidDecimals(String),
+    WrongRetargetHeight(String),
 }
 
 impl From<Bip32Error> for UtxoConfError {
@@ -85,8 +86,14 @@ impl<'a> UtxoConfBuilder<'a> {
         let estimate_fee_mode = self.estimate_fee_mode();
         let estimate_fee_blocks = self.estimate_fee_blocks();
         let trezor_coin = self.trezor_coin();
-        let spv_conf = self.spv_conf();
         let derivation_path = self.derivation_path()?;
+
+        let spv_conf = self.spv_conf();
+        // When SPV is enabled, we should calculate the retarget height if it's correct or not
+        if let Some(spv) = &spv_conf {
+            spv.cal_retarget_height(self.ticker)
+                .map_to_mm(|err| UtxoConfError::WrongRetargetHeight(err.to_string()))?;
+        }
 
         Ok(UtxoCoinConf {
             ticker: self.ticker.to_owned(),

@@ -1,5 +1,5 @@
 use crate::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
-use crate::work::{next_block_bits, DifficultyAlgorithm, NextBlockBitsError};
+use crate::work::{next_block_bits, DifficultyAlgorithm, NextBlockBitsError, RETARGETING_INTERVAL};
 use chain::{BlockHeader, RawHeaderError};
 use derive_more::Display;
 use primitives::hash::H256;
@@ -55,6 +55,13 @@ pub enum SPVError {
     HeaderStorageError(BlockHeaderStorageError),
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
+    #[display(
+        fmt = "Wrong retarget height in config for: {coin} expected retarget_height: {expected_retarget_height}"
+    )]
+    WrongRetargetHeight {
+        coin: String,
+        expected_retarget_height: u64,
+    },
 }
 
 impl From<RawHeaderError> for SPVError {
@@ -306,6 +313,18 @@ pub(crate) fn merkle_prove(
 
 fn validate_header_prev_hash(actual: &H256, to_compare_with: &H256) -> bool { actual == to_compare_with }
 
+/// SPV headers verification parameters
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct BlockHeaderVerificationParams {
+    pub difficulty_check: bool,
+    pub constant_difficulty: bool,
+    pub difficulty_algorithm: Option<DifficultyAlgorithm>,
+    pub starting_block_header_height: Option<u64>,
+    pub starting_block_header_hex: Option<String>,
+    pub retarget_block_header_height: Option<u64>,
+    pub retarget_block_header_hex: Option<String>,
+}
+
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct SPVConf {
     // Determine if spv proof should be enable. Default to false.
@@ -320,22 +339,33 @@ pub struct SPVConf {
 impl SPVConf {
     pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
 
-    pub fn starting_block_height(&self) -> u64 {
+    pub fn starting_block_header_height(&self) -> u64 {
         self.verification_params
             .clone()
             .unwrap_or_default()
-            .starting_block_height
+            .starting_block_header_height
+            .unwrap_or_default()
     }
-}
 
-/// SPV headers verification parameters
-#[derive(Clone, Debug, Deserialize, Default)]
-pub struct BlockHeaderVerificationParams {
-    pub difficulty_check: bool,
-    pub constant_difficulty: bool,
-    pub difficulty_algorithm: Option<DifficultyAlgorithm>,
-    pub starting_block_height: u64,
-    pub starting_block_header_hex: Option<String>,
+    pub fn cal_retarget_height(&self, coin: &str) -> Result<(), SPVError> {
+        if let Some(verification) = &self.verification_params {
+            if let (Some(starting_height), Some(retarget_height)) = (
+                verification.starting_block_header_height,
+                verification.retarget_block_header_height,
+            ) {
+                let retarget_interval = RETARGETING_INTERVAL as u64;
+                for i in starting_height..starting_height + retarget_interval {
+                    if i % retarget_height == 0 && i != retarget_height {
+                        return Err(SPVError::WrongRetargetHeight {
+                            coin: coin.to_string(),
+                            expected_retarget_height: i,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Checks validity of header chain.
@@ -363,13 +393,14 @@ pub async fn validate_headers(
     params: &BlockHeaderVerificationParams,
 ) -> Result<(), SPVError> {
     let params = params.clone();
-    let Some(starting_block_header_hex) = params.starting_block_header_hex else {
-        return Err(SPVError::Internal("Expected block header hex".to_string()));
+    let starting_block_header_height = params.starting_block_header_height.unwrap_or_default();
+    let Some(starting_block_header_hex) = &params.starting_block_header_hex else {
+        return Err(SPVError::Internal("Expected starting_block_header_hex".to_string()));
     };
 
     let mut previous_height = previous_height;
-    let mut previous_header = if previous_height == 0 {
-        BlockHeader::try_from(starting_block_header_hex).map_err(|e| SPVError::Internal(e.to_string()))?
+    let mut previous_header = if previous_height == starting_block_header_height {
+        BlockHeader::try_from(starting_block_header_hex.clone()).map_err(|e| SPVError::Internal(e.to_string()))?
     } else {
         storage
             .get_block_header(previous_height)
@@ -379,10 +410,11 @@ pub async fn validate_headers(
                 reason: format!("Header with height {} is not found in storage", previous_height),
             })?
     };
+
     let mut previous_hash = previous_header.hash();
     let mut prev_bits = previous_header.bits.clone();
     for header in headers.into_iter() {
-        if previous_height == 0 {
+        if previous_height == starting_block_header_height {
             // previous_header is genesis header in this case, checking that the first header hash is the same as the genesis header hash is enough
             if header.hash() != previous_hash {
                 return Err(SPVError::InvalidChain(previous_height + 1));
@@ -390,6 +422,7 @@ pub async fn validate_headers(
             previous_height += 1;
             continue;
         }
+
         let cur_bits = header.bits.clone();
         if params.constant_difficulty && params.difficulty_check && cur_bits != prev_bits {
             return Err(SPVError::UnexpectedDifficultyChange);
@@ -398,6 +431,7 @@ pub async fn validate_headers(
             return Err(SPVError::InvalidChain(previous_height + 1));
         }
         if let Some(algorithm) = &params.difficulty_algorithm {
+            let retarget_block_hex = &params.retarget_block_header_hex;
             if !params.constant_difficulty
                 && params.difficulty_check
                 && cur_bits
@@ -408,6 +442,7 @@ pub async fn validate_headers(
                         previous_height as u32,
                         storage,
                         algorithm,
+                        retarget_block_hex,
                     )
                     .await?
             {
@@ -623,8 +658,10 @@ mod tests {
             constant_difficulty: false,
             difficulty_algorithm: None,
             // Will not be used since previous_height is not 0
-            starting_block_height: 0,
+            starting_block_header_height: None,
             starting_block_header_hex: Some("".into()),
+            retarget_block_header_height: None,
+            retarget_block_header_hex: None,
         };
         block_on(validate_headers(
             "MORTY",
@@ -647,8 +684,10 @@ mod tests {
             constant_difficulty: false,
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
             // Will not be used since previous_height is not 0
-            starting_block_height: 0,
+            starting_block_header_height: None,
             starting_block_header_hex: Some("010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299".into()),
+            retarget_block_header_height: None,
+            retarget_block_header_hex: None,
         };
         block_on(validate_headers(
             "BTC",
