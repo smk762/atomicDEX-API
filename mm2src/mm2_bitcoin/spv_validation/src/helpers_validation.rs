@@ -624,7 +624,7 @@ mod tests {
             difficulty_algorithm: None,
             // Will not be used since previous_height is not 0
             starting_block_height: 0,
-            starting_block_header_hex: "".into(),
+            starting_block_header_hex: Some("".into()),
         };
         block_on(validate_headers(
             "MORTY",
@@ -648,7 +648,7 @@ mod tests {
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
             // Will not be used since previous_height is not 0
             starting_block_height: 0,
-            starting_block_header_hex: "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299".into(),
+            starting_block_header_hex: Some("010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299".into()),
         };
         block_on(validate_headers(
             "BTC",
