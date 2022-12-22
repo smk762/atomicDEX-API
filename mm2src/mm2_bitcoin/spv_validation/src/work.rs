@@ -55,11 +55,18 @@ pub async fn next_block_bits(
     last_block_height: u32,
     storage: &dyn BlockHeaderStorageOps,
     algorithm: &DifficultyAlgorithm,
-    retarget_block_hex: &Option<String>,
+    retarget_block_header_hex: &Option<String>,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     match algorithm {
         DifficultyAlgorithm::BitcoinMainnet => {
-            btc_mainnet_next_block_bits(coin, last_block_header, last_block_height, storage, retarget_block_hex).await
+            btc_mainnet_next_block_bits(
+                coin,
+                last_block_header,
+                last_block_height,
+                storage,
+                retarget_block_header_hex,
+            )
+            .await
         },
         DifficultyAlgorithm::BitcoinTestnet => {
             btc_testnet_next_block_bits(
@@ -68,7 +75,7 @@ pub async fn next_block_bits(
                 last_block_header,
                 last_block_height,
                 storage,
-                retarget_block_hex,
+                retarget_block_header_hex,
             )
             .await
         },
@@ -90,7 +97,7 @@ async fn btc_retarget_bits(
     height: u32,
     last_block_header: BlockHeader,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_block_hex: &Option<String>,
+    retarget_block_header_hex: &Option<String>,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits_compact: Compact = MAX_BITS_BTC.into();
 
@@ -99,12 +106,7 @@ async fn btc_retarget_bits(
         return Ok(BlockHeaderBits::Compact(max_bits_compact));
     }
 
-    println!(
-        "height{height}, retarget_ref {}, RETARGETING_INTERVAL{RETARGETING_INTERVAL}",
-        height - RETARGETING_INTERVAL
-    );
-
-    let retarget_header = if let Some(retarget_block) = retarget_block_hex {
+    let retarget_header = if let Some(retarget_block) = retarget_block_header_hex {
         if retarget_ref == RETARGETING_INTERVAL as u64 {
             BlockHeader::try_from(retarget_block.clone())
                 .map_err(|e| SPVError::Internal(e.to_string()))
@@ -153,7 +155,7 @@ async fn btc_mainnet_next_block_bits(
     last_block_header: BlockHeader,
     last_block_height: u32,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_block_hex: &Option<String>,
+    retarget_block_header_hex: &Option<String>,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     if last_block_height == 0 {
         return Ok(BlockHeaderBits::Compact(MAX_BITS_BTC.into()));
@@ -163,7 +165,7 @@ async fn btc_mainnet_next_block_bits(
     let last_block_bits = last_block_header.bits.clone();
 
     if is_retarget_height(height) {
-        btc_retarget_bits(coin, height, last_block_header, storage, retarget_block_hex).await
+        btc_retarget_bits(coin, height, last_block_header, storage, retarget_block_header_hex).await
     } else {
         Ok(last_block_bits)
     }
@@ -175,7 +177,7 @@ async fn btc_testnet_next_block_bits(
     last_block_header: BlockHeader,
     last_block_height: u32,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_block_hex: &Option<String>,
+    retarget_block_header_hex: &Option<String>,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits = BlockHeaderBits::Compact(MAX_BITS_BTC.into());
     if last_block_height == 0 {
@@ -187,7 +189,7 @@ async fn btc_testnet_next_block_bits(
     let max_time_gap = last_block_header.time + 2 * TARGET_SPACING_SECONDS;
 
     if is_retarget_height(height) {
-        btc_retarget_bits(coin, height, last_block_header, storage, retarget_block_hex).await
+        btc_retarget_bits(coin, height, last_block_header, storage, retarget_block_header_hex).await
     } else if current_block_timestamp > max_time_gap {
         Ok(max_bits)
     } else if last_block_bits != max_bits {
