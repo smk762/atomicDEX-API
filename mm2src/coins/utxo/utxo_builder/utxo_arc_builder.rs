@@ -364,7 +364,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     }
 }
 
-fn calc_block_headers_limit_to_remove(
+pub(crate) fn calc_block_headers_limit_to_remove(
     mut storage_headers_count: u64,
     max_stored_block_headers: u64,
     new_headers_count: usize,
@@ -424,14 +424,4 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
             .weak_spawner()
             .spawn_with_settings(fut, settings);
     }
-}
-
-#[test]
-fn test_calc_block_headers_limit_to_remove() {
-    let storage_headers_count = 400;
-    let max_stored_block_headers = 200;
-    let new_headers_count = 50;
-
-    let count = calc_block_headers_limit_to_remove(storage_headers_count, max_stored_block_headers, new_headers_count);
-    assert_eq!(250, count);
 }

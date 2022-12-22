@@ -250,8 +250,7 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
 
         async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
-            let h = query_single_row(&conn, &sql, NO_PARAMS, |row| row.get::<usize, i64>(0))?;
-            if let Some(height) = h {
+            if let Some(height) = query_single_row(&conn, &sql, NO_PARAMS, |row| row.get::<usize, i64>(0))? {
                 let height = height
                     .try_into()
                     .map_err(|e: TryFromIntError| BlockHeaderStorageError::DecodeError {

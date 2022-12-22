@@ -92,6 +92,32 @@ fn retarget_timespan(retarget_timestamp: u32, last_timestamp: u32) -> u32 {
     range_constrain(timespan, MIN_TIMESPAN as i64, MAX_TIMESPAN as i64) as u32
 }
 
+async fn get_retarget_header(
+    storage: &dyn BlockHeaderStorageOps,
+    retarget_block_header_hex: &Option<String>,
+    retarget_ref: u64,
+    coin: &str,
+) -> Result<BlockHeader, NextBlockBitsError> {
+    if let Some(hex) = retarget_block_header_hex {
+        if retarget_ref == RETARGETING_INTERVAL as u64 {
+            return BlockHeader::try_from(hex.clone())
+                .map_err(|e| SPVError::Internal(e.to_string()))
+                .map_err(|_| NextBlockBitsError::NoSuchBlockHeader {
+                    coin: coin.into(),
+                    height: retarget_ref,
+                });
+        }
+    };
+
+    storage
+        .get_block_header(retarget_ref)
+        .await?
+        .ok_or(NextBlockBitsError::NoSuchBlockHeader {
+            coin: coin.into(),
+            height: retarget_ref,
+        })
+}
+
 async fn btc_retarget_bits(
     coin: &str,
     height: u32,
@@ -106,29 +132,7 @@ async fn btc_retarget_bits(
         return Ok(BlockHeaderBits::Compact(max_bits_compact));
     }
 
-    let retarget_header = if let Some(retarget_block) = retarget_block_header_hex {
-        if retarget_ref == RETARGETING_INTERVAL as u64 {
-            BlockHeader::try_from(retarget_block.clone())
-                .map_err(|e| SPVError::Internal(e.to_string()))
-                .map_err(|err| NextBlockBitsError::Internal(err.to_string()))?
-        } else {
-            storage
-                .get_block_header(retarget_ref)
-                .await?
-                .ok_or(NextBlockBitsError::NoSuchBlockHeader {
-                    coin: coin.into(),
-                    height: retarget_ref,
-                })?
-        }
-    } else {
-        storage
-            .get_block_header(retarget_ref)
-            .await?
-            .ok_or(NextBlockBitsError::NoSuchBlockHeader {
-                coin: coin.into(),
-                height: retarget_ref,
-            })?
-    };
+    let retarget_header = get_retarget_header(storage, retarget_block_header_hex, retarget_ref, coin).await?;
 
     // timestamp of block(height - RETARGETING_INTERVAL)
     let retarget_timestamp = retarget_header.time;

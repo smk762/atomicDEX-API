@@ -89,7 +89,7 @@ impl<'a> UtxoConfBuilder<'a> {
         let derivation_path = self.derivation_path()?;
 
         let spv_conf = self.spv_conf();
-        // When SPV is enabled, we should calculate the retarget_block_header_height if it's correct or not
+        // When SPV is enabled, we calculate the retarget_block_header_height for authenticity.
         if let Some(spv) = &spv_conf {
             spv.calculate_retarget_height(self.ticker)
                 .map_to_mm(|err| UtxoConfError::WrongRetargetHeight(err.to_string()))?;

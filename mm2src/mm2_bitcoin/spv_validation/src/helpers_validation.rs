@@ -316,16 +316,15 @@ pub(crate) fn merkle_prove(
 fn validate_header_prev_hash(actual: &H256, to_compare_with: &H256) -> bool { actual == to_compare_with }
 
 /// SPV headers verification parameters
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct BlockHeaderVerificationParams {
     pub difficulty_check: bool,
     pub constant_difficulty: bool,
     pub difficulty_algorithm: Option<DifficultyAlgorithm>,
-    // 0 will be the default value if starting_block_header_height is empty
+    // 0 will be the default value if starting_block_header_height is None
     pub starting_block_header_height: Option<u64>,
     // Use (starting_block_header_height +1) header hex if starting_block_header_height is set else use genesis block
     // header hex.
-    // Genesis block header.
     pub starting_block_header_hex: String,
     // retarget_block_header_height is needed if starting_block_header_height is set.
     pub retarget_block_header_height: Option<u64>,
@@ -337,9 +336,9 @@ pub struct BlockHeaderVerificationParams {
 pub struct SPVConf {
     // Determine if spv proof should be enable. Default to false.
     pub enable_spv_proof: bool,
-    // No limit will be set if max_stored_block_headers is empty.
+    // No limit will be set if max_stored_block_headers is None.
     max_stored_block_headers: Option<u64>,
-    // 0 will be the default value if starting_block_header_height is empty
+    // 0 will be the default value if starting_block_header_height is None
     starting_block_header_height: Option<u64>,
     /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
     /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
@@ -350,13 +349,13 @@ impl SPVConf {
     pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
 
     pub fn starting_block_header_height(&self) -> u64 {
-        let h2 = self
-            .verification_params
-            .clone()
-            .unwrap_or_default()
-            .starting_block_header_height
-            .unwrap_or_default();
-        self.starting_block_header_height.unwrap_or(h2)
+        if let Some(params) = &self.verification_params {
+            if let Some(height) = params.starting_block_header_height {
+                return height;
+            };
+        };
+
+        self.starting_block_header_height.unwrap_or_default()
     }
 
     pub fn calculate_retarget_height(&self, coin: &str) -> Result<(), SPVError> {
@@ -717,6 +716,7 @@ mod tests {
         let starting_block_header_hex =
         "01000000f026cfa41e6abf9859c8b64fdc7d6481dd196a59111b78d229a223de0000000019b2600f2d1d455788c54428b2a1731e7e43388ca0412bbd40ae5c82b04f9e27b0fe8d49ffff001d7a248b01".to_string();
 
+        // test for good retarget_block_header_height
         let spv_conf = SPVConf {
             enable_spv_proof: true,
             max_stored_block_headers: None,
@@ -733,6 +733,7 @@ mod tests {
         };
         assert!(spv_conf.calculate_retarget_height("BTC").is_ok());
 
+        // test for bad retarget_block_header_height
         let verification_params = spv_conf.clone().verification_params.unwrap();
         let spv_conf = SPVConf {
             verification_params: Some(BlockHeaderVerificationParams {
