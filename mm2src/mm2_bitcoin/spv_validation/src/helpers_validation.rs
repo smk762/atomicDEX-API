@@ -321,7 +321,7 @@ pub struct BlockHeaderVerificationParams {
     pub difficulty_check: bool,
     pub constant_difficulty: bool,
     pub difficulty_algorithm: Option<DifficultyAlgorithm>,
-    // 0 will be the default value if starting_block_header_height is None
+    // Where to start fetching block height from. 0 will be the default value if starting_block_header_height is None
     pub starting_block_header_height: Option<u64>,
     // Use (starting_block_header_height +1) header hex if starting_block_header_height is set else use genesis block
     // header hex.
@@ -336,9 +336,9 @@ pub struct BlockHeaderVerificationParams {
 pub struct SPVConf {
     // Determine if spv proof should be enable. Default to false.
     pub enable_spv_proof: bool,
-    // No limit will be set if max_stored_block_headers is None.
+    // Limit of block headers allowed to stored in db. No limit will be set if max_stored_block_headers is None.
     max_stored_block_headers: Option<u64>,
-    // 0 will be the default value if starting_block_header_height is None
+    // Where to start fetching block height from. 0 will be the default value if starting_block_header_height is None
     starting_block_header_height: Option<u64>,
     /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
     /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.

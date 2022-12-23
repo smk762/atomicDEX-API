@@ -26,8 +26,6 @@ fn is_retarget_height(height: u32) -> bool { height % RETARGETING_INTERVAL == 0 
 
 #[derive(Clone, Debug, Display, Eq, PartialEq)]
 pub enum NextBlockBitsError {
-    #[display(fmt = "Internal Error: {}", _0)]
-    Internal(String),
     #[display(fmt = "Block headers storage error: {}", _0)]
     StorageError(BlockHeaderStorageError),
     #[display(fmt = "Can't find Block header for {} with height {}", coin, height)]

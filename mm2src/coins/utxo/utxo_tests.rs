@@ -4315,7 +4315,7 @@ fn test_block_header_utxo_loop() {
         UtxoRpcClientEnum::Electrum(electrum) => electrum.clone(),
         UtxoRpcClientEnum::Native(_) => unreachable!(),
     };
-    let spv_conf = arc.conf.spv_conf.clone().unwrap_or_default();
+    let spv_conf = arc.conf.spv_conf().clone();
 
     let (sync_status_notifier, _) = channel::<UtxoSyncStatus>(1);
     let loop_handle = UtxoSyncStatusLoopHandle::new(sync_status_notifier);
