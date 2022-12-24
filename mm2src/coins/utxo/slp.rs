@@ -14,7 +14,7 @@ use crate::utxo::{generate_and_send_tx, sat_from_big_decimal, ActualTxFee, Addit
                   FeePolicy, GenerateTxError, RecentlySpentOutPointsGuard, UtxoCoinConf, UtxoCoinFields,
                   UtxoCommonOps, UtxoTx, UtxoTxBroadcastOps, UtxoTxGenerationOps};
 use crate::{BalanceFut, CheckIfMyPaymentSentArgs, CoinBalance, CoinFutSpawner, FeeApproxStage, FoundSwapTxSpend,
-            HistorySyncState, MarketCoinOps, MmCoin, NegotiateSwapContractAddrErr, NumConversError,
+            GetPublicKeyError, HistorySyncState, MarketCoinOps, MmCoin, NegotiateSwapContractAddrErr, NumConversError,
             PaymentInstructions, PaymentInstructionsErr, PrivKeyPolicyNotAllowed, RawTransactionFut,
             RawTransactionRequest, SearchForSwapTxSpendInput, SendMakerPaymentArgs, SendMakerRefundsPaymentArgs,
             SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs, SendTakerRefundsPaymentArgs,
@@ -1087,7 +1087,7 @@ impl MarketCoinOps for SlpToken {
         slp_address.encode().map_to_mm(MyAddressError::InternalError)
     }
 
-    fn get_public_key(&self) -> Result<String, MmError<UnexpectedDerivationMethod>> {
+    fn get_public_key(&self) -> MmResult<String, GetPublicKeyError> {
         let pubkey = utxo_common::my_public_key(self.platform_coin.as_ref())?;
         Ok(pubkey.to_string())
     }

@@ -70,20 +70,20 @@ cfg_wasm32! {
 }
 
 use super::{coin_conf, AsyncMutex, BalanceError, BalanceFut, CheckIfMyPaymentSentArgs, CoinBalance, CoinFutSpawner,
-            CoinProtocol, CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, HistorySyncState,
-            IguanaPrivKey, MarketCoinOps, MmCoin, MyAddressError, NegotiateSwapContractAddrErr, NumConversError,
-            NumConversResult, PaymentInstructions, PaymentInstructionsErr, PrivKeyBuildPolicy,
+            CoinProtocol, CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, GetPublicKeyError,
+            HistorySyncState, IguanaPrivKey, MarketCoinOps, MmCoin, MyAddressError, NegotiateSwapContractAddrErr,
+            NumConversError, NumConversResult, PaymentInstructions, PaymentInstructionsErr, PrivKeyBuildPolicy,
             PrivKeyPolicyNotAllowed, RawTransactionError, RawTransactionFut, RawTransactionRequest, RawTransactionRes,
             RawTransactionResult, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared,
             SearchForSwapTxSpendInput, SendMakerPaymentArgs, SendMakerRefundsPaymentArgs,
             SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs, SendTakerRefundsPaymentArgs,
             SendTakerSpendsMakerPaymentArgs, SignatureError, SignatureResult, SwapOps, TradeFee, TradePreimageError,
             TradePreimageFut, TradePreimageResult, TradePreimageValue, Transaction, TransactionDetails,
-            TransactionEnum, TransactionErr, TransactionFut, TxMarshalingErr, UnexpectedDerivationMethod,
-            ValidateAddressResult, ValidateFeeArgs, ValidateInstructionsErr, ValidateOtherPubKeyErr,
-            ValidatePaymentError, ValidatePaymentFut, ValidatePaymentInput, VerificationError, VerificationResult,
-            WatcherOps, WatcherSearchForSwapTxSpendInput, WatcherValidatePaymentInput, WatcherValidateTakerFeeInput,
-            WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest, WithdrawResult};
+            TransactionEnum, TransactionErr, TransactionFut, TxMarshalingErr, ValidateAddressResult, ValidateFeeArgs,
+            ValidateInstructionsErr, ValidateOtherPubKeyErr, ValidatePaymentError, ValidatePaymentFut,
+            ValidatePaymentInput, VerificationError, VerificationResult, WatcherOps, WatcherSearchForSwapTxSpendInput,
+            WatcherValidatePaymentInput, WatcherValidateTakerFeeInput, WithdrawError, WithdrawFee, WithdrawFut,
+            WithdrawRequest, WithdrawResult};
 pub use rlp;
 
 #[cfg(test)] mod eth_tests;
@@ -1371,17 +1371,21 @@ impl MarketCoinOps for EthCoin {
         Ok(checksum_address(&format!("{:#02x}", self.my_address)))
     }
 
-    fn get_public_key(&self) -> Result<String, MmError<UnexpectedDerivationMethod>> {
-        #[allow(clippy::infallible_destructuring_match)]
-        let key_pair = match self.priv_key_policy {
-            EthPrivKeyPolicy::KeyPair(ref key_pair) => key_pair,
-            // Return a default pubkey for a while.
-            // TODO return a pubkey extracted from `Login to AtomicDEX` signature.
+    fn get_public_key(&self) -> MmResult<String, GetPublicKeyError> {
+        match self.priv_key_policy {
+            EthPrivKeyPolicy::KeyPair(ref key_pair) => {
+                let uncompressed_without_prefix = hex::encode(key_pair.public());
+                Ok(format!("04{}", uncompressed_without_prefix))
+            },
             #[cfg(target_arch = "wasm32")]
-            EthPrivKeyPolicy::Metamask(_) => return Ok("NOT SUPPORTED YET".to_string()),
-        };
-        let uncompressed_without_prefix = hex::encode(key_pair.public());
-        Ok(format!("04{}", uncompressed_without_prefix))
+            EthPrivKeyPolicy::Metamask(ref metamask_weak) => {
+                let metamask_ctx = metamask_weak
+                    .upgrade()
+                    .or_mm_err(|| GetPublicKeyError::InternalError("'MetamaskCtx' is freed already".to_string()))?;
+                let uncompressed = metamask_ctx.eth_account_pubkey_uncompressed();
+                Ok(format!("{uncompressed:02x}"))
+            },
+        }
     }
 
     /// Hash message for signature using Ethereum's message signing format.

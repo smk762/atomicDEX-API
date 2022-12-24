@@ -11,8 +11,6 @@ use web3::{RequestId, Transport};
 pub struct EthConfig {
     /// Whether to check if an active `ChainId` is expected and to switch it.
     pub chain_id: Option<u64>,
-    /// Whether to check if an active ETH account is expected.
-    pub eth_account: Option<String>,
 }
 
 #[derive(Clone)]
@@ -84,14 +82,6 @@ impl MetamaskTransport {
 
         // Lock the MetaMask session and keep it until the RPC is not finished.
         let metamask_session = MetamaskSession::lock(&self.inner.eip1193).await;
-
-        if let Some(ref expected_account) = self.inner.eth_config.eth_account {
-            let current_account = metamask_ctx.get_current_eth_account()?;
-            if current_account.address != *expected_account {
-                let error = format!("An active MetaMask account has been changed. Expected '{expected_account}', found '{current_account:?}'");
-                return Err(web3_transport_err(error));
-            }
-        }
 
         if let Some(expected_chain_id) = self.inner.eth_config.chain_id {
             let current_chain_id = metamask_ctx.get_current_chain_id()?;

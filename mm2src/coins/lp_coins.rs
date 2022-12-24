@@ -192,7 +192,7 @@ macro_rules! ok_or_continue_after_sleep {
 pub mod coin_balance;
 
 pub mod coin_errors;
-use coin_errors::{MyAddressError, ValidatePaymentError, ValidatePaymentFut};
+use coin_errors::{GetPublicKeyError, MyAddressError, ValidatePaymentError, ValidatePaymentFut};
 
 #[doc(hidden)]
 #[cfg(test)]
@@ -791,7 +791,7 @@ pub trait MarketCoinOps {
 
     fn my_address(&self) -> MmResult<String, MyAddressError>;
 
-    fn get_public_key(&self) -> Result<String, MmError<UnexpectedDerivationMethod>>;
+    fn get_public_key(&self) -> MmResult<String, GetPublicKeyError>;
 
     fn sign_message_hash(&self, _message: &str) -> Option<[u8; 32]>;
 

@@ -94,3 +94,13 @@ impl From<MyAddressError> for TxHistoryError {
 impl From<MyAddressError> for MyTxHistoryErrorV2 {
     fn from(err: MyAddressError) -> Self { Self::Internal(err.to_string()) }
 }
+
+#[derive(Debug, Display)]
+pub enum GetPublicKeyError {
+    UnexpectedDerivationMethod(UnexpectedDerivationMethod),
+    InternalError(String),
+}
+
+impl From<UnexpectedDerivationMethod> for GetPublicKeyError {
+    fn from(e: UnexpectedDerivationMethod) -> Self { GetPublicKeyError::UnexpectedDerivationMethod(e) }
+}

@@ -13,7 +13,7 @@ mod xpub;
 
 #[cfg(target_arch = "wasm32")] mod metamask_ctx;
 // Uncomment this to finish MetaMask login.
-// #[cfg(target_arch = "wasm32")] mod metamask_login;
+#[cfg(target_arch = "wasm32")] mod metamask_login;
 
 pub use bip32_child::{Bip32Child, Bip32DerPathError, Bip32DerPathOps, Bip44Tail};
 pub use crypto_ctx::{CryptoCtx, CryptoCtxError, CryptoInitError, CryptoInitResult, HwCtxInitError, KeyPairPolicy};

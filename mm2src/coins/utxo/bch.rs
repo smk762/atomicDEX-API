@@ -10,8 +10,8 @@ use crate::utxo::utxo_common::big_decimal_from_sat_unsigned;
 use crate::utxo::utxo_tx_history_v2::{UtxoMyAddressesHistoryError, UtxoTxDetailsError, UtxoTxDetailsParams,
                                       UtxoTxHistoryOps};
 use crate::{BlockHeightAndTime, CanRefundHtlc, CheckIfMyPaymentSentArgs, CoinBalance, CoinProtocol,
-            CoinWithDerivationMethod, IguanaPrivKey, NegotiateSwapContractAddrErr, PaymentInstructions,
-            PaymentInstructionsErr, PrivKeyBuildPolicy, RawTransactionFut, RawTransactionRequest,
+            CoinWithDerivationMethod, GetPublicKeyError, IguanaPrivKey, NegotiateSwapContractAddrErr,
+            PaymentInstructions, PaymentInstructionsErr, PrivKeyBuildPolicy, RawTransactionFut, RawTransactionRequest,
             SearchForSwapTxSpendInput, SendMakerPaymentArgs, SendMakerRefundsPaymentArgs,
             SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs, SendTakerRefundsPaymentArgs,
             SendTakerSpendsMakerPaymentArgs, SignatureResult, SwapOps, TradePreimageValue, TransactionFut,
@@ -1126,7 +1126,7 @@ impl MarketCoinOps for BchCoin {
 
     fn my_address(&self) -> MmResult<String, MyAddressError> { utxo_common::my_address(self) }
 
-    fn get_public_key(&self) -> Result<String, MmError<UnexpectedDerivationMethod>> {
+    fn get_public_key(&self) -> MmResult<String, GetPublicKeyError> {
         let pubkey = utxo_common::my_public_key(&self.utxo_arc)?;
         Ok(pubkey.to_string())
     }

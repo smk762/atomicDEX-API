@@ -15,6 +15,7 @@ bs58 = "0.4.0"
 common = { path = "../common" }
 derive_more = "0.99"
 enum-primitive-derive = "0.2"
+ethkey = { git = "https://github.com/sergeyboyko0791/parity-ethereum.git" }
 futures = "0.3"
 hex = "0.4.2"
 http = "0.2"
@@ -23,6 +24,7 @@ keys = { path = "../mm2_bitcoin/keys" }
 lazy_static = "1.4"
 mm2_core = { path = "../mm2_core" }
 mm2_err_handle = { path = "../mm2_err_handle" }
+mm2_eth = { path = "../mm2_eth" }
 num-traits = "0.2"
 parking_lot = { version = "0.12.0", features = ["nightly"] }
 primitives = { path = "../mm2_bitcoin/primitives" }
@@ -40,4 +42,5 @@ trezor = { path = "../trezor" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 mm2_metamask = { path = "../mm2_metamask" }
+wasm-bindgen-test = { version = "0.3.2" }
 web3 = { git = "https://github.com/sergeyboyko0791/rust-web3", default-features = false }

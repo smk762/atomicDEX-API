@@ -16,10 +16,10 @@ use crate::utxo::{qtum, ActualTxFee, AdditionalTxData, AddrFromStrError, Broadca
                   UtxoActivationParams, UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps, UtxoFromLegacyReqErr,
                   UtxoTx, UtxoTxBroadcastOps, UtxoTxGenerationOps, VerboseTransactionFrom, UTXO_LOCK};
 use crate::{BalanceError, BalanceFut, CheckIfMyPaymentSentArgs, CoinBalance, CoinFutSpawner, FeeApproxStage,
-            FoundSwapTxSpend, HistorySyncState, IguanaPrivKey, MarketCoinOps, MmCoin, NegotiateSwapContractAddrErr,
-            PaymentInstructions, PaymentInstructionsErr, PrivKeyBuildPolicy, PrivKeyPolicyNotAllowed,
-            RawTransactionFut, RawTransactionRequest, SearchForSwapTxSpendInput, SendMakerPaymentArgs,
-            SendMakerRefundsPaymentArgs, SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs,
+            FoundSwapTxSpend, GetPublicKeyError, HistorySyncState, IguanaPrivKey, MarketCoinOps, MmCoin,
+            NegotiateSwapContractAddrErr, PaymentInstructions, PaymentInstructionsErr, PrivKeyBuildPolicy,
+            PrivKeyPolicyNotAllowed, RawTransactionFut, RawTransactionRequest, SearchForSwapTxSpendInput,
+            SendMakerPaymentArgs, SendMakerRefundsPaymentArgs, SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs,
             SendTakerRefundsPaymentArgs, SendTakerSpendsMakerPaymentArgs, SignatureResult, SwapOps, TradeFee,
             TradePreimageError, TradePreimageFut, TradePreimageResult, TradePreimageValue, TransactionDetails,
             TransactionEnum, TransactionErr, TransactionFut, TransactionType, TxMarshalingErr,
@@ -1129,7 +1129,7 @@ impl MarketCoinOps for Qrc20Coin {
 
     fn my_address(&self) -> MmResult<String, MyAddressError> { utxo_common::my_address(self) }
 
-    fn get_public_key(&self) -> Result<String, MmError<UnexpectedDerivationMethod>> {
+    fn get_public_key(&self) -> MmResult<String, GetPublicKeyError> {
         let pubkey = utxo_common::my_public_key(self.as_ref())?;
         Ok(pubkey.to_string())
     }

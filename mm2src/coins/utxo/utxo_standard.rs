@@ -20,15 +20,15 @@ use crate::tx_history_storage::{GetTxHistoryFilters, WalletId};
 use crate::utxo::utxo_builder::{UtxoArcBuilder, UtxoCoinBuilder};
 use crate::utxo::utxo_tx_history_v2::{UtxoMyAddressesHistoryError, UtxoTxDetailsError, UtxoTxDetailsParams,
                                       UtxoTxHistoryOps};
-use crate::{CanRefundHtlc, CheckIfMyPaymentSentArgs, CoinBalance, CoinWithDerivationMethod, GetWithdrawSenderAddress,
-            IguanaPrivKey, NegotiateSwapContractAddrErr, PaymentInstructions, PaymentInstructionsErr,
-            PrivKeyBuildPolicy, SearchForSwapTxSpendInput, SendMakerPaymentArgs, SendMakerRefundsPaymentArgs,
-            SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs, SendTakerRefundsPaymentArgs,
-            SendTakerSpendsMakerPaymentArgs, SignatureResult, SwapOps, TradePreimageValue, TransactionFut,
-            TxMarshalingErr, ValidateAddressResult, ValidateFeeArgs, ValidateInstructionsErr, ValidateOtherPubKeyErr,
-            ValidatePaymentError, ValidatePaymentFut, ValidatePaymentInput, VerificationResult, WatcherOps,
-            WatcherSearchForSwapTxSpendInput, WatcherValidatePaymentInput, WatcherValidateTakerFeeInput, WithdrawFut,
-            WithdrawSenderAddress};
+use crate::{CanRefundHtlc, CheckIfMyPaymentSentArgs, CoinBalance, CoinWithDerivationMethod, GetPublicKeyError,
+            GetWithdrawSenderAddress, IguanaPrivKey, NegotiateSwapContractAddrErr, PaymentInstructions,
+            PaymentInstructionsErr, PrivKeyBuildPolicy, SearchForSwapTxSpendInput, SendMakerPaymentArgs,
+            SendMakerRefundsPaymentArgs, SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs,
+            SendTakerRefundsPaymentArgs, SendTakerSpendsMakerPaymentArgs, SignatureResult, SwapOps,
+            TradePreimageValue, TransactionFut, TxMarshalingErr, ValidateAddressResult, ValidateFeeArgs,
+            ValidateInstructionsErr, ValidateOtherPubKeyErr, ValidatePaymentError, ValidatePaymentFut,
+            ValidatePaymentInput, VerificationResult, WatcherOps, WatcherSearchForSwapTxSpendInput,
+            WatcherValidatePaymentInput, WatcherValidateTakerFeeInput, WithdrawFut, WithdrawSenderAddress};
 use common::executor::{AbortableSystem, AbortedError};
 use crypto::Bip44Chain;
 use futures::{FutureExt, TryFutureExt};
@@ -579,7 +579,7 @@ impl WatcherOps for UtxoStandardCoin {
 impl MarketCoinOps for UtxoStandardCoin {
     fn ticker(&self) -> &str { &self.utxo_arc.conf.ticker }
 
-    fn get_public_key(&self) -> Result<String, MmError<UnexpectedDerivationMethod>> {
+    fn get_public_key(&self) -> MmResult<String, GetPublicKeyError> {
         let pubkey = utxo_common::my_public_key(&self.utxo_arc)?;
         Ok(pubkey.to_string())
     }

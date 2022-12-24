@@ -2,16 +2,16 @@ use super::{CoinBalance, HistorySyncState, MarketCoinOps, MmCoin, SwapOps, Trade
 use crate::coin_errors::MyAddressError;
 use crate::solana::solana_common::{ui_amount_to_amount, PrepareTransferData, SufficientBalanceError};
 use crate::solana::{solana_common, AccountError, SolanaCommonOps, SolanaFeeDetails};
-use crate::{BalanceFut, CheckIfMyPaymentSentArgs, CoinFutSpawner, FeeApproxStage, FoundSwapTxSpend,
+use crate::{BalanceFut, CheckIfMyPaymentSentArgs, CoinFutSpawner, FeeApproxStage, FoundSwapTxSpend, GetPublicKeyError,
             NegotiateSwapContractAddrErr, PaymentInstructions, PaymentInstructionsErr, RawTransactionFut,
             RawTransactionRequest, SearchForSwapTxSpendInput, SendMakerPaymentArgs, SendMakerRefundsPaymentArgs,
             SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs, SendTakerRefundsPaymentArgs,
             SendTakerSpendsMakerPaymentArgs, SignatureResult, SolanaCoin, TradePreimageFut, TradePreimageResult,
             TradePreimageValue, TransactionDetails, TransactionFut, TransactionType, TxMarshalingErr,
-            UnexpectedDerivationMethod, ValidateAddressResult, ValidateFeeArgs, ValidateInstructionsErr,
-            ValidateOtherPubKeyErr, ValidatePaymentError, ValidatePaymentFut, ValidatePaymentInput,
-            VerificationResult, WatcherSearchForSwapTxSpendInput, WatcherValidatePaymentInput,
-            WatcherValidateTakerFeeInput, WithdrawError, WithdrawFut, WithdrawRequest, WithdrawResult};
+            ValidateAddressResult, ValidateFeeArgs, ValidateInstructionsErr, ValidateOtherPubKeyErr,
+            ValidatePaymentError, ValidatePaymentFut, ValidatePaymentInput, VerificationResult,
+            WatcherSearchForSwapTxSpendInput, WatcherValidatePaymentInput, WatcherValidateTakerFeeInput,
+            WithdrawError, WithdrawFut, WithdrawRequest, WithdrawResult};
 use async_trait::async_trait;
 use bincode::serialize;
 use common::executor::{abortable_queue::AbortableQueue, AbortableSystem, AbortedError};
@@ -233,7 +233,7 @@ impl MarketCoinOps for SplToken {
 
     fn my_address(&self) -> MmResult<String, MyAddressError> { Ok(self.platform_coin.my_address.clone()) }
 
-    fn get_public_key(&self) -> Result<String, MmError<UnexpectedDerivationMethod>> { unimplemented!() }
+    fn get_public_key(&self) -> MmResult<String, GetPublicKeyError> { unimplemented!() }
 
     fn sign_message_hash(&self, _message: &str) -> Option<[u8; 32]> { unimplemented!() }
 
