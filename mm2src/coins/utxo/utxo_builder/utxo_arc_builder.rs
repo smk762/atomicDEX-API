@@ -292,8 +292,6 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         }
         drop_mutability!(to_block_height);
 
-        println!("from_block_height{from_block_height} to_block_height{to_block_height}");
-
         // Todo: Add code for the case if a chain reorganization happens
         if from_block_height == block_count {
             sync_status_loop_handle.notify_sync_finished(to_block_height);

@@ -516,7 +516,7 @@ impl SPVConf {
                 ));
             }
 
-            // Verify max_stored_block_headers is not equal to or greater than retarget_interval.
+            // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
             if self.max_stored_block_headers.unwrap_or_default() > 0
                 && self.max_stored_block_headers.unwrap_or_default() <= retarget_interval
             {
@@ -528,7 +528,6 @@ impl SPVConf {
 
             let starting_retarget_block_height = &verification.starting_retarget_block_height;
             let starting_retarget_block_header_hex = &verification.starting_retarget_block_header_hex;
-
             // Verify that starting_retarget_block_header_hex is not empty when starting_retarget_block_height is set.
             if starting_retarget_block_height.is_some() && starting_retarget_block_header_hex.is_empty() {
                 return Err(SPVError::VerificationParamsError(
@@ -537,7 +536,7 @@ impl SPVConf {
                 ));
             };
 
-            // Verify retarget_height is the right one.
+            // Verify retarget_height is the right target header.
             if let Some(retarget_height) = starting_retarget_block_height {
                 let is_retarget = retarget_height % retarget_interval;
                 if is_retarget != 0 {
