@@ -65,25 +65,26 @@ use web3_transport::{http_transport::HttpTransportNode, EthFeeHistoryNamespace, 
 cfg_wasm32! {
     use crypto::{MetamaskArc, MetamaskWeak};
     use enum_from::EnumFromInner;
+    use ethereum_types::{H264, H520};
     use mm2_metamask::{from_metamask_error, MetamaskError, MetamaskRpcError, WithMetamaskRpcError};
     use web3::types::TransactionRequest;
 }
 
 use super::{coin_conf, AsyncMutex, BalanceError, BalanceFut, CheckIfMyPaymentSentArgs, CoinBalance, CoinFutSpawner,
-            CoinProtocol, CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, GetPublicKeyError,
-            HistorySyncState, IguanaPrivKey, MarketCoinOps, MmCoin, MyAddressError, NegotiateSwapContractAddrErr,
-            NumConversError, NumConversResult, PaymentInstructions, PaymentInstructionsErr, PrivKeyBuildPolicy,
+            CoinProtocol, CoinTransportMetrics, CoinsContext, FeeApproxStage, FoundSwapTxSpend, HistorySyncState,
+            IguanaPrivKey, MarketCoinOps, MmCoin, MyAddressError, NegotiateSwapContractAddrErr, NumConversError,
+            NumConversResult, PaymentInstructions, PaymentInstructionsErr, PrivKeyBuildPolicy,
             PrivKeyPolicyNotAllowed, RawTransactionError, RawTransactionFut, RawTransactionRequest, RawTransactionRes,
             RawTransactionResult, RpcClientType, RpcTransportEventHandler, RpcTransportEventHandlerShared,
             SearchForSwapTxSpendInput, SendMakerPaymentArgs, SendMakerRefundsPaymentArgs,
             SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs, SendTakerRefundsPaymentArgs,
             SendTakerSpendsMakerPaymentArgs, SignatureError, SignatureResult, SwapOps, TradeFee, TradePreimageError,
             TradePreimageFut, TradePreimageResult, TradePreimageValue, Transaction, TransactionDetails,
-            TransactionEnum, TransactionErr, TransactionFut, TxMarshalingErr, ValidateAddressResult, ValidateFeeArgs,
-            ValidateInstructionsErr, ValidateOtherPubKeyErr, ValidatePaymentError, ValidatePaymentFut,
-            ValidatePaymentInput, VerificationError, VerificationResult, WatcherOps, WatcherSearchForSwapTxSpendInput,
-            WatcherValidatePaymentInput, WatcherValidateTakerFeeInput, WithdrawError, WithdrawFee, WithdrawFut,
-            WithdrawRequest, WithdrawResult};
+            TransactionEnum, TransactionErr, TransactionFut, TxMarshalingErr, UnexpectedDerivationMethod,
+            ValidateAddressResult, ValidateFeeArgs, ValidateInstructionsErr, ValidateOtherPubKeyErr,
+            ValidatePaymentError, ValidatePaymentFut, ValidatePaymentInput, VerificationError, VerificationResult,
+            WatcherOps, WatcherSearchForSwapTxSpendInput, WatcherValidatePaymentInput, WatcherValidateTakerFeeInput,
+            WithdrawError, WithdrawFee, WithdrawFut, WithdrawRequest, WithdrawResult};
 pub use rlp;
 
 #[cfg(test)] mod eth_tests;
@@ -383,7 +384,15 @@ impl TryFrom<PrivKeyBuildPolicy> for EthPrivKeyBuildPolicy {
 pub enum EthPrivKeyPolicy {
     KeyPair(KeyPair),
     #[cfg(target_arch = "wasm32")]
-    Metamask(MetamaskWeak),
+    Metamask(EthMetamaskPolicy),
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
+pub struct EthMetamaskPolicy {
+    pub(crate) metamask_ctx: MetamaskWeak,
+    pub(crate) public_key: H264,
+    pub(crate) public_key_uncompressed: H520,
 }
 
 impl From<KeyPair> for EthPrivKeyPolicy {
@@ -1257,13 +1266,25 @@ impl SwapOps for EthCoin {
 
     #[inline]
     fn derive_htlc_key_pair(&self, _swap_unique_data: &[u8]) -> keys::KeyPair {
-        #[allow(clippy::infallible_destructuring_match)]
-        let key_pair = match self.priv_key_policy {
-            EthPrivKeyPolicy::KeyPair(ref key_pair) => key_pair,
+        match self.priv_key_policy {
+            EthPrivKeyPolicy::KeyPair(ref key_pair) => {
+                key_pair_from_secret(key_pair.secret().as_bytes()).expect("valid key")
+            },
             #[cfg(target_arch = "wasm32")]
             EthPrivKeyPolicy::Metamask(_) => todo!(),
-        };
-        key_pair_from_secret(key_pair.secret().as_bytes()).expect("valid key")
+        }
+    }
+
+    #[inline]
+    fn derive_htlc_pubkey(&self, _swap_unique_data: &[u8]) -> Vec<u8> {
+        match self.priv_key_policy {
+            EthPrivKeyPolicy::KeyPair(ref key_pair) => key_pair_from_secret(key_pair.secret().as_bytes())
+                .expect("valid key")
+                .public_slice()
+                .to_vec(),
+            #[cfg(target_arch = "wasm32")]
+            EthPrivKeyPolicy::Metamask(ref metamask_policy) => metamask_policy.public_key.as_bytes().to_vec(),
+        }
     }
 
     fn validate_other_pubkey(&self, raw_pubkey: &[u8]) -> MmResult<(), ValidateOtherPubKeyErr> {
@@ -1371,19 +1392,15 @@ impl MarketCoinOps for EthCoin {
         Ok(checksum_address(&format!("{:#02x}", self.my_address)))
     }
 
-    fn get_public_key(&self) -> MmResult<String, GetPublicKeyError> {
+    fn get_public_key(&self) -> Result<String, MmError<UnexpectedDerivationMethod>> {
         match self.priv_key_policy {
             EthPrivKeyPolicy::KeyPair(ref key_pair) => {
                 let uncompressed_without_prefix = hex::encode(key_pair.public());
                 Ok(format!("04{}", uncompressed_without_prefix))
             },
             #[cfg(target_arch = "wasm32")]
-            EthPrivKeyPolicy::Metamask(ref metamask_weak) => {
-                let metamask_ctx = metamask_weak
-                    .upgrade()
-                    .or_mm_err(|| GetPublicKeyError::InternalError("'MetamaskCtx' is freed already".to_string()))?;
-                let uncompressed = metamask_ctx.eth_account_pubkey_uncompressed();
-                Ok(format!("{uncompressed:02x}"))
+            EthPrivKeyPolicy::Metamask(ref metamask_policy) => {
+                Ok(format!("{:02x}", metamask_policy.public_key_uncompressed))
             },
         }
     }

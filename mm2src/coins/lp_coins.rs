@@ -192,7 +192,7 @@ macro_rules! ok_or_continue_after_sleep {
 pub mod coin_balance;
 
 pub mod coin_errors;
-use coin_errors::{GetPublicKeyError, MyAddressError, ValidatePaymentError, ValidatePaymentFut};
+use coin_errors::{MyAddressError, ValidatePaymentError, ValidatePaymentFut};
 
 #[doc(hidden)]
 #[cfg(test)]
@@ -708,7 +708,12 @@ pub trait SwapOps {
         other_side_address: Option<&[u8]>,
     ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>>;
 
+    /// Consider using [`SwapOps::derive_htlc_pubkey`] if you need the public key only.
+    /// Some coins may not have a private key.
     fn derive_htlc_key_pair(&self, swap_unique_data: &[u8]) -> KeyPair;
+
+    /// Derives an HTLC key-pair and returns a public key corresponding to that key.
+    fn derive_htlc_pubkey(&self, swap_unique_data: &[u8]) -> Vec<u8>;
 
     fn validate_other_pubkey(&self, raw_pubkey: &[u8]) -> MmResult<(), ValidateOtherPubKeyErr>;
 
@@ -791,7 +796,7 @@ pub trait MarketCoinOps {
 
     fn my_address(&self) -> MmResult<String, MyAddressError>;
 
-    fn get_public_key(&self) -> MmResult<String, GetPublicKeyError>;
+    fn get_public_key(&self) -> Result<String, MmError<UnexpectedDerivationMethod>>;
 
     fn sign_message_hash(&self, _message: &str) -> Option<[u8; 32]>;
 

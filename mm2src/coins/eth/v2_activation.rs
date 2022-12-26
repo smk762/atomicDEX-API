@@ -51,8 +51,8 @@ impl From<CryptoCtxError> for EthActivationV2Error {
     fn from(e: CryptoCtxError) -> Self { EthActivationV2Error::InternalError(e.to_string()) }
 }
 
-impl From<GetPublicKeyError> for EthActivationV2Error {
-    fn from(e: GetPublicKeyError) -> Self { EthActivationV2Error::InternalError(e.to_string()) }
+impl From<UnexpectedDerivationMethod> for EthActivationV2Error {
+    fn from(e: UnexpectedDerivationMethod) -> Self { EthActivationV2Error::InternalError(e.to_string()) }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -254,12 +254,12 @@ pub async fn eth_coin_from_conf_and_request_v2(
             build_http_transport(ctx, ticker.clone(), my_address_str, key_pair, &req.nodes).await?
         },
         #[cfg(target_arch = "wasm32")]
-        (EthRpcMode::Metamask, EthPrivKeyPolicy::Metamask(metamask_weak)) => {
+        (EthRpcMode::Metamask, EthPrivKeyPolicy::Metamask(metamask_policy)) => {
             // TODO change this
             let chain_id = chain_id.unwrap_or(0x1);
 
             let (web3, web3_instances) =
-                build_metamask_transport(ctx, metamask_weak.clone(), ticker.clone(), chain_id)?;
+                build_metamask_transport(ctx, metamask_policy.metamask_ctx.clone(), ticker.clone(), chain_id)?;
 
             // Check if MetaMask supports the given `chain_id`.
             // Please note that this request may take a long time.
@@ -341,7 +341,16 @@ pub(crate) async fn build_address_and_priv_key_policy(
         #[cfg(target_arch = "wasm32")]
         EthPrivKeyBuildPolicy::Metamask(metamask_ctx) => {
             let address = *metamask_ctx.check_active_eth_account()?;
-            return Ok((address, EthPrivKeyPolicy::Metamask(metamask_ctx.downgrade())));
+            let public_key_uncompressed = metamask_ctx.eth_account_pubkey_uncompressed();
+            let public_key = compress_public_key(public_key_uncompressed)?;
+            return Ok((
+                address,
+                EthPrivKeyPolicy::Metamask(EthMetamaskPolicy {
+                    metamask_ctx: metamask_ctx.downgrade(),
+                    public_key,
+                    public_key_uncompressed,
+                }),
+            ));
         },
     };
 
@@ -489,4 +498,12 @@ async fn check_metamask_support_chain_id(
             MmError::err(EthActivationV2Error::ActivationFailed { ticker, error })
         },
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn compress_public_key(uncompressed: H520) -> MmResult<H264, EthActivationV2Error> {
+    let public_key = PublicKey::from_slice(uncompressed.as_bytes())
+        .map_to_mm(|e| EthActivationV2Error::InternalError(e.to_string()))?;
+    let compressed = public_key.serialize();
+    Ok(H264::from(compressed))
 }

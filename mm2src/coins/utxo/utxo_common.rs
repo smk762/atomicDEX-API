@@ -4199,6 +4199,10 @@ pub fn derive_htlc_key_pair(coin: &UtxoCoinFields, _swap_unique_data: &[u8]) -> 
     }
 }
 
+pub fn derive_htlc_pubkey(coin: &dyn SwapOps, swap_unique_data: &[u8]) -> Vec<u8> {
+    coin.derive_htlc_key_pair(swap_unique_data).public_slice().to_vec()
+}
+
 pub fn validate_other_pubkey(raw_pubkey: &[u8]) -> MmResult<(), ValidateOtherPubKeyErr> {
     if let Err(err) = Public::from_slice(raw_pubkey) {
         return MmError::err(ValidateOtherPubKeyErr::InvalidPubKey(err.to_string()));
