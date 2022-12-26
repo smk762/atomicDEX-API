@@ -74,8 +74,9 @@ use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as 
 use script::{Builder, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::{serialize, serialize_with_flags, Error as SerError, SERIALIZE_TRANSACTION_WITNESS};
-use spv_validation::helpers_validation::{SPVConf, SPVError};
+use spv_validation::helpers_validation::{BlockHeaderVerificationParams, SPVError};
 use spv_validation::storage::BlockHeaderStorageError;
+use spv_validation::work::RETARGETING_INTERVAL;
 use std::array::TryFromSliceError;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
@@ -480,6 +481,74 @@ impl UtxoSyncStatusLoopHandle {
         self.0
             .try_send(UtxoSyncStatus::Finished { block_number })
             .debug_log_with_msg("No one seems interested in UtxoSyncStatus");
+    }
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct SPVConf {
+    // Determine if spv proof should be enable. Default to false.
+    pub enable_spv_proof: bool,
+    // Limit of block headers allowed to be stored in db..
+    max_stored_block_headers: Option<u64>,
+    // Where to start fetching block height from.
+    // Same value for starting_retarget_block_height in verification_params.
+    starting_block_header_height: Option<u64>,
+    /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
+    /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
+    pub verification_params: Option<BlockHeaderVerificationParams>,
+}
+
+impl SPVConf {
+    pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
+
+    pub fn starting_block_header_height(&self) -> u64 { self.starting_block_header_height.unwrap_or_default() }
+
+    pub fn validate_verification_params(&self, coin: &str) -> Result<(), SPVError> {
+        if let Some(verification) = &self.verification_params {
+            let retarget_interval = RETARGETING_INTERVAL as u64;
+
+            // Verify max_stored_block_headers is not equal to or greater than retarget_interval.
+            if self.starting_block_header_height != verification.starting_retarget_block_height {
+                return Err(SPVError::VerificationParamsError(
+                    "starting_block_header_height should be equal to starting_retarget_block_height in verification \
+                    params"
+                        .to_string(),
+                ));
+            }
+
+            // Verify max_stored_block_headers is not equal to or greater than retarget_interval.
+            if self.max_stored_block_headers.unwrap_or_default() > 0
+                && self.max_stored_block_headers.unwrap_or_default() <= retarget_interval
+            {
+                return Err(SPVError::VerificationParamsError(format!(
+                    "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
+                    self.max_stored_block_headers
+                )));
+            }
+
+            let starting_retarget_block_height = &verification.starting_retarget_block_height;
+            let starting_retarget_block_header_hex = &verification.starting_retarget_block_header_hex;
+
+            // Verify that starting_retarget_block_header_hex is not empty when starting_retarget_block_height is set.
+            if starting_retarget_block_height.is_some() && starting_retarget_block_header_hex.is_empty() {
+                return Err(SPVError::VerificationParamsError(
+                    "starting_retarget_block_header_hex can't be empty when starting_retarget_block_height is set"
+                        .to_string(),
+                ));
+            };
+
+            // Verify retarget_height is the right one.
+            if let Some(retarget_height) = starting_retarget_block_height {
+                let is_retarget = retarget_height % retarget_interval;
+                if is_retarget != 0 {
+                    return Err(SPVError::WrongRetargetHeight {
+                        coin: coin.to_string(),
+                        expected_height: retarget_height - is_retarget,
+                    });
+                };
+            }
+        }
+        Ok(())
     }
 }
 

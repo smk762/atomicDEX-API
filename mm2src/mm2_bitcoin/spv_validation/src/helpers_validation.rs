@@ -1,5 +1,5 @@
 use crate::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
-use crate::work::{next_block_bits, DifficultyAlgorithm, NextBlockBitsError, RETARGETING_INTERVAL};
+use crate::work::{next_block_bits, DifficultyAlgorithm, NextBlockBitsError};
 use chain::{BlockHeader, RawHeaderError};
 use derive_more::Display;
 use primitives::hash::H256;
@@ -11,6 +11,8 @@ use std::convert::TryFrom;
 
 #[derive(Clone, Debug, Display, Eq, PartialEq)]
 pub enum SPVError {
+    #[display(fmt = "Verification Params Error: {_0}")]
+    VerificationParamsError(String),
     #[display(fmt = "Overran a checked read on a slice")]
     ReadOverrun,
     #[display(fmt = "Attempted to parse a CompactInt without enough bytes")]
@@ -56,14 +58,10 @@ pub enum SPVError {
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
     #[display(
-        fmt = "Wrong retarget height in config for: {coin} expected retarget height: {expected_retarget_height}, 
-        expected retarget hex height: {expected_retarget_hex_height}"
+        fmt = "Wrong retarget block header height in config for: {coin} expected block header height : 
+        {expected_height}."
     )]
-    WrongRetargetHeight {
-        coin: String,
-        expected_retarget_height: u64,
-        expected_retarget_hex_height: u64,
-    },
+    WrongRetargetHeight { coin: String, expected_height: u64 },
 }
 
 impl From<RawHeaderError> for SPVError {
@@ -321,63 +319,9 @@ pub struct BlockHeaderVerificationParams {
     pub difficulty_check: bool,
     pub constant_difficulty: bool,
     pub difficulty_algorithm: Option<DifficultyAlgorithm>,
-    // Where to start fetching block height from. 0 will be the default value if starting_block_header_height is None
-    pub starting_block_header_height: Option<u64>,
-    // Use (starting_block_header_height +1) header hex if starting_block_header_height is set else use genesis block
-    // header hex.
-    pub starting_block_header_hex: String,
-    // retarget_block_header_height is needed if starting_block_header_height is set.
-    pub retarget_block_header_height: Option<u64>,
-    // retarget_block_header_hex is needed if starting_block_header_height is set. (2016)
-    pub retarget_block_header_hex: Option<String>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-pub struct SPVConf {
-    // Determine if spv proof should be enable. Default to false.
-    pub enable_spv_proof: bool,
-    // Limit of block headers allowed to stored in db. No limit will be set if max_stored_block_headers is None.
-    max_stored_block_headers: Option<u64>,
-    // Where to start fetching block height from. 0 will be the default value if starting_block_header_height is None
-    starting_block_header_height: Option<u64>,
-    /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
-    /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
-    pub verification_params: Option<BlockHeaderVerificationParams>,
-}
-
-impl SPVConf {
-    pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
-
-    pub fn starting_block_header_height(&self) -> u64 {
-        if let Some(params) = &self.verification_params {
-            if let Some(height) = params.starting_block_header_height {
-                return height;
-            };
-        };
-
-        self.starting_block_header_height.unwrap_or_default()
-    }
-
-    pub fn calculate_retarget_height(&self, coin: &str) -> Result<(), SPVError> {
-        if let Some(verification) = &self.verification_params {
-            if let (Some(starting_height), Some(retarget_height)) = (
-                verification.starting_block_header_height,
-                verification.retarget_block_header_height,
-            ) {
-                let retarget_interval = RETARGETING_INTERVAL as u64;
-                for i in starting_height..starting_height + retarget_interval {
-                    if i % retarget_interval == 0 && i != retarget_height {
-                        return Err(SPVError::WrongRetargetHeight {
-                            coin: coin.to_string(),
-                            expected_retarget_height: i,
-                            expected_retarget_hex_height: i - retarget_interval,
-                        });
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
+    // Same value for starting_retarget_block_height in SPVConf. default to 0
+    pub starting_retarget_block_height: Option<u64>,
+    pub starting_retarget_block_header_hex: String,
 }
 
 /// Checks validity of header chain.
@@ -405,12 +349,12 @@ pub async fn validate_headers(
     params: &BlockHeaderVerificationParams,
 ) -> Result<(), SPVError> {
     let params = params.clone();
-    let starting_block_header_height = params.starting_block_header_height.unwrap_or_default();
-    let starting_block_header_hex = &params.starting_block_header_hex;
+    let starting_block_header_height = params.starting_retarget_block_height.unwrap_or_default();
 
     let mut previous_height = previous_height;
     let mut previous_header = if previous_height == starting_block_header_height {
-        BlockHeader::try_from(starting_block_header_hex.clone()).map_err(|e| SPVError::Internal(e.to_string()))?
+        BlockHeader::try_from(params.starting_retarget_block_header_hex.clone())
+            .map_err(|e| SPVError::Internal(e.to_string()))?
     } else {
         storage
             .get_block_header(previous_height)
@@ -424,7 +368,7 @@ pub async fn validate_headers(
     let mut previous_hash = previous_header.hash();
     let mut prev_bits = previous_header.bits.clone();
     for header in headers.into_iter() {
-        if previous_height == starting_block_header_height {
+        if previous_height == 0 {
             // previous_header is genesis header in this case, checking that the first header hash is the same as the genesis header hash is enough
             if header.hash() != previous_hash {
                 return Err(SPVError::InvalidChain(previous_height + 1));
@@ -441,7 +385,7 @@ pub async fn validate_headers(
             return Err(SPVError::InvalidChain(previous_height + 1));
         }
         if let Some(algorithm) = &params.difficulty_algorithm {
-            let retarget_block_hex = &params.retarget_block_header_hex;
+            let retarget_block_hex = &params.starting_retarget_block_header_hex;
             if !params.constant_difficulty
                 && params.difficulty_check
                 && cur_bits
@@ -452,7 +396,7 @@ pub async fn validate_headers(
                         previous_height as u32,
                         storage,
                         algorithm,
-                        retarget_block_hex,
+                        (starting_block_header_height, retarget_block_hex),
                     )
                     .await?
             {
@@ -668,10 +612,8 @@ mod tests {
             constant_difficulty: false,
             difficulty_algorithm: None,
             // Will not be used since previous_height is not 0
-            starting_block_header_height: None,
-            starting_block_header_hex: "".into(),
-            retarget_block_header_height: None,
-            retarget_block_header_hex: None,
+            starting_retarget_block_height: None,
+            starting_retarget_block_header_hex: "".into(),
         };
         block_on(validate_headers(
             "MORTY",
@@ -694,10 +636,8 @@ mod tests {
             constant_difficulty: false,
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
             // Will not be used since previous_height is not 0
-            starting_block_header_height: None,
-            starting_block_header_hex: "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299".into(),
-            retarget_block_header_height: None,
-            retarget_block_header_hex: None,
+            starting_retarget_block_height: None,
+            starting_retarget_block_header_hex: "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299".into(),
         };
         block_on(validate_headers(
             "BTC",
@@ -707,52 +647,5 @@ mod tests {
             &params,
         ))
         .unwrap()
-    }
-
-    #[test]
-    fn test_calculate_retarget_height() {
-        let retarget_block_header_hex = Some
-            ("010000006397bb6abd4fc521c0d3f6071b5650389f0b4551bc40b4e6b067306900000000ace470aecda9c8818c8fe57688cd2a772b5a57954a00df0420a7dd546b6d2c576b0e7f49ffff001d33f0192f".to_string());
-        let starting_block_header_hex =
-        "01000000f026cfa41e6abf9859c8b64fdc7d6481dd196a59111b78d229a223de0000000019b2600f2d1d455788c54428b2a1731e7e43388ca0412bbd40ae5c82b04f9e27b0fe8d49ffff001d7a248b01".to_string();
-
-        // test for good retarget_block_header_height
-        let spv_conf = SPVConf {
-            enable_spv_proof: true,
-            max_stored_block_headers: None,
-            starting_block_header_height: None,
-            verification_params: Some(BlockHeaderVerificationParams {
-                difficulty_check: true,
-                constant_difficulty: false,
-                difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
-                starting_block_header_height: Some(3405),
-                starting_block_header_hex: starting_block_header_hex.clone(),
-                retarget_block_header_height: Some(4032),
-                retarget_block_header_hex: retarget_block_header_hex.clone(),
-            }),
-        };
-        assert!(spv_conf.calculate_retarget_height("BTC").is_ok());
-
-        // test for bad retarget_block_header_height
-        let verification_params = spv_conf.clone().verification_params.unwrap();
-        let spv_conf = SPVConf {
-            verification_params: Some(BlockHeaderVerificationParams {
-                retarget_block_header_height: Some(4021),
-                ..verification_params
-            }),
-            ..spv_conf
-        };
-        let calculate = spv_conf.calculate_retarget_height("BTC").err().unwrap();
-
-        if let SPVError::WrongRetargetHeight {
-            coin,
-            expected_retarget_height,
-            expected_retarget_hex_height,
-        } = calculate
-        {
-            assert_eq!(coin, "BTC");
-            assert_eq!(expected_retarget_height, 4032);
-            assert_eq!(expected_retarget_hex_height, 2016);
-        }
     }
 }

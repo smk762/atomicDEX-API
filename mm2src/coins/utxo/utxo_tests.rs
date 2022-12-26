@@ -39,6 +39,7 @@ use mocktopus::mocking::*;
 use rpc::v1::types::H256 as H256Json;
 use serialization::{deserialize, CoinVariant};
 use spv_validation::storage::BlockHeaderStorageOps;
+use spv_validation::work::DifficultyAlgorithm;
 use std::convert::TryFrom;
 use std::iter;
 use std::mem::discriminant;
@@ -4315,7 +4316,6 @@ fn test_block_header_utxo_loop() {
         UtxoRpcClientEnum::Electrum(electrum) => electrum.clone(),
         UtxoRpcClientEnum::Native(_) => unreachable!(),
     };
-    let spv_conf = arc.conf.spv_conf().clone();
 
     let (sync_status_notifier, _) = channel::<UtxoSyncStatus>(1);
     let loop_handle = UtxoSyncStatusLoopHandle::new(sync_status_notifier);
@@ -4325,7 +4325,6 @@ fn test_block_header_utxo_loop() {
             block_header_utxo_loop(
                 arc.downgrade(),
                 UtxoStandardCoin::from,
-                spv_conf,
                 loop_handle,
                 CURRENT_BLOCK_COUNT,
             )
@@ -4398,4 +4397,42 @@ fn test_calc_block_headers_limit_to_remove() {
 
     let count = calc_block_headers_limit_to_remove(storage_headers_count, max_stored_block_headers, new_headers_count);
     assert_eq!(count, 250);
+}
+
+#[test]
+fn test_spv_conf_validate_verification_params() {
+    // Block header hex for BLOCK HEIGHT 2016
+    let starting_retarget_block_header_hex =
+       "010000006397bb6abd4fc521c0d3f6071b5650389f0b4551bc40b4e6b067306900000000ace470aecda9c8818c8fe57688cd2a772b5a57954a00df0420a7dd546b6d2c576b0e7f49ffff001d33f0192f".to_string();
+
+    // test for good retarget_block_header_height
+    let spv_conf = SPVConf {
+        enable_spv_proof: true,
+        max_stored_block_headers: None,
+        starting_block_header_height: Some(4032),
+        verification_params: Some(BlockHeaderVerificationParams {
+            difficulty_check: true,
+            constant_difficulty: false,
+            difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
+            starting_retarget_block_height: Some(4032),
+            starting_retarget_block_header_hex,
+        }),
+    };
+    assert!(spv_conf.validate_verification_params("BTC").is_ok());
+
+    // test for bad retarget_block_header_height
+    let verification_params = spv_conf.clone().verification_params.unwrap();
+    let spv_conf = SPVConf {
+        starting_block_header_height: Some(4035),
+        verification_params: Some(BlockHeaderVerificationParams {
+            starting_retarget_block_height: Some(4035),
+            ..verification_params
+        }),
+        ..spv_conf
+    };
+    let validate = spv_conf.validate_verification_params("BTC").err().unwrap();
+    if let SPVError::WrongRetargetHeight { coin, expected_height } = validate {
+        assert_eq!(coin, "BTC");
+        assert_eq!(expected_height, 4032);
+    }
 }

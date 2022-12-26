@@ -15,7 +15,7 @@ use mm2_err_handle::prelude::*;
 #[cfg(test)] use mocktopus::macros::*;
 use script::Builder;
 use serde_json::Value as Json;
-use spv_validation::helpers_validation::{validate_headers, SPVConf};
+use spv_validation::helpers_validation::validate_headers;
 use spv_validation::storage::BlockHeaderStorageOps;
 
 const FETCH_BLOCK_HEADERS_ATTEMPTS: u64 = 3;
@@ -100,7 +100,6 @@ where
         let utxo = self.build_utxo_fields().await?;
         let sync_status_loop_handle = utxo.block_headers_status_notifier.clone();
         let utxo_arc = UtxoArc::new(utxo);
-        let spv_conf = utxo_arc.conf.spv_conf.clone().unwrap_or_default();
 
         self.spawn_merge_utxo_loop_if_required(&utxo_arc, self.constructor.clone());
 
@@ -116,7 +115,6 @@ where
             self.spawn_block_header_utxo_loop(
                 &utxo_arc,
                 self.constructor.clone(),
-                spv_conf,
                 sync_status_loop_handle,
                 block_count,
             );
@@ -249,7 +247,6 @@ impl Default for BlockHeaderUtxoLoopExtraArgs {
 pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     weak: UtxoWeak,
     constructor: impl Fn(UtxoArc) -> T,
-    spv_conf: SPVConf,
     mut sync_status_loop_handle: UtxoSyncStatusLoopHandle,
     mut block_count: u64,
 ) {
@@ -258,6 +255,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     while let Some(arc) = weak.upgrade() {
         let coin = constructor(arc);
         let ticker = coin.as_ref().conf.ticker.as_str();
+        let spv_conf = coin.as_ref().conf.spv_conf.clone().unwrap_or_default();
         let client = match &coin.as_ref().rpc_client {
             UtxoRpcClientEnum::Native(_) => break,
             UtxoRpcClientEnum::Electrum(client) => client,
@@ -293,6 +291,8 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
             }
         }
         drop_mutability!(to_block_height);
+
+        println!("from_block_height{from_block_height} to_block_height{to_block_height}");
 
         // Todo: Add code for the case if a chain reorganization happens
         if from_block_height == block_count {
@@ -342,7 +342,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
             },
         };
 
-        // Validate retrieved block headers
+        // Validate retrieved block headers.
         if let Some(params) = &spv_conf.verification_params {
             if let Err(e) = validate_headers(ticker, from_block_height, block_headers, storage, params).await {
                 error!("Error {e:?} on validating the latest headers for {ticker}!");
@@ -405,7 +405,6 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
         &self,
         utxo_arc: &UtxoArc,
         constructor: F,
-        spv_conf: SPVConf,
         sync_status_loop_handle: UtxoSyncStatusLoopHandle,
         block_count: u64,
     ) where
@@ -416,7 +415,7 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
         info!("Starting UTXO block header loop for coin {ticker}");
 
         let utxo_weak = utxo_arc.downgrade();
-        let fut = block_header_utxo_loop(utxo_weak, constructor, spv_conf, sync_status_loop_handle, block_count);
+        let fut = block_header_utxo_loop(utxo_weak, constructor, sync_status_loop_handle, block_count);
 
         let settings = AbortSettings::info_on_abort(format!("spawn_block_header_utxo_loop stopped for {ticker}"));
         utxo_arc
