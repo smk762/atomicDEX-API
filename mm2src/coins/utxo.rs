@@ -518,7 +518,7 @@ impl SPVConf {
 
             // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
             if self.max_stored_block_headers.unwrap_or_default() > 0
-                && self.max_stored_block_headers.unwrap_or_default() <= retarget_interval
+                && self.max_stored_block_headers.unwrap_or_default() < retarget_interval
             {
                 return Err(SPVError::VerificationParamsError(format!(
                     "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
