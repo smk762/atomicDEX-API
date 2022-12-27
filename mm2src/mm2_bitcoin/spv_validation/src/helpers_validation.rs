@@ -364,7 +364,6 @@ pub async fn validate_headers(
                 reason: format!("Header with height {} is not found in storage", previous_height),
             })?
     };
-
     let mut previous_hash = previous_header.hash();
     let mut prev_bits = previous_header.bits.clone();
     for header in headers.into_iter() {
@@ -376,7 +375,6 @@ pub async fn validate_headers(
             previous_height += 1;
             continue;
         }
-
         let cur_bits = header.bits.clone();
         if params.constant_difficulty && params.difficulty_check && cur_bits != prev_bits {
             return Err(SPVError::UnexpectedDifficultyChange);

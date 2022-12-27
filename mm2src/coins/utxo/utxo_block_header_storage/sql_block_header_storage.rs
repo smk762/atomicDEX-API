@@ -345,6 +345,7 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
             conn.execute(&sql, NO_PARAMS)
                 .map_err(|e| BlockHeaderStorageError::UnableToDeleteHeaders {
                     coin: coin.clone(),
+                    limit,
                     reason: e.to_string(),
                 })?;
             Ok(())

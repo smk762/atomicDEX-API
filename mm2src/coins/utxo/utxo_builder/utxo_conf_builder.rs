@@ -91,7 +91,7 @@ impl<'a> UtxoConfBuilder<'a> {
         let derivation_path = self.derivation_path()?;
 
         let spv_conf = self.spv_conf();
-        // Vlaidate SPVConf, verification params if provided.
+        // Validate SPVConf, verification params if provided.
         if let Some(spv) = &spv_conf {
             spv.validate_verification_params(self.ticker)
                 .map_to_mm(UtxoConfError::SPVVerificationFailed)?;
