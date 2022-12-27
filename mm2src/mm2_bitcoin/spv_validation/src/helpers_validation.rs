@@ -7,7 +7,6 @@ use ripemd160::Digest;
 use serde::Deserialize;
 use serialization::parse_compact_int;
 use sha2::Sha256;
-use std::convert::TryFrom;
 
 #[derive(Clone, Debug, Display, Eq, PartialEq)]
 pub enum SPVError {
@@ -319,9 +318,6 @@ pub struct BlockHeaderVerificationParams {
     pub difficulty_check: bool,
     pub constant_difficulty: bool,
     pub difficulty_algorithm: Option<DifficultyAlgorithm>,
-    // Same value for starting_retarget_block_height in SPVConf. default to 0
-    pub starting_retarget_block_height: Option<u64>,
-    pub starting_retarget_block_header_hex: String,
 }
 
 /// Checks validity of header chain.
@@ -349,21 +345,16 @@ pub async fn validate_headers(
     params: &BlockHeaderVerificationParams,
 ) -> Result<(), SPVError> {
     let params = params.clone();
-    let starting_block_header_height = params.starting_retarget_block_height.unwrap_or_default();
 
     let mut previous_height = previous_height;
-    let mut previous_header = if previous_height == starting_block_header_height {
-        BlockHeader::try_from(params.starting_retarget_block_header_hex.clone())
-            .map_err(|e| SPVError::Internal(e.to_string()))?
-    } else {
+    let mut previous_header =
         storage
             .get_block_header(previous_height)
             .await?
             .ok_or(BlockHeaderStorageError::GetFromStorageError {
                 coin: coin.to_string(),
                 reason: format!("Header with height {} is not found in storage", previous_height),
-            })?
-    };
+            })?;
     let mut previous_hash = previous_header.hash();
     let mut prev_bits = previous_header.bits.clone();
     for header in headers.into_iter() {
@@ -383,7 +374,6 @@ pub async fn validate_headers(
             return Err(SPVError::InvalidChain(previous_height + 1));
         }
         if let Some(algorithm) = &params.difficulty_algorithm {
-            let retarget_block_hex = &params.starting_retarget_block_header_hex;
             if !params.constant_difficulty
                 && params.difficulty_check
                 && cur_bits
@@ -394,7 +384,6 @@ pub async fn validate_headers(
                         previous_height as u32,
                         storage,
                         algorithm,
-                        (starting_block_header_height, retarget_block_hex),
                     )
                     .await?
             {
@@ -609,9 +598,6 @@ mod tests {
             difficulty_check: false,
             constant_difficulty: false,
             difficulty_algorithm: None,
-            // Will not be used since previous_height is not 0
-            starting_retarget_block_height: None,
-            starting_retarget_block_header_hex: "".into(),
         };
         block_on(validate_headers(
             "MORTY",
@@ -633,9 +619,6 @@ mod tests {
             difficulty_check: true,
             constant_difficulty: false,
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
-            // Will not be used since previous_height is not 0
-            starting_retarget_block_height: None,
-            starting_retarget_block_header_hex: "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299".into(),
         };
         block_on(validate_headers(
             "BTC",

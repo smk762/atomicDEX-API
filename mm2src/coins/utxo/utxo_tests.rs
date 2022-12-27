@@ -4401,21 +4401,27 @@ fn test_calc_block_headers_limit_to_remove() {
 
 #[test]
 fn test_spv_conf_validate_verification_params() {
+    use hex::FromHex;
+    use rpc::v1::types::Bytes as BytesJson;
+
     // Block header hex for BLOCK HEIGHT 2016
-    let starting_retarget_block_header_hex =
-       "010000006397bb6abd4fc521c0d3f6071b5650389f0b4551bc40b4e6b067306900000000ace470aecda9c8818c8fe57688cd2a772b5a57954a00df0420a7dd546b6d2c576b0e7f49ffff001d33f0192f".to_string();
+    let hex =
+       BytesJson
+           (FromHex::from_hex
+               ("010000006397bb6abd4fc521c0d3f6071b5650389f0b4551bc40b4e6b067306900000000ace470aecda9c8818c8fe57688cd2a772b5a57954a00df0420a7dd546b6d2c576b0e7f49ffff001d33f0192f").unwrap());
 
     // test for good retarget_block_header_height
     let spv_conf = SPVConf {
         enable_spv_proof: true,
         max_stored_block_headers: None,
-        starting_block_header_height: Some(4032),
+        start_block_header: Some(ElectrumBlockHeaderV14 {
+            height: 4032,
+            hex: hex.clone(),
+        }),
         verification_params: Some(BlockHeaderVerificationParams {
             difficulty_check: true,
             constant_difficulty: false,
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
-            starting_retarget_block_height: Some(4032),
-            starting_retarget_block_header_hex,
         }),
     };
     assert!(spv_conf.validate_verification_params("BTC").is_ok());
@@ -4423,11 +4429,8 @@ fn test_spv_conf_validate_verification_params() {
     // test for bad retarget_block_header_height
     let verification_params = spv_conf.clone().verification_params.unwrap();
     let spv_conf = SPVConf {
-        starting_block_header_height: Some(4035),
-        verification_params: Some(BlockHeaderVerificationParams {
-            starting_retarget_block_height: Some(4035),
-            ..verification_params
-        }),
+        start_block_header: Some(ElectrumBlockHeaderV14 { height: 4037, hex }),
+        verification_params: Some(BlockHeaderVerificationParams { ..verification_params }),
         ..spv_conf
     };
     let validate = spv_conf.validate_verification_params("BTC").err().unwrap();

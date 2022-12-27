@@ -1276,7 +1276,7 @@ impl ElectrumBlockHeaderV12 {
 }
 
 /// The block header compatible with Electrum 1.4
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct ElectrumBlockHeaderV14 {
     pub height: u64,
     pub hex: BytesJson,

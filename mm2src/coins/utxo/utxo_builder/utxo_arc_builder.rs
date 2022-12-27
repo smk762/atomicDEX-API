@@ -6,7 +6,7 @@ use crate::utxo::{generate_and_send_tx, FeePolicy, GetUtxoListOps, UtxoArc, Utxo
                   UtxoWeak};
 use crate::{DerivationMethod, PrivKeyBuildPolicy, UtxoActivationParams};
 use async_trait::async_trait;
-use chain::TransactionOutput;
+use chain::{BlockHeader, TransactionOutput};
 use common::executor::{AbortSettings, SpawnAbortable, Timer};
 use common::log::{error, info, warn, LogOnError};
 use futures::compat::Future01CompatExt;
@@ -15,8 +15,11 @@ use mm2_err_handle::prelude::*;
 #[cfg(test)] use mocktopus::macros::*;
 use script::Builder;
 use serde_json::Value as Json;
+use serialization::Reader;
 use spv_validation::helpers_validation::validate_headers;
-use spv_validation::storage::BlockHeaderStorageOps;
+use spv_validation::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
+use std::collections::HashMap;
+use std::iter::FromIterator;
 
 const FETCH_BLOCK_HEADERS_ATTEMPTS: u64 = 3;
 const CHUNK_SIZE_REDUCER_VALUE: u64 = 100;
@@ -85,6 +88,29 @@ impl<'a, F, T> UtxoFieldsWithHardwareWalletBuilder for UtxoArcBuilder<'a, F, T> 
 {
 }
 
+async fn add_start_block_header_to_storage<T: UtxoCommonOps>(coin: T) -> Result<(), BlockHeaderStorageError> {
+    let spv_conf = coin.as_ref().conf.spv_conf.clone().unwrap_or_default();
+    let client = match &coin.as_ref().rpc_client {
+        UtxoRpcClientEnum::Native(_) => return Ok(()),
+        UtxoRpcClientEnum::Electrum(client) => client,
+    };
+    if let (Some(_), Some(header)) = (spv_conf.verification_params, spv_conf.start_block_header) {
+        let storage = client.block_headers_storage();
+        if let Ok(None) = storage.get_block_header(header.height).await {
+            let mut reader = Reader::new(&header.hex.0);
+            let block_header = reader
+                .read::<BlockHeader>()
+                .map_err(|err| BlockHeaderStorageError::DecodeError {
+                    coin: coin.as_ref().conf.ticker.to_string(),
+                    reason: err.to_string(),
+                })?;
+            let block_header = HashMap::from_iter([(header.height, block_header)]);
+            return storage.add_block_headers_to_storage(block_header).await;
+        };
+    };
+    Ok(())
+}
+
 #[async_trait]
 impl<'a, F, T> UtxoCoinBuilder for UtxoArcBuilder<'a, F, T>
 where
@@ -105,6 +131,10 @@ where
 
         let result_coin = (self.constructor)(utxo_arc.clone());
         if let Some(sync_status_loop_handle) = sync_status_loop_handle {
+            // Try adding the given starting block to storage if it's needed to. SPVConf::start_block_header and
+            // verification_params must be set!
+            add_start_block_header_to_storage(result_coin.clone()).await?;
+
             let block_count = result_coin
                 .as_ref()
                 .rpc_client

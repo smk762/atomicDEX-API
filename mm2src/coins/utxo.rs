@@ -107,6 +107,7 @@ use crate::coin_balance::{EnableCoinScanPolicy, EnabledCoinBalanceParams, HDAddr
 use crate::hd_wallet::{HDAccountOps, HDAccountsMutex, HDAddress, HDAddressId, HDWalletCoinOps, HDWalletOps,
                        InvalidBip44ChainError};
 use crate::hd_wallet_storage::{HDAccountStorageItem, HDWalletCoinStorage, HDWalletStorageError, HDWalletStorageResult};
+use crate::utxo::rpc_clients::ElectrumBlockHeaderV14;
 use crate::utxo::tx_cache::UtxoVerboseCacheShared;
 
 pub mod tx_cache;
@@ -490,9 +491,8 @@ pub struct SPVConf {
     pub enable_spv_proof: bool,
     // Limit of block headers allowed to be stored in db..
     max_stored_block_headers: Option<u64>,
-    // Where to start fetching block height from.
-    // Same value for starting_retarget_block_height in verification_params.
-    starting_block_header_height: Option<u64>,
+    // Starting block height and hex configuration.
+    start_block_header: Option<ElectrumBlockHeaderV14>,
     /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
     /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
     pub verification_params: Option<BlockHeaderVerificationParams>,
@@ -501,20 +501,11 @@ pub struct SPVConf {
 impl SPVConf {
     pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
 
-    pub fn starting_block_header_height(&self) -> u64 { self.starting_block_header_height.unwrap_or_default() }
+    pub fn starting_block_header_height(&self) -> u64 { self.start_block_header.clone().unwrap_or_default().height }
 
     pub fn validate_verification_params(&self, coin: &str) -> Result<(), SPVError> {
-        if let Some(verification) = &self.verification_params {
+        if let (Some(_), Some(header)) = (&self.verification_params, &self.start_block_header) {
             let retarget_interval = RETARGETING_INTERVAL as u64;
-
-            // Verify max_stored_block_headers is not equal to or greater than retarget_interval.
-            if self.starting_block_header_height != verification.starting_retarget_block_height {
-                return Err(SPVError::VerificationParamsError(
-                    "starting_block_header_height should be equal to starting_retarget_block_height in verification \
-                    params"
-                        .to_string(),
-                ));
-            }
 
             // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
             if self.max_stored_block_headers.unwrap_or_default() > 0
@@ -526,26 +517,14 @@ impl SPVConf {
                 )));
             }
 
-            let starting_retarget_block_height = &verification.starting_retarget_block_height;
-            let starting_retarget_block_header_hex = &verification.starting_retarget_block_header_hex;
-            // Verify that starting_retarget_block_header_hex is not empty when starting_retarget_block_height is set.
-            if starting_retarget_block_height.is_some() && starting_retarget_block_header_hex.is_empty() {
-                return Err(SPVError::VerificationParamsError(
-                    "starting_retarget_block_header_hex can't be empty when starting_retarget_block_height is set"
-                        .to_string(),
-                ));
-            };
-
             // Verify retarget_height is the right target header.
-            if let Some(retarget_height) = starting_retarget_block_height {
-                let is_retarget = retarget_height % retarget_interval;
-                if is_retarget != 0 {
-                    return Err(SPVError::WrongRetargetHeight {
-                        coin: coin.to_string(),
-                        expected_height: retarget_height - is_retarget,
-                    });
-                };
-            }
+            let is_retarget = header.height % retarget_interval;
+            if is_retarget != 0 {
+                return Err(SPVError::WrongRetargetHeight {
+                    coin: coin.to_string(),
+                    expected_height: header.height - is_retarget,
+                });
+            };
         }
         Ok(())
     }

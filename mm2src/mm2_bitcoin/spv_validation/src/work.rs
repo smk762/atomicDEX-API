@@ -1,4 +1,3 @@
-use crate::helpers_validation::SPVError;
 use crate::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
 use chain::{BlockHeader, BlockHeaderBits};
 use derive_more::Display;
@@ -6,7 +5,6 @@ use primitives::compact::Compact;
 use primitives::U256;
 use serde::{Deserialize, Serialize};
 use std::cmp;
-use std::convert::TryFrom;
 
 const RETARGETING_FACTOR: u32 = 4;
 const TARGET_SPACING_SECONDS: u32 = 10 * 60;
@@ -53,11 +51,10 @@ pub async fn next_block_bits(
     last_block_height: u32,
     storage: &dyn BlockHeaderStorageOps,
     algorithm: &DifficultyAlgorithm,
-    retarget: (u64, &str),
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     match algorithm {
         DifficultyAlgorithm::BitcoinMainnet => {
-            btc_mainnet_next_block_bits(coin, last_block_header, last_block_height, storage, retarget).await
+            btc_mainnet_next_block_bits(coin, last_block_header, last_block_height, storage).await
         },
         DifficultyAlgorithm::BitcoinTestnet => {
             btc_testnet_next_block_bits(
@@ -66,7 +63,6 @@ pub async fn next_block_bits(
                 last_block_header,
                 last_block_height,
                 storage,
-                retarget,
             )
             .await
         },
@@ -88,7 +84,6 @@ async fn btc_retarget_bits(
     height: u32,
     last_block_header: BlockHeader,
     storage: &dyn BlockHeaderStorageOps,
-    retarget: (u64, &str),
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits_compact: Compact = MAX_BITS_BTC.into();
 
@@ -97,22 +92,14 @@ async fn btc_retarget_bits(
         return Ok(BlockHeaderBits::Compact(max_bits_compact));
     }
 
-    let retarget_header = if retarget_ref == retarget.0 {
-        BlockHeader::try_from(retarget.1.to_string())
-            .map_err(|e| SPVError::Internal(e.to_string()))
-            .map_err(|_| NextBlockBitsError::NoSuchBlockHeader {
-                coin: coin.into(),
-                height: retarget_ref,
-            })?
-    } else {
+    let retarget_header =
         storage
             .get_block_header(retarget_ref)
             .await?
             .ok_or(NextBlockBitsError::NoSuchBlockHeader {
                 coin: coin.into(),
                 height: retarget_ref,
-            })?
-    };
+            })?;
 
     // timestamp of block(height - RETARGETING_INTERVAL)
     let retarget_timestamp = retarget_header.time;
@@ -139,7 +126,6 @@ async fn btc_mainnet_next_block_bits(
     last_block_header: BlockHeader,
     last_block_height: u32,
     storage: &dyn BlockHeaderStorageOps,
-    retarget: (u64, &str),
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     if last_block_height == 0 {
         return Ok(BlockHeaderBits::Compact(MAX_BITS_BTC.into()));
@@ -149,7 +135,7 @@ async fn btc_mainnet_next_block_bits(
     let last_block_bits = last_block_header.bits.clone();
 
     if is_retarget_height(height) {
-        btc_retarget_bits(coin, height, last_block_header, storage, retarget).await
+        btc_retarget_bits(coin, height, last_block_header, storage).await
     } else {
         Ok(last_block_bits)
     }
@@ -161,7 +147,6 @@ async fn btc_testnet_next_block_bits(
     last_block_header: BlockHeader,
     last_block_height: u32,
     storage: &dyn BlockHeaderStorageOps,
-    retarget: (u64, &str),
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits = BlockHeaderBits::Compact(MAX_BITS_BTC.into());
     if last_block_height == 0 {
@@ -173,7 +158,7 @@ async fn btc_testnet_next_block_bits(
     let max_time_gap = last_block_header.time + 2 * TARGET_SPACING_SECONDS;
 
     if is_retarget_height(height) {
-        btc_retarget_bits(coin, height, last_block_header, storage, retarget).await
+        btc_retarget_bits(coin, height, last_block_header, storage).await
     } else if current_block_timestamp > max_time_gap {
         Ok(max_bits)
     } else if last_block_bits != max_bits {
@@ -280,28 +265,14 @@ pub(crate) mod tests {
 
         let last_header: BlockHeader = "000000201d758432ecd495a2177b44d3fe6c22af183461a0b9ea0d0000000000000000008283a1dfa795d9b68bd8c18601e443368265072cbf8c76bfe58de46edd303798035de95d3eb2151756fdb0e8".into();
 
-        let next_block_bits = block_on(btc_mainnet_next_block_bits(
-            "BTC",
-            last_header,
-            606815,
-            &storage,
-            (0, &""),
-        ))
-        .unwrap();
+        let next_block_bits = block_on(btc_mainnet_next_block_bits("BTC", last_header, 606815, &storage)).unwrap();
 
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(387308498.into()));
 
         // check that bits for very early blocks that didn't change difficulty because of low hashrate is calculated correctly.
         let last_header: BlockHeader = "010000000d9c8c96715756b619116cc2160937fb26c655a2f8e28e3a0aff59c0000000007676252e8434de408ea31920d986aba297bd6f7c6f20756be08748713f7c135962719449ffff001df8c1cb01".into();
 
-        let next_block_bits = block_on(btc_mainnet_next_block_bits(
-            "BTC",
-            last_header,
-            4031,
-            &storage,
-            (0, &""),
-        ))
-        .unwrap();
+        let next_block_bits = block_on(btc_mainnet_next_block_bits("BTC", last_header, 4031, &storage)).unwrap();
 
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(486604799.into()));
 
@@ -309,14 +280,7 @@ pub(crate) mod tests {
         // https://live.blockcypher.com/btc/block/00000000000000000002622f52b6afe70a5bb139c788e67f221ffc67a762a1e0/
         let last_header: BlockHeader = "00e0ff2f44d953fe12a047129bbc7164668c6d96f3e7a553528b02000000000000000000d0b950384cd23ab0854d1c8f23fa7a97411a6ffd92347c0a3aea4466621e4093ec09c762afa7091705dad220".into();
 
-        let next_block_bits = block_on(btc_mainnet_next_block_bits(
-            "BTC",
-            last_header,
-            744014,
-            &storage,
-            (0, &""),
-        ))
-        .unwrap();
+        let next_block_bits = block_on(btc_mainnet_next_block_bits("BTC", last_header, 744014, &storage)).unwrap();
 
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(386508719.into()));
     }
@@ -336,7 +300,6 @@ pub(crate) mod tests {
             last_header,
             201595,
             &storage,
-            (0, &""),
         ))
         .unwrap();
 
@@ -353,7 +316,6 @@ pub(crate) mod tests {
             last_header,
             201594,
             &storage,
-            (0, &""),
         ))
         .unwrap();
 
@@ -372,7 +334,6 @@ pub(crate) mod tests {
             last_header,
             201599,
             &storage,
-            (0, &""),
         ))
         .unwrap();
 
