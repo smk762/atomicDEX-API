@@ -1730,27 +1730,66 @@ async fn sign_and_send_transaction_impl(
     );
     status.status(tags!(), "get_gas_price…");
     let gas_price = try_tx_s!(coin.get_gas_price().compat().await);
-    let tx = UnSignedEthTx {
-        nonce,
-        gas_price,
-        gas,
-        action,
-        value,
-        data,
-    };
-    let key_pair = try_tx_s!(coin.priv_key_policy.key_pair_or_err());
-    let signed = tx.sign(key_pair.secret(), coin.chain_id);
-    let bytes = web3::types::Bytes(rlp::encode(&signed).to_vec());
-    status.status(tags!(), "send_raw_transaction…");
 
-    try_tx_s!(
-        coin.web3
-            .eth()
-            .send_raw_transaction(bytes)
-            .await
-            .map_err(|e| ERRL!("{}", e)),
-        signed
-    );
+    let signed = match coin.priv_key_policy {
+        EthPrivKeyPolicy::KeyPair(ref key_pair) => {
+            let tx = UnSignedEthTx {
+                nonce,
+                gas_price,
+                gas,
+                action,
+                value,
+                data,
+            };
+
+            let signed = tx.sign(key_pair.secret(), coin.chain_id);
+            let bytes = Bytes(rlp::encode(&signed).to_vec());
+            status.status(tags!(), "send_raw_transaction…");
+
+            try_tx_s!(
+                coin.web3
+                    .eth()
+                    .send_raw_transaction(bytes)
+                    .await
+                    .map_err(|e| ERRL!("{}", e)),
+                signed
+            );
+            signed
+        },
+        #[cfg(target_arch = "wasm32")]
+        EthPrivKeyPolicy::Metamask(_) => {
+            let to = match action {
+                Action::Create => None,
+                Action::Call(to) => Some(to),
+            };
+
+            let tx_to_send = TransactionRequest {
+                from: coin.my_address,
+                to,
+                gas: Some(gas),
+                gas_price: Some(gas_price),
+                value: Some(value),
+                data: Some(data.clone().into()),
+                nonce: Some(nonce),
+                ..TransactionRequest::default()
+            };
+
+            // It's important to return the transaction hex for the swap,
+            // so wait up to 30 seconds for the transaction to appear on the RPC node.
+            let wait_rpc_timeout = 30_000;
+            let check_every = 1.;
+            let SendMetamaskTx { tx_hash, signed_tx } = try_tx_s!(
+                coin.metamask_send_transaction(tx_to_send, wait_rpc_timeout, check_every)
+                    .await
+            );
+            try_tx_s!(signed_tx.ok_or_else(|| {
+                ERRL!(
+                    "Waited too long until the transaction {:?} appear on the RPC node",
+                    tx_hash
+                )
+            }))
+        },
+    };
 
     status.status(tags!(), "get_addr_nonce…");
     loop {
