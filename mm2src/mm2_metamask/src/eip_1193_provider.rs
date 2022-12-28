@@ -46,8 +46,6 @@ impl Eip1193Provider {
         serde_json::from_value(result).map_err(|e| Error::InvalidResponse(e.to_string()))
     }
 
-    // pub async fn subscribe()
-
     async fn command_loop(transport: Eip1193, mut command_rx: EipCommandReceiver) {
         while let Some(command) = command_rx.next().await {
             match command {

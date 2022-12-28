@@ -8,6 +8,8 @@ use crypto::CryptoCtxError;
 use derive_more::Display;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use mm2_metamask::MetamaskRpcError;
 use mm2_number::BigDecimal;
 use ser_error_derive::SerializeErrorType;
 use serde_derive::{Deserialize, Serialize};
@@ -204,9 +206,8 @@ pub enum EnablePlatformCoinWithTokensError {
     PrivKeyPolicyNotAllowed(PrivKeyPolicyNotAllowed),
     #[display(fmt = "Unexpected derivation method: {}", _0)]
     UnexpectedDerivationMethod(String),
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    #[display(fmt = "Preparation required: {}", _0)]
-    PreparationRequired(String),
+    #[cfg(target_arch = "wasm32")]
+    MetamaskError(MetamaskRpcError),
     Transport(String),
     AtLeastOneNodeRequired(String),
     InvalidPayload(String),
@@ -278,8 +279,9 @@ impl HttpStatusCode for EnablePlatformCoinWithTokensError {
             | EnablePlatformCoinWithTokensError::UnexpectedPlatformProtocol { .. }
             | EnablePlatformCoinWithTokensError::InvalidPayload { .. }
             | EnablePlatformCoinWithTokensError::AtLeastOneNodeRequired(_)
-            | EnablePlatformCoinWithTokensError::PreparationRequired(_)
             | EnablePlatformCoinWithTokensError::UnexpectedTokenProtocol { .. } => StatusCode::BAD_REQUEST,
+            #[cfg(target_arch = "wasm32")]
+            EnablePlatformCoinWithTokensError::MetamaskError(_) => StatusCode::BAD_REQUEST,
         }
     }
 }

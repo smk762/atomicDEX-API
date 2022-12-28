@@ -12,7 +12,6 @@ pub type MetamaskResult<T> = MmResult<T, MetamaskError>;
 pub enum MetamaskError {
     #[display(fmt = "ETH provider not found")]
     EthProviderNotFound,
-    // TODO remove it
     #[display(fmt = "Expected one ETH selected account")]
     ExpectedOneEthAccount,
     #[display(fmt = "Unexpected account selected")]

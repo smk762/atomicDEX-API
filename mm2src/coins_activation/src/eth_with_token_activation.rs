@@ -14,6 +14,8 @@ use coins::{eth::{v2_activation::{eth_coin_from_conf_and_request_v2, Erc20Protoc
 use common::Future01CompatExt;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use mm2_metamask::MetamaskRpcError;
 use mm2_number::BigDecimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
@@ -50,13 +52,7 @@ impl From<EthActivationV2Error> for EnablePlatformCoinWithTokensError {
                 EnablePlatformCoinWithTokensError::PrivKeyPolicyNotAllowed(e)
             },
             #[cfg(target_arch = "wasm32")]
-            EthActivationV2Error::MetamaskError(metamask) => {
-                EnablePlatformCoinWithTokensError::Internal(metamask.to_string())
-            },
-            #[cfg(target_arch = "wasm32")]
-            EthActivationV2Error::MetamaskCtxNotInitialized => EnablePlatformCoinWithTokensError::PreparationRequired(
-                "MetaMask context is not initialized. Consider using 'task::init_metamask::init' RPC".to_string(),
-            ),
+            EthActivationV2Error::MetamaskError(metamask) => EnablePlatformCoinWithTokensError::MetamaskError(metamask),
             EthActivationV2Error::InternalError(e) => EnablePlatformCoinWithTokensError::Internal(e),
         }
     }
@@ -264,7 +260,7 @@ fn eth_priv_key_build_policy(
         EthPrivKeyActivationPolicy::Metamask => {
             let metamask_ctx = crypto::CryptoCtx::from_ctx(ctx)?
                 .metamask_ctx()
-                .or_mm_err(|| EthActivationV2Error::MetamaskCtxNotInitialized)?;
+                .or_mm_err(|| EthActivationV2Error::MetamaskError(MetamaskRpcError::MetamaskCtxNotInitialized))?;
             Ok(EthPrivKeyBuildPolicy::Metamask(metamask_ctx))
         },
     }

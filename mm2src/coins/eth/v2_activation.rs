@@ -33,9 +33,6 @@ pub enum EthActivationV2Error {
     #[from_trait(WithMetamaskRpcError::metamask_rpc_error)]
     #[display(fmt = "{}", _0)]
     MetamaskError(MetamaskRpcError),
-    #[cfg(target_arch = "wasm32")]
-    #[display(fmt = "MetaMask context is not initialized")]
-    MetamaskCtxNotInitialized,
     #[from_trait(WithInternal::internal)]
     #[display(fmt = "Internal: {}", _0)]
     InternalError(String),
@@ -246,7 +243,7 @@ pub async fn eth_coin_from_conf_and_request_v2(
         }
     }
 
-    let (my_address, priv_key_policy) = build_address_and_priv_key_policy(conf, priv_key_policy)?;
+    let (my_address, priv_key_policy) = build_address_and_priv_key_policy(conf, priv_key_policy).await?;
     let my_address_str = checksum_address(&format!("{:02x}", my_address));
 
     let chain_id = conf["chain_id"].as_u64();
@@ -325,7 +322,7 @@ pub async fn eth_coin_from_conf_and_request_v2(
 /// Processes the given `priv_key_policy` and generates corresponding `KeyPair`.
 /// This function expects either [`PrivKeyBuildPolicy::IguanaPrivKey`]
 /// or [`PrivKeyBuildPolicy::GlobalHDAccount`], otherwise returns `PrivKeyPolicyNotAllowed` error.
-pub(crate) fn build_address_and_priv_key_policy(
+pub(crate) async fn build_address_and_priv_key_policy(
     conf: &Json,
     priv_key_policy: EthPrivKeyBuildPolicy,
 ) -> MmResult<(Address, EthPrivKeyPolicy), EthActivationV2Error> {
@@ -342,7 +339,7 @@ pub(crate) fn build_address_and_priv_key_policy(
         },
         #[cfg(target_arch = "wasm32")]
         EthPrivKeyBuildPolicy::Metamask(metamask_ctx) => {
-            let address = *metamask_ctx.check_active_eth_account()?;
+            let address = *metamask_ctx.check_active_eth_account().await?;
             let public_key_uncompressed = metamask_ctx.eth_account_pubkey_uncompressed();
             let public_key = compress_public_key(public_key_uncompressed)?;
             return Ok((

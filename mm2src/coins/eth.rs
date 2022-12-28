@@ -3969,7 +3969,7 @@ pub async fn eth_coin_from_conf_and_request(
         }
     }
 
-    let (my_address, key_pair) = try_s!(build_address_and_priv_key_policy(conf, priv_key_policy));
+    let (my_address, key_pair) = try_s!(build_address_and_priv_key_policy(conf, priv_key_policy).await);
 
     let mut web3_instances = vec![];
     let event_handlers = rpc_event_handlers_for_eth_transport(ctx, ticker.to_string());

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use web3::{RequestId, Transport};
 
 pub struct EthConfig {
-    /// Whether to check if an active `ChainId` is expected and to switch it.
+    /// The `ChainId` that the MetaMask wallet should be targeted on each RPC.
     pub chain_id: u64,
 }
 
@@ -20,7 +20,7 @@ pub struct MetamaskTransport {
 struct MetamaskTransportInner {
     eth_config: EthConfig,
     eip1193: Eip1193Provider,
-    // TODO use `even_handlers` properly.
+    // TODO use `event_handlers` properly.
     _event_handlers: Vec<RpcTransportEventHandlerShared>,
 }
 
