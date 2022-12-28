@@ -10,8 +10,8 @@ use sha2::Sha256;
 
 #[derive(Clone, Debug, Display, Eq, PartialEq)]
 pub enum SPVError {
-    #[display(fmt = "Verification Params Error: {_0}")]
-    VerificationParamsError(String),
+    #[display(fmt = "Starting block header error: {_0}")]
+    StartingBlockHeaderError(String),
     #[display(fmt = "Overran a checked read on a slice")]
     ReadOverrun,
     #[display(fmt = "Attempted to parse a CompactInt without enough bytes")]
@@ -344,8 +344,6 @@ pub async fn validate_headers(
     storage: &dyn BlockHeaderStorageOps,
     params: &BlockHeaderVerificationParams,
 ) -> Result<(), SPVError> {
-    let params = params.clone();
-
     let mut previous_height = previous_height;
     let mut previous_header =
         storage

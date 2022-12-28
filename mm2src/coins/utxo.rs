@@ -492,7 +492,7 @@ pub struct SPVConf {
     // Limit of block headers allowed to be stored in db..
     max_stored_block_headers: Option<u64>,
     // Starting block height and hex configuration.
-    start_block_header: Option<ElectrumBlockHeaderV14>,
+    starting_block_header: Option<ElectrumBlockHeaderV14>,
     /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
     /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
     pub verification_params: Option<BlockHeaderVerificationParams>,
@@ -501,17 +501,14 @@ pub struct SPVConf {
 impl SPVConf {
     pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
 
-    pub fn starting_block_header_height(&self) -> u64 { self.start_block_header.clone().unwrap_or_default().height }
+    pub fn starting_block_header_height(&self) -> u64 { self.starting_block_header.clone().unwrap_or_default().height }
 
-    pub fn validate_verification_params(&self, coin: &str) -> Result<(), SPVError> {
-        if let (Some(_), Some(header)) = (&self.verification_params, &self.start_block_header) {
+    pub fn validate_starting_block_header(&self, coin: &str) -> Result<(), SPVError> {
+        if let Some(header) = &self.starting_block_header {
             let retarget_interval = RETARGETING_INTERVAL as u64;
-
             // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
-            if self.max_stored_block_headers.unwrap_or_default() > 0
-                && self.max_stored_block_headers.unwrap_or_default() < retarget_interval
-            {
-                return Err(SPVError::VerificationParamsError(format!(
+            if self.max_stored_block_headers() > 0 && self.max_stored_block_headers() < retarget_interval {
+                return Err(SPVError::StartingBlockHeaderError(format!(
                     "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
                     self.max_stored_block_headers
                 )));
@@ -526,6 +523,7 @@ impl SPVConf {
                 });
             };
         }
+
         Ok(())
     }
 }

@@ -39,7 +39,6 @@ use mocktopus::mocking::*;
 use rpc::v1::types::H256 as H256Json;
 use serialization::{deserialize, CoinVariant};
 use spv_validation::storage::BlockHeaderStorageOps;
-use spv_validation::work::DifficultyAlgorithm;
 use std::convert::TryFrom;
 use std::iter;
 use std::mem::discriminant;
@@ -4388,19 +4387,7 @@ fn test_block_header_utxo_loop() {
 }
 
 #[test]
-fn test_calc_block_headers_limit_to_remove() {
-    use crate::utxo::utxo_builder::calc_block_headers_limit_to_remove;
-
-    let storage_headers_count = 400;
-    let max_stored_block_headers = 200;
-    let new_headers_count = 50;
-
-    let count = calc_block_headers_limit_to_remove(storage_headers_count, max_stored_block_headers, new_headers_count);
-    assert_eq!(count, 250);
-}
-
-#[test]
-fn test_spv_conf_validate_verification_params() {
+fn test_spv_conf_validate_starting_block_header() {
     use hex::FromHex;
     use rpc::v1::types::Bytes as BytesJson;
 
@@ -4414,26 +4401,20 @@ fn test_spv_conf_validate_verification_params() {
     let spv_conf = SPVConf {
         enable_spv_proof: true,
         max_stored_block_headers: None,
-        start_block_header: Some(ElectrumBlockHeaderV14 {
+        starting_block_header: Some(ElectrumBlockHeaderV14 {
             height: 4032,
             hex: hex.clone(),
         }),
-        verification_params: Some(BlockHeaderVerificationParams {
-            difficulty_check: true,
-            constant_difficulty: false,
-            difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
-        }),
+        verification_params: None,
     };
-    assert!(spv_conf.validate_verification_params("BTC").is_ok());
+    assert!(spv_conf.validate_starting_block_header("BTC").is_ok());
 
     // test for bad retarget_block_header_height
-    let verification_params = spv_conf.clone().verification_params.unwrap();
     let spv_conf = SPVConf {
-        start_block_header: Some(ElectrumBlockHeaderV14 { height: 4037, hex }),
-        verification_params: Some(BlockHeaderVerificationParams { ..verification_params }),
+        starting_block_header: Some(ElectrumBlockHeaderV14 { height: 4037, hex }),
         ..spv_conf
     };
-    let validate = spv_conf.validate_verification_params("BTC").err().unwrap();
+    let validate = spv_conf.validate_starting_block_header("BTC").err().unwrap();
     if let SPVError::WrongRetargetHeight { coin, expected_height } = validate {
         assert_eq!(coin, "BTC");
         assert_eq!(expected_height, 4032);

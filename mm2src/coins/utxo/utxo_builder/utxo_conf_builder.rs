@@ -93,7 +93,7 @@ impl<'a> UtxoConfBuilder<'a> {
         let spv_conf = self.spv_conf();
         // Validate SPVConf, verification params if provided.
         if let Some(spv) = &spv_conf {
-            spv.validate_verification_params(self.ticker)
+            spv.validate_starting_block_header(self.ticker)
                 .map_to_mm(UtxoConfError::SPVVerificationFailed)?;
         }
 
