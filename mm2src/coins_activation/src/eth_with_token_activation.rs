@@ -27,6 +27,10 @@ impl From<EthActivationV2Error> for EnablePlatformCoinWithTokensError {
             | EthActivationV2Error::InvalidFallbackSwapContract(e) => {
                 EnablePlatformCoinWithTokensError::InvalidPayload(e)
             },
+            #[cfg(target_arch = "wasm32")]
+            EthActivationV2Error::ExpectedRpcChainId => {
+                EnablePlatformCoinWithTokensError::InvalidPayload(err.to_string())
+            },
             EthActivationV2Error::ActivationFailed { ticker, error } => {
                 EnablePlatformCoinWithTokensError::PlatformCoinCreationError { ticker, error }
             },

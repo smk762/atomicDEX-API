@@ -1,6 +1,5 @@
 use super::*;
 use common::executor::AbortedError;
-#[cfg(target_arch = "wasm32")] use crypto::MetamaskWeak;
 use crypto::{CryptoCtxError, StandardHDPathToCoin};
 use enum_from::EnumFromTrait;
 use mm2_err_handle::common_errors::WithInternal;
@@ -13,6 +12,9 @@ pub enum EthActivationV2Error {
     InvalidPayload(String),
     InvalidSwapContractAddr(String),
     InvalidFallbackSwapContract(String),
+    #[display(fmt = "Expected either 'chain_id' or 'rpc_chain_id' to be set")]
+    #[cfg(target_arch = "wasm32")]
+    ExpectedRpcChainId,
     #[display(fmt = "Platform coin {} activation failed. {}", ticker, error)]
     ActivationFailed {
         ticker: String,
@@ -244,7 +246,7 @@ pub async fn eth_coin_from_conf_and_request_v2(
         }
     }
 
-    let (my_address, priv_key_policy) = build_address_and_priv_key_policy(conf, priv_key_policy).await?;
+    let (my_address, priv_key_policy) = build_address_and_priv_key_policy(conf, priv_key_policy)?;
     let my_address_str = checksum_address(&format!("{:02x}", my_address));
 
     let chain_id = conf["chain_id"].as_u64();
@@ -254,16 +256,16 @@ pub async fn eth_coin_from_conf_and_request_v2(
             build_http_transport(ctx, ticker.clone(), my_address_str, key_pair, &req.nodes).await?
         },
         #[cfg(target_arch = "wasm32")]
-        (EthRpcMode::Metamask, EthPrivKeyPolicy::Metamask(metamask_policy)) => {
-            // TODO change this
-            let chain_id = chain_id.unwrap_or(0x1);
+        (EthRpcMode::Metamask, EthPrivKeyPolicy::Metamask(_)) => {
+            let chain_id = chain_id
+                .or_else(|| conf["rpc_chain_id"].as_u64())
+                .or_mm_err(|| EthActivationV2Error::ExpectedRpcChainId)?;
 
-            let (web3, web3_instances) =
-                build_metamask_transport(ctx, metamask_policy.metamask_ctx.clone(), ticker.clone(), chain_id)?;
+            let (web3, web3_instances) = build_metamask_transport(ctx, ticker.clone(), chain_id)?;
 
             // Check if MetaMask supports the given `chain_id`.
             // Please note that this request may take a long time.
-            check_metamask_support_chain_id(ticker.clone(), &web3, chain_id).await?;
+            check_metamask_supports_chain_id(ticker.clone(), &web3, chain_id).await?;
 
             (web3, web3_instances)
         },
@@ -323,7 +325,7 @@ pub async fn eth_coin_from_conf_and_request_v2(
 /// Processes the given `priv_key_policy` and generates corresponding `KeyPair`.
 /// This function expects either [`PrivKeyBuildPolicy::IguanaPrivKey`]
 /// or [`PrivKeyBuildPolicy::GlobalHDAccount`], otherwise returns `PrivKeyPolicyNotAllowed` error.
-pub(crate) async fn build_address_and_priv_key_policy(
+pub(crate) fn build_address_and_priv_key_policy(
     conf: &Json,
     priv_key_policy: EthPrivKeyBuildPolicy,
 ) -> MmResult<(Address, EthPrivKeyPolicy), EthActivationV2Error> {
@@ -346,7 +348,6 @@ pub(crate) async fn build_address_and_priv_key_policy(
             return Ok((
                 address,
                 EthPrivKeyPolicy::Metamask(EthMetamaskPolicy {
-                    metamask_ctx: metamask_ctx.downgrade(),
                     public_key,
                     public_key_uncompressed,
                 }),
@@ -447,16 +448,13 @@ fn build_single_http_transport(
 #[cfg(target_arch = "wasm32")]
 fn build_metamask_transport(
     ctx: &MmArc,
-    metamask_weak: MetamaskWeak,
     coin_ticker: String,
     chain_id: u64,
 ) -> MmResult<(Web3<Web3Transport>, Vec<Web3Instance>), EthActivationV2Error> {
     let event_handlers = rpc_event_handlers_for_eth_transport(ctx, coin_ticker);
 
-    let eth_config = web3_transport::metamask_transport::EthConfig {
-        chain_id: Some(chain_id),
-    };
-    let web3 = Web3::new(Web3Transport::new_metamask(metamask_weak, eth_config, event_handlers)?);
+    let eth_config = web3_transport::metamask_transport::EthConfig { chain_id };
+    let web3 = Web3::new(Web3Transport::new_metamask(eth_config, event_handlers)?);
 
     // MetaMask doesn't use Parity nodes. So `MetamaskTransport` doesn't support `parity_nextNonce` RPC.
     // An example of the `web3_clientVersion` RPC - `MetaMask/v10.22.1`.
@@ -471,7 +469,7 @@ fn build_metamask_transport(
 /// This method is based on the fact that `MetamaskTransport` tries to switch the `ChainId`
 /// if the MetaMask is targeted to another ETH chain.
 #[cfg(target_arch = "wasm32")]
-async fn check_metamask_support_chain_id(
+async fn check_metamask_supports_chain_id(
     ticker: String,
     web3: &Web3<Web3Transport>,
     expected_chain_id: u64,

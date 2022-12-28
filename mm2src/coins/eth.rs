@@ -63,7 +63,7 @@ use web3::{self, Web3};
 use web3_transport::{http_transport::HttpTransportNode, EthFeeHistoryNamespace, Web3Transport};
 
 cfg_wasm32! {
-    use crypto::{MetamaskArc, MetamaskWeak};
+    use crypto::MetamaskArc;
     use enum_from::EnumFromInner;
     use ethereum_types::{H264, H520};
     use mm2_metamask::{from_metamask_error, MetamaskError, MetamaskRpcError, WithMetamaskRpcError};
@@ -390,7 +390,6 @@ pub enum EthPrivKeyPolicy {
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone)]
 pub struct EthMetamaskPolicy {
-    pub(crate) metamask_ctx: MetamaskWeak,
     pub(crate) public_key: H264,
     pub(crate) public_key_uncompressed: H520,
 }
@@ -826,6 +825,10 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
         },
         #[cfg(target_arch = "wasm32")]
         EthPrivKeyPolicy::Metamask(_) => {
+            if !req.broadcast {
+                return MmError::err(WithdrawError::MetamaskBroadcastExpected);
+            }
+
             let tx_to_send = TransactionRequest {
                 from: coin.my_address,
                 to: Some(to_addr),
@@ -3966,7 +3969,7 @@ pub async fn eth_coin_from_conf_and_request(
         }
     }
 
-    let (my_address, key_pair) = try_s!(build_address_and_priv_key_policy(conf, priv_key_policy).await);
+    let (my_address, key_pair) = try_s!(build_address_and_priv_key_policy(conf, priv_key_policy));
 
     let mut web3_instances = vec![];
     let event_handlers = rpc_event_handlers_for_eth_transport(ctx, ticker.to_string());

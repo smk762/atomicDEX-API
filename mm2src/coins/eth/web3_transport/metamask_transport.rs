@@ -1,6 +1,5 @@
 use crate::eth::web3_transport::Web3SendOut;
 use crate::RpcTransportEventHandlerShared;
-use crypto::MetamaskWeak;
 use jsonrpc_core::Call;
 use mm2_metamask::{detect_metamask_provider, Eip1193Provider, MetamaskResult, MetamaskSession};
 use serde_json::Value as Json;
@@ -10,7 +9,7 @@ use web3::{RequestId, Transport};
 
 pub struct EthConfig {
     /// Whether to check if an active `ChainId` is expected and to switch it.
-    pub chain_id: Option<u64>,
+    pub chain_id: u64,
 }
 
 #[derive(Clone)]
@@ -19,7 +18,6 @@ pub struct MetamaskTransport {
 }
 
 struct MetamaskTransportInner {
-    metamask_weak: MetamaskWeak,
     eth_config: EthConfig,
     eip1193: Eip1193Provider,
     // TODO use `even_handlers` properly.
@@ -28,13 +26,11 @@ struct MetamaskTransportInner {
 
 impl MetamaskTransport {
     pub fn detect(
-        metamask_weak: MetamaskWeak,
         eth_config: EthConfig,
         event_handlers: Vec<RpcTransportEventHandlerShared>,
     ) -> MetamaskResult<MetamaskTransport> {
         let eip1193 = detect_metamask_provider()?;
         let inner = MetamaskTransportInner {
-            metamask_weak,
             eth_config,
             eip1193,
             _event_handlers: event_handlers,
@@ -68,30 +64,14 @@ impl MetamaskTransport {
         self.inner.eip1193.send(id, request).await
     }
 
-    /// Checks if the MetaMask wallet is targeted to [`EthConfig::chain_id`],
-    /// and the ETH account is still the same, i.e. [`EthConfig::eth_account`].
-    ///
-    /// Please note [`MetamaskCtx::get_current_eth_account`] and [`MetamaskCtx::get_current_chain_id`]
-    /// are relatively chip operations.
+    /// Ensures that the MetaMask wallet is targeted to [`EthConfig::chain_id`].
     async fn request_preparation(&self) -> Result<MetamaskSession<'_>, web3::Error> {
-        let metamask_ctx = self
-            .inner
-            .metamask_weak
-            .upgrade()
-            .ok_or_else(|| web3_transport_err("MetaMask context is not initialized".to_string()))?;
-
         // Lock the MetaMask session and keep it until the RPC is not finished.
         let metamask_session = MetamaskSession::lock(&self.inner.eip1193).await;
-
-        if let Some(expected_chain_id) = self.inner.eth_config.chain_id {
-            let current_chain_id = metamask_ctx.get_current_chain_id()?;
-            if current_chain_id != expected_chain_id {
-                metamask_session.wallet_switch_ethereum_chain(expected_chain_id).await?;
-            }
-        }
+        metamask_session
+            .wallet_switch_ethereum_chain(self.inner.eth_config.chain_id)
+            .await?;
 
         Ok(metamask_session)
     }
 }
-
-fn web3_transport_err(err: String) -> web3::Error { web3::Error::Transport(web3::error::TransportError::Message(err)) }

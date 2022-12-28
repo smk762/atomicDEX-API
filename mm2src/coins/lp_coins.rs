@@ -938,9 +938,9 @@ pub struct WithdrawRequest {
     max: bool,
     fee: Option<WithdrawFee>,
     memo: Option<String>,
-    // TODO check this.
+    /// Currently, this flag is by ETH/ERC20 coins activated with MetaMask **only**.
+    #[cfg(target_arch = "wasm32")]
     #[serde(default)]
-    #[allow(dead_code)]
     broadcast: bool,
 }
 
@@ -992,6 +992,7 @@ impl WithdrawRequest {
             max: true,
             fee: None,
             memo: None,
+            #[cfg(target_arch = "wasm32")]
             broadcast: false,
         }
     }
@@ -1674,6 +1675,9 @@ pub enum WithdrawError {
     HwError(HwRpcError),
     #[cfg(target_arch = "wasm32")]
     MetamaskError(MetamaskRpcError),
+    #[cfg(target_arch = "wasm32")]
+    #[display(fmt = "Set 'broadcast' to generate, sign and broadcast a transaction with MetaMask")]
+    MetamaskBroadcastExpected,
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[from_trait(WithInternal::internal)]
@@ -1701,6 +1705,8 @@ impl HttpStatusCode for WithdrawError {
             WithdrawError::HwError(_) => StatusCode::GONE,
             #[cfg(target_arch = "wasm32")]
             WithdrawError::MetamaskError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            #[cfg(target_arch = "wasm32")]
+            WithdrawError::MetamaskBroadcastExpected => StatusCode::BAD_REQUEST,
             WithdrawError::Transport(_) | WithdrawError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

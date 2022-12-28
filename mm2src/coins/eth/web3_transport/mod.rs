@@ -1,5 +1,4 @@
 use crate::RpcTransportEventHandlerShared;
-#[cfg(target_arch = "wasm32")] use crypto::MetamaskWeak;
 use ethereum_types::U256;
 use futures::future::BoxFuture;
 use jsonrpc_core::Call;
@@ -34,11 +33,10 @@ impl Web3Transport {
 
     #[cfg(target_arch = "wasm32")]
     pub fn new_metamask(
-        metamask_weak: MetamaskWeak,
         eth_config: metamask_transport::EthConfig,
         event_handlers: Vec<RpcTransportEventHandlerShared>,
     ) -> MetamaskResult<Web3Transport> {
-        Ok(metamask_transport::MetamaskTransport::detect(metamask_weak, eth_config, event_handlers)?.into())
+        Ok(metamask_transport::MetamaskTransport::detect(eth_config, event_handlers)?.into())
     }
 
     #[cfg(test)]
