@@ -87,7 +87,9 @@ pub enum InitMetamaskInProgressStatus {
 }
 
 #[derive(Deserialize)]
-pub struct InitMetamaskRequest;
+pub struct InitMetamaskRequest {
+    project: String,
+}
 
 #[derive(Clone, Serialize)]
 pub struct InitMetamaskResponse {
@@ -120,7 +122,7 @@ impl RpcTask for InitMetamaskTask {
     async fn run(&mut self, _task_handle: &InitMetamaskTaskHandle) -> Result<Self::Item, MmError<Self::Error>> {
         let crypto_ctx = CryptoCtx::from_ctx(&self.ctx)?;
 
-        let metamask = crypto_ctx.init_metamask_ctx().await?;
+        let metamask = crypto_ctx.init_metamask_ctx(self.req.project.clone()).await?;
         Ok(InitMetamaskResponse {
             eth_address: metamask.eth_account_str().to_string(),
         })

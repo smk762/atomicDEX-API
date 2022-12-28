@@ -25,9 +25,11 @@ pub fn adex_eip712_request(
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AtomicDEXDomain {
-    pub(crate) name: String,
-    pub(crate) url: String,
-    pub(crate) version: String,
+    name: String,
+}
+
+impl AtomicDEXDomain {
+    pub fn new(name: String) -> AtomicDEXDomain { AtomicDEXDomain { name } }
 }
 
 #[derive(Debug, Serialize)]
@@ -36,9 +38,9 @@ pub struct AtomicDEXLoginRequest {
 }
 
 impl AtomicDEXLoginRequest {
-    pub fn with_domain_name(domain_name: String) -> AtomicDEXLoginRequest {
+    pub fn new(project_name: String) -> AtomicDEXLoginRequest {
         AtomicDEXLoginRequest {
-            message: format!("Login to {domain_name}"),
+            message: format!("Login to {project_name}"),
         }
     }
 }
@@ -46,8 +48,6 @@ impl AtomicDEXLoginRequest {
 fn adex_login_types() -> [ObjectType; 2] {
     let mut domain = ObjectType::domain();
     domain.property("name", PropertyType::String);
-    domain.property("url", PropertyType::String);
-    domain.property("version", PropertyType::String);
 
     let mut login_request = ObjectType::new(ADEX_LOGIN_TYPE);
     login_request.property("message", PropertyType::String);
@@ -66,16 +66,16 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn test_hash_adex_login_request() {
+        const PROJECT: &str = "AtomicDEX";
+
         let domain = AtomicDEXDomain {
-            name: "AtomicDEX".to_string(),
-            url: "https://atomicdex.io".to_string(),
-            version: "1.0".to_string(),
+            name: PROJECT.to_string(),
         };
-        let request = AtomicDEXLoginRequest::with_domain_name(domain.name.clone());
+        let request = AtomicDEXLoginRequest::new(PROJECT.to_string());
         let adex_req = adex_eip712_request(domain, request);
 
         let actual = hash_typed_data(adex_req).unwrap();
-        let expected = H256::from_str("efa58ae0c74c622d4ba3ef661b1b0fec42ac0fe7bd28354d30fe32b097f34c8c").unwrap();
+        let expected = H256::from_str("0xad90ea2902042ebef413d66f56cfb2b37d313342ec6622ee589eda314fd782d5").unwrap();
         assert_eq!(actual, expected);
     }
 }

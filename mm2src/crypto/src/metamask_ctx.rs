@@ -44,8 +44,7 @@ pub struct MetamaskCtx {
 }
 
 impl MetamaskCtx {
-    /// TODO take `domain_name`, `url` and check the version.
-    pub async fn init() -> MetamaskResult<MetamaskCtx> {
+    pub async fn init(project_name: String) -> MetamaskResult<MetamaskCtx> {
         let eip_transport = Eip1193Provider::detect().or_mm_err(|| MetamaskError::EthProviderNotFound)?;
 
         let (eth_account, eth_account_str, eth_account_pubkey) = {
@@ -54,12 +53,8 @@ impl MetamaskCtx {
             let eth_account = Address::from_str(&eth_account_str)
                 .map_to_mm(|e| MetamaskError::ErrorDeserializingMethodResult(e.to_string()))?;
 
-            let domain = AtomicDEXDomain {
-                name: "AtomicDEX".to_string(),
-                url: "https://atomicdex.io".to_string(),
-                version: "1.0".to_string(),
-            };
-            let request = AtomicDEXLoginRequest::with_domain_name(domain.name.clone());
+            let domain = AtomicDEXDomain::new(project_name.clone());
+            let request = AtomicDEXLoginRequest::new(project_name);
             let (hash, sig) = metamask_session
                 .sign_typed_data_v4(eth_account_str.clone(), adex_eip712_request(domain, request))
                 .await?;

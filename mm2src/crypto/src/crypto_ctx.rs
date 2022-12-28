@@ -250,7 +250,7 @@ impl CryptoCtx {
 
     /// TODO add `processor: Processor`, `expected_address: Option<String>`.
     #[cfg(target_arch = "wasm32")]
-    pub async fn init_metamask_ctx(&self) -> MmResult<MetamaskArc, MetamaskCtxInitError> {
+    pub async fn init_metamask_ctx(&self, project_name: String) -> MmResult<MetamaskArc, MetamaskCtxInitError> {
         {
             let mut state = self.metamask_ctx.write();
             if let InitializationState::Initializing = state.deref() {
@@ -260,7 +260,7 @@ impl CryptoCtx {
             *state = InitializationState::Initializing;
         }
 
-        let metamask_ctx = MetamaskCtx::init().await?;
+        let metamask_ctx = MetamaskCtx::init(project_name).await?;
         let metamask_arc = MetamaskArc::new(metamask_ctx);
 
         *self.metamask_ctx.write() = InitializationState::Ready(metamask_arc.clone());
