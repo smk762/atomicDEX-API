@@ -504,6 +504,11 @@ impl SPVConf {
     pub fn starting_block_header_height(&self) -> u64 { self.starting_block_header.clone().unwrap_or_default().height }
 
     pub fn validate_starting_block_header(&self, coin: &str) -> Result<(), SPVError> {
+        // Check if verification params is set. If not set then we can return Ok response.
+        if self.verification_params.is_none() {
+            return Ok(());
+        }
+
         if let Some(header) = &self.starting_block_header {
             let retarget_interval = RETARGETING_INTERVAL as u64;
             // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.

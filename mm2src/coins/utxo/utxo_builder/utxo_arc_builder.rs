@@ -258,7 +258,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     while let Some(arc) = weak.upgrade() {
         let coin = constructor(arc);
         let ticker = coin.as_ref().conf.ticker.as_str();
-        let spv_conf = coin.as_ref().conf.spv_conf.clone().unwrap_or_default();
+        let spv_conf = coin.as_ref().conf.spv_conf();
         let client = match &coin.as_ref().rpc_client {
             UtxoRpcClientEnum::Native(_) => break,
             UtxoRpcClientEnum::Electrum(client) => client,
@@ -271,8 +271,8 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
                     height
                 } else {
                     let height = spv_conf.starting_block_header_height();
-                    // Try adding the given starting block to storage if it's needed to. SPVConf::starting_block_header and
-                    // verification_params must be set!
+                    // Try adding the given starting block to storage if it's needed to.
+                    // SPVConf::starting_block_header  must be set!
                     add_starting_block_header_to_storage(coin.clone(), client, &spv_conf.starting_block_header)
                         .await
                         .error_log();
@@ -365,7 +365,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
             };
         }
 
-        // Check if we need to max the numbers of headers to be stored in storage.
+        // Check if we need to max the number of headers to be stored in storage.
         let headers_in_storage_count = storage.get_total_block_headers_from_storage().await.unwrap_or(0);
         let max_stored_block_headers = spv_conf.max_stored_block_headers();
         let current_total = block_registry.len() as u64 + headers_in_storage_count;

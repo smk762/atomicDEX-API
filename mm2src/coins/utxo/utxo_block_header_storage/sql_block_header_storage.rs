@@ -167,7 +167,6 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
     ) -> Result<(), BlockHeaderStorageError> {
         let coin = self.ticker.clone();
         let selfi = self.clone();
-
         async_blocking(move || {
             let mut conn = selfi.conn.lock().unwrap();
             let sql_transaction = conn
