@@ -43,4 +43,4 @@ trezor = { path = "../trezor" }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 mm2_metamask = { path = "../mm2_metamask" }
 wasm-bindgen-test = { version = "0.3.2" }
-web3 = { git = "https://github.com/sergeyboyko0791/rust-web3", default-features = false }
+web3 = { git = "https://github.com/tomusdrw/rust-web3", default-features = false }

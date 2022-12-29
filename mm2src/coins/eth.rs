@@ -94,6 +94,9 @@ mod web3_transport;
 #[path = "eth/v2_activation.rs"] pub mod v2_activation;
 use v2_activation::build_address_and_priv_key_policy;
 
+pub mod nonce;
+use nonce::{EthNonce, ParityNonce};
+
 /// https://github.com/artemii235/etomic-swap/blob/master/contracts/EtomicSwap.sol
 /// Dev chain (195.201.0.6:8565) contract address: 0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd
 /// Ropsten: https://ropsten.etherscan.io/address/0x7bc1bbdd6a0a722fc9bffc49c921b685ecb84b94
@@ -4124,14 +4127,12 @@ fn get_addr_nonce(addr: Address, web3s: Vec<Web3Instance>) -> Box<dyn Future<Ite
                 .iter()
                 .map(|web3| {
                     if web3.is_parity {
-                        Either::Left(web3.web3.eth().parity_next_nonce(addr))
+                        let parity: ParityNonce<_> = web3.web3.api();
+                        Either::Left(parity.parity_next_nonce(addr))
                     } else {
-                        Either::Right(
-                            web3.web3
-                                .eth()
-                                .transaction_count(addr, Some(BlockNumber::Pending))
-                                .map_ok(U256::from),
-                        )
+                        let eth_nonce: EthNonce<_> = web3.web3.api();
+                        let fut = async move { eth_nonce.transaction_count(addr, Some(BlockNumber::Pending)).await };
+                        Either::Right(fut)
                     }
                 })
                 .collect();
