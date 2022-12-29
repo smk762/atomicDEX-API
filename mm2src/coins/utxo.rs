@@ -107,7 +107,6 @@ use crate::coin_balance::{EnableCoinScanPolicy, EnabledCoinBalanceParams, HDAddr
 use crate::hd_wallet::{HDAccountOps, HDAccountsMutex, HDAddress, HDAddressId, HDWalletCoinOps, HDWalletOps,
                        InvalidBip44ChainError};
 use crate::hd_wallet_storage::{HDAccountStorageItem, HDWalletCoinStorage, HDWalletStorageError, HDWalletStorageResult};
-use crate::utxo::rpc_clients::ElectrumBlockHeaderV14;
 use crate::utxo::tx_cache::UtxoVerboseCacheShared;
 
 pub mod tx_cache;
@@ -491,8 +490,10 @@ pub struct SPVConf {
     pub enable_spv_proof: bool,
     // Limit of block headers allowed to be stored in db..
     max_stored_block_headers: Option<u64>,
-    // Starting block height and hex configuration.
-    starting_block_header: Option<ElectrumBlockHeaderV14>,
+    // Starting block height
+    starting_block_height: u64,
+    // Starting block header hex
+    starting_block_header_hex: String,
     /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
     /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
     pub verification_params: Option<BlockHeaderVerificationParams>,
@@ -501,33 +502,30 @@ pub struct SPVConf {
 impl SPVConf {
     pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
 
-    pub fn starting_block_header_height(&self) -> u64 { self.starting_block_header.clone().unwrap_or_default().height }
-
     pub fn validate_starting_block_header(&self, coin: &str) -> Result<(), SPVError> {
         // Check if verification params is set. If not set then we can return Ok response.
         if self.verification_params.is_none() {
             return Ok(());
         }
 
-        if let Some(header) = &self.starting_block_header {
-            let retarget_interval = RETARGETING_INTERVAL as u64;
-            // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
-            if self.max_stored_block_headers() > 0 && self.max_stored_block_headers() < retarget_interval {
-                return Err(SPVError::StartingBlockHeaderError(format!(
-                    "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
-                    self.max_stored_block_headers
-                )));
-            }
-
-            // Verify retarget_height is the right target header.
-            let is_retarget = header.height % retarget_interval;
-            if is_retarget != 0 {
-                return Err(SPVError::WrongRetargetHeight {
-                    coin: coin.to_string(),
-                    expected_height: header.height - is_retarget,
-                });
-            };
+        let retarget_interval = RETARGETING_INTERVAL as u64;
+        // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
+        if self.max_stored_block_headers() > 0 && self.max_stored_block_headers() < retarget_interval {
+            return Err(SPVError::StartingBlockHeaderError(format!(
+                "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
+                self.max_stored_block_headers
+            )));
         }
+
+        // Verify retarget_height is the right target header.
+        let height = self.starting_block_height;
+        let is_retarget = height % retarget_interval;
+        if is_retarget != 0 {
+            return Err(SPVError::WrongRetargetHeight {
+                coin: coin.to_string(),
+                expected_height: height - is_retarget,
+            });
+        };
 
         Ok(())
     }

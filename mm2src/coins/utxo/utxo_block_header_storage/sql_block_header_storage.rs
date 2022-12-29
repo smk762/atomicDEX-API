@@ -279,13 +279,12 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         })?;
 
         if let Some(header_raw) = maybe_header_raw {
-            let header: BlockHeader =
-                header_raw
-                    .try_into()
-                    .map_err(|e: serialization::Error| BlockHeaderStorageError::DecodeError {
-                        coin,
-                        reason: e.to_string(),
-                    })?;
+            let header = BlockHeader::try_from_string_with_coin_variant(header_raw, coin.as_str().into()).map_err(
+                |e: serialization::Error| BlockHeaderStorageError::DecodeError {
+                    coin,
+                    reason: e.to_string(),
+                },
+            )?;
             return Ok(Some(header));
         }
         Ok(None)

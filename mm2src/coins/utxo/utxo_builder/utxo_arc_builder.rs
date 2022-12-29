@@ -1,4 +1,4 @@
-use crate::utxo::rpc_clients::{ElectrumBlockHeaderV14, ElectrumClient, UtxoRpcClientEnum};
+use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use crate::utxo::utxo_builder::{UtxoCoinBuildError, UtxoCoinBuilder, UtxoCoinBuilderCommonOps,
                                 UtxoFieldsWithGlobalHDBuilder, UtxoFieldsWithHardwareWalletBuilder,
                                 UtxoFieldsWithIguanaSecretBuilder};
@@ -15,11 +15,8 @@ use mm2_err_handle::prelude::*;
 #[cfg(test)] use mocktopus::macros::*;
 use script::Builder;
 use serde_json::Value as Json;
-use serialization::Reader;
 use spv_validation::helpers_validation::validate_headers;
-use spv_validation::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
-use std::collections::HashMap;
-use std::iter::FromIterator;
+use spv_validation::storage::BlockHeaderStorageOps;
 
 const FETCH_BLOCK_HEADERS_ATTEMPTS: u64 = 3;
 const CHUNK_SIZE_REDUCER_VALUE: u64 = 100;
@@ -266,18 +263,22 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
 
         let storage = client.block_headers_storage();
         let from_block_height = match storage.get_last_block_height().await {
-            Ok(h) => {
-                if let Some(height) = h {
-                    height
-                } else {
-                    let height = spv_conf.starting_block_header_height();
-                    // Try adding the given starting block to storage if it's needed to.
-                    // SPVConf::starting_block_header  must be set!
-                    add_starting_block_header_to_storage(coin.clone(), client, &spv_conf.starting_block_header)
-                        .await
-                        .error_log();
-                    height
+            Ok(Some(height)) => height,
+            Ok(None) => {
+                let header_hex = spv_conf.starting_block_header_hex.clone();
+                let block_header = match BlockHeader::try_from_string_with_coin_variant(header_hex, ticker.into()) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        sync_status_loop_handle.notify_on_permanent_error(e.to_string());
+                        break;
+                    },
+                };
+                let headers_map = std::iter::once((spv_conf.starting_block_height, block_header)).collect();
+                if let Err(e) = storage.add_block_headers_to_storage(headers_map).await {
+                    sync_status_loop_handle.notify_on_permanent_error(e.to_string());
+                    break;
                 }
+                spv_conf.starting_block_height
             },
             Err(e) => {
                 error!("Error {e:?} on getting the height of the last stored {ticker} header in DB!",);
@@ -379,28 +380,6 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         let sleep = args.success_sleep;
         ok_or_continue_after_sleep!(storage.add_block_headers_to_storage(block_registry).await, sleep);
     }
-}
-
-async fn add_starting_block_header_to_storage<T: UtxoCommonOps>(
-    coin: T,
-    client: &ElectrumClient,
-    header: &Option<ElectrumBlockHeaderV14>,
-) -> Result<(), BlockHeaderStorageError> {
-    if let Some(header) = header {
-        let storage = client.block_headers_storage();
-        if let Ok(None) = storage.get_block_header(header.height).await {
-            let mut reader = Reader::new(&header.hex.0);
-            let block_header = reader
-                .read::<BlockHeader>()
-                .map_err(|err| BlockHeaderStorageError::DecodeError {
-                    coin: coin.as_ref().conf.ticker.to_string(),
-                    reason: err.to_string(),
-                })?;
-            let block_header = HashMap::from_iter([(header.height, block_header)]);
-            return storage.add_block_headers_to_storage(block_header).await;
-        };
-    };
-    Ok(())
 }
 
 pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
