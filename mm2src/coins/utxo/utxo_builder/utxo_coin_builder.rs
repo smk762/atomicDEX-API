@@ -657,7 +657,7 @@ pub trait UtxoCoinBuilderCommonOps {
         Option<AsyncMutex<AsyncReceiver<UtxoSyncStatus>>>,
     ) {
         if let Some(spv) = self.spv_conf() {
-            if spv.enable_spv_proof && !self.activation_params().mode.is_native() {
+            if spv.enable_spv_proof() && !self.activation_params().mode.is_native() {
                 let (sync_status_notifier, sync_watcher) = channel(1);
                 return (
                     Some(UtxoSyncStatusLoopHandle::new(sync_status_notifier)),

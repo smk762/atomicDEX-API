@@ -485,7 +485,7 @@ impl UtxoSyncStatusLoopHandle {
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
-pub struct SPVConf {
+pub struct SPVConfWithVerification {
     // Determine if spv proof should be enable. Default to false.
     pub enable_spv_proof: bool,
     // Limit of block headers allowed to be stored in db..
@@ -499,35 +499,85 @@ pub struct SPVConf {
     pub verification_params: Option<BlockHeaderVerificationParams>,
 }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct SPVConfNoVerification {
+    // Determine if spv proof should be enable. Default to false.
+    pub enable_spv_proof: bool,
+    // Limit of block headers allowed to be stored in db..
+    max_stored_block_headers: Option<u64>,
+    // Starting block height
+    starting_block_height: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub enum SPVConf {
+    NoVerification(SPVConfNoVerification),
+    WithVerification(SPVConfWithVerification),
+}
+
+impl Default for SPVConf {
+    fn default() -> Self { Self::NoVerification(SPVConfNoVerification::default()) }
+}
+
 impl SPVConf {
-    pub fn max_stored_block_headers(&self) -> u64 { self.max_stored_block_headers.unwrap_or_default() }
+    pub fn enable_spv_proof(&self) -> bool {
+        match self {
+            SPVConf::NoVerification(conf) => conf.enable_spv_proof,
+            SPVConf::WithVerification(conf) => conf.enable_spv_proof,
+        }
+    }
+
+    pub fn max_stored_block_headers(&self) -> u64 {
+        match self {
+            SPVConf::NoVerification(s) => s.max_stored_block_headers.unwrap_or(0),
+            SPVConf::WithVerification(s) => s.max_stored_block_headers.unwrap_or(0),
+        }
+    }
+
+    pub fn starting_block_height(&self) -> u64 {
+        match self {
+            SPVConf::NoVerification(s) => s.starting_block_height,
+            SPVConf::WithVerification(s) => s.starting_block_height,
+        }
+    }
 
     pub fn validate_starting_block_header(&self, coin: &str) -> Result<(), SPVError> {
-        // Check if verification params is set. If not set then we can return Ok response.
-        if self.verification_params.is_none() {
-            return Ok(());
+        match self {
+            SPVConf::NoVerification(_) => Ok(()),
+            SPVConf::WithVerification(conf) => {
+                // Check if verification params is set. If not set then we can return Ok response.
+                if conf.verification_params.is_none() {
+                    return Ok(());
+                }
+
+                let retarget_interval = RETARGETING_INTERVAL as u64;
+                // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
+                if self.max_stored_block_headers() > 0 && self.max_stored_block_headers() < retarget_interval {
+                    return Err(SPVError::StartingBlockHeaderError(format!(
+                        "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
+                        conf.max_stored_block_headers
+                    )));
+                }
+
+                // Verify retarget_height is the right target header.
+                let height = conf.starting_block_height;
+                let is_retarget = height % retarget_interval;
+                if is_retarget != 0 {
+                    return Err(SPVError::WrongRetargetHeight {
+                        coin: coin.to_string(),
+                        expected_height: height - is_retarget,
+                    });
+                };
+                Ok(())
+            },
         }
+    }
 
-        let retarget_interval = RETARGETING_INTERVAL as u64;
-        // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
-        if self.max_stored_block_headers() > 0 && self.max_stored_block_headers() < retarget_interval {
-            return Err(SPVError::StartingBlockHeaderError(format!(
-                "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
-                self.max_stored_block_headers
-            )));
+    pub fn with_validation(&self) -> Option<BlockHeaderVerificationParams> {
+        match self {
+            SPVConf::NoVerification(_) => None,
+            SPVConf::WithVerification(conf) => conf.verification_params.clone(),
         }
-
-        // Verify retarget_height is the right target header.
-        let height = self.starting_block_height;
-        let is_retarget = height % retarget_interval;
-        if is_retarget != 0 {
-            return Err(SPVError::WrongRetargetHeight {
-                coin: coin.to_string(),
-                expected_height: height - is_retarget,
-            });
-        };
-
-        Ok(())
     }
 }
 

@@ -2,8 +2,8 @@ use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use crate::utxo::utxo_builder::{UtxoCoinBuildError, UtxoCoinBuilder, UtxoCoinBuilderCommonOps,
                                 UtxoFieldsWithGlobalHDBuilder, UtxoFieldsWithHardwareWalletBuilder,
                                 UtxoFieldsWithIguanaSecretBuilder};
-use crate::utxo::{generate_and_send_tx, FeePolicy, GetUtxoListOps, UtxoArc, UtxoCommonOps, UtxoSyncStatusLoopHandle,
-                  UtxoWeak};
+use crate::utxo::{generate_and_send_tx, FeePolicy, GetUtxoListOps, SPVConf, UtxoArc, UtxoCommonOps,
+                  UtxoSyncStatusLoopHandle, UtxoWeak};
 use crate::{DerivationMethod, PrivKeyBuildPolicy, UtxoActivationParams};
 use async_trait::async_trait;
 use chain::{BlockHeader, TransactionOutput};
@@ -265,20 +265,22 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         let from_block_height = match storage.get_last_block_height().await {
             Ok(Some(height)) => height,
             Ok(None) => {
-                let header_hex = spv_conf.starting_block_header_hex.clone();
-                let block_header = match BlockHeader::try_from_string_with_coin_variant(header_hex, ticker.into()) {
-                    Ok(h) => h,
-                    Err(e) => {
+                if let SPVConf::WithVerification(conf) = &spv_conf {
+                    let header_hex = conf.starting_block_header_hex.clone();
+                    let block_header = match BlockHeader::try_from_string_with_coin_variant(header_hex, ticker.into()) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            sync_status_loop_handle.notify_on_permanent_error(e.to_string());
+                            break;
+                        },
+                    };
+                    let headers_map = std::iter::once((conf.starting_block_height, block_header)).collect();
+                    if let Err(e) = storage.add_block_headers_to_storage(headers_map).await {
                         sync_status_loop_handle.notify_on_permanent_error(e.to_string());
                         break;
-                    },
+                    }
                 };
-                let headers_map = std::iter::once((spv_conf.starting_block_height, block_header)).collect();
-                if let Err(e) = storage.add_block_headers_to_storage(headers_map).await {
-                    sync_status_loop_handle.notify_on_permanent_error(e.to_string());
-                    break;
-                }
-                spv_conf.starting_block_height
+                spv_conf.starting_block_height()
             },
             Err(e) => {
                 error!("Error {e:?} on getting the height of the last stored {ticker} header in DB!",);
@@ -357,7 +359,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         };
 
         // Validate retrieved block headers.
-        if let Some(params) = &spv_conf.verification_params {
+        if let Some(params) = &spv_conf.with_validation() {
             if let Err(e) = validate_headers(ticker, from_block_height, block_headers, storage, params).await {
                 error!("Error {e:?} on validating the latest headers for {ticker}!");
                 // Todo: remove this electrum server and use another in this case since the headers from this server are invalid

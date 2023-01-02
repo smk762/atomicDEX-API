@@ -4387,33 +4387,33 @@ fn test_block_header_utxo_loop() {
 }
 
 #[test]
-fn test_spv_conf_validate_starting_block_header() {
-    use hex::FromHex;
-    use rpc::v1::types::Bytes as BytesJson;
-
+fn test_spv_conf_with_verification() {
     // Block header hex for BLOCK HEIGHT 2016
     let hex =
-       BytesJson
-           (FromHex::from_hex
-               ("010000006397bb6abd4fc521c0d3f6071b5650389f0b4551bc40b4e6b067306900000000ace470aecda9c8818c8fe57688cd2a772b5a57954a00df0420a7dd546b6d2c576b0e7f49ffff001d33f0192f").unwrap());
+        "010000006397bb6abd4fc521c0d3f6071b5650389f0b4551bc40b4e6b067306900000000ace470aecda9c8818c8fe57688cd2a772b5a57954a00df0420a7dd546b6d2c576b0e7f49ffff001d33f0192f";
 
-    // test for good retarget_block_header_height
-    let spv_conf = SPVConf {
+    let with_verifiction = SPVConfWithVerification {
         enable_spv_proof: true,
         max_stored_block_headers: None,
-        starting_block_header: Some(ElectrumBlockHeaderV14 {
-            height: 4032,
-            hex: hex.clone(),
+        starting_block_height: 4032,
+        starting_block_header_hex: hex.to_string(),
+        verification_params: Some(BlockHeaderVerificationParams {
+            difficulty_check: false,
+            constant_difficulty: false,
+            difficulty_algorithm: None,
         }),
-        verification_params: None,
     };
+    // test for good retarget_block_header_height
+    let spv_conf = SPVConf::WithVerification(with_verifiction.clone());
     assert!(spv_conf.validate_starting_block_header("BTC").is_ok());
 
     // test for bad retarget_block_header_height
-    let spv_conf = SPVConf {
-        starting_block_header: Some(ElectrumBlockHeaderV14 { height: 4037, hex }),
-        ..spv_conf
+    let with_verifiction = SPVConfWithVerification {
+        starting_block_height: 4037,
+
+        ..with_verifiction
     };
+    let spv_conf = SPVConf::WithVerification(with_verifiction);
     let validate = spv_conf.validate_starting_block_header("BTC").err().unwrap();
     if let SPVError::WrongRetargetHeight { coin, expected_height } = validate {
         assert_eq!(coin, "BTC");
