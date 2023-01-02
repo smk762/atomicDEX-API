@@ -4494,6 +4494,7 @@ dependencies = [
  "num-traits",
  "paste",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

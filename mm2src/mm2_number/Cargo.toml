@@ -13,3 +13,6 @@ num-rational = { version = "0.4", features = ["serde"] }
 num-traits = "0.2"
 paste = "1.0"
 serde = { version = "1", features = ["serde_derive"] }
+
+[dev-dependencies]
+serde_json = "1"
