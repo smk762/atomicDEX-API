@@ -113,7 +113,6 @@ fn test_spl_transactions() {
                 max: false,
                 fee: None,
                 memo: None,
-                broadcast: false,
             })
             .compat(),
     )
