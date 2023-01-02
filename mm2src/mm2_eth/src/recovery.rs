@@ -1,8 +1,9 @@
-use ethkey::{Error, Signature};
 use mm2_err_handle::prelude::*;
 use secp256k1::recovery::{RecoverableSignature, RecoveryId};
 use secp256k1::{Message as SecpMessage, Secp256k1};
 use web3::types::{H256, H520};
+
+pub use ethkey::{Error, Signature};
 
 /// Inspired by `ethkey::recover` with the only one difference:
 /// this methods returns the full `H520` pubkey instead of unprefixed `H512`.

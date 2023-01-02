@@ -1,7 +1,7 @@
 use crate::metamask_login::{adex_eip712_request, AtomicDEXDomain, AtomicDEXLoginRequest};
-use ethkey::{Address, Signature};
 use mm2_err_handle::prelude::*;
-use mm2_eth::{address::address_from_pubkey_uncompressed, recovery::recover_pubkey};
+use mm2_eth::address::{address_from_pubkey_uncompressed, Address};
+use mm2_eth::recovery::{recover_pubkey, Signature};
 use mm2_metamask::{Eip1193Provider, MetamaskSession};
 use std::ops::Deref;
 use std::str::FromStr;

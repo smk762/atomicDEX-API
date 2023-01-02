@@ -1,5 +1,7 @@
-use ethkey::{public_to_address, Address, Public};
+use ethkey::{public_to_address, Public};
 use web3::types::H520;
+
+pub use ethkey::Address;
 
 pub fn address_from_pubkey_uncompressed(bytes: H520) -> Address {
     // Skip the first byte of the uncompressed public key.
