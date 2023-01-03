@@ -939,7 +939,7 @@ pub struct WithdrawRequest {
     max: bool,
     fee: Option<WithdrawFee>,
     memo: Option<String>,
-    /// Currently, this flag is by ETH/ERC20 coins activated with MetaMask **only**.
+    /// Currently, this flag is used by ETH/ERC20 coins activated with MetaMask **only**.
     #[cfg(target_arch = "wasm32")]
     #[serde(default)]
     broadcast: bool,

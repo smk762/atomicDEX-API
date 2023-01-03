@@ -257,14 +257,7 @@ pub async fn eth_coin_from_conf_and_request_v2(
             let chain_id = chain_id
                 .or_else(|| conf["rpc_chain_id"].as_u64())
                 .or_mm_err(|| EthActivationV2Error::ExpectedRpcChainId)?;
-
-            let (web3, web3_instances) = build_metamask_transport(ctx, ticker.clone(), chain_id)?;
-
-            // Check if MetaMask supports the given `chain_id`.
-            // Please note that this request may take a long time.
-            check_metamask_supports_chain_id(ticker.clone(), &web3, chain_id).await?;
-
-            (web3, web3_instances)
+            build_metamask_transport(ctx, ticker.clone(), chain_id).await?
         },
         #[cfg(target_arch = "wasm32")]
         (_, _) => {
@@ -443,15 +436,19 @@ fn build_single_http_transport(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn build_metamask_transport(
+async fn build_metamask_transport(
     ctx: &MmArc,
     coin_ticker: String,
     chain_id: u64,
 ) -> MmResult<(Web3<Web3Transport>, Vec<Web3Instance>), EthActivationV2Error> {
-    let event_handlers = rpc_event_handlers_for_eth_transport(ctx, coin_ticker);
+    let event_handlers = rpc_event_handlers_for_eth_transport(ctx, coin_ticker.clone());
 
     let eth_config = web3_transport::metamask_transport::EthConfig { chain_id };
     let web3 = Web3::new(Web3Transport::new_metamask(eth_config, event_handlers)?);
+
+    // Check if MetaMask supports the given `chain_id`.
+    // Please note that this request may take a long time.
+    check_metamask_supports_chain_id(coin_ticker, &web3, chain_id).await?;
 
     // MetaMask doesn't use Parity nodes. So `MetamaskTransport` doesn't support `parity_nextNonce` RPC.
     // An example of the `web3_clientVersion` RPC - `MetaMask/v10.22.1`.

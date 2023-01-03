@@ -3371,6 +3371,7 @@ impl EthCoin {
             Timer::sleep(check_every).await;
         }
 
+        warn!("Couldn't fetch the '{tx_hash:02x}' transaction hex");
         Ok(SendMetamaskTx {
             tx_hash,
             signed_tx: None,

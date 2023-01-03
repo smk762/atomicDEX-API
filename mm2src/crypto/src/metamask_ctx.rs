@@ -38,8 +38,6 @@ pub struct MetamaskCtx {
     eth_account_str: String,
     /// Please note that this is a normal version of public key (uncompressed).
     eth_account_pubkey: H520,
-    /// We'll possibly use it later.
-    #[allow(dead_code)]
     web3: Web3<Eip1193Provider>,
 }
 
