@@ -638,11 +638,6 @@ impl EthCoinImpl {
         sha256(&input).to_vec()
     }
 
-    fn estimate_gas(&self, req: CallRequest) -> Box<dyn Future<Item = U256, Error = web3::Error> + Send> {
-        // always using None block number as old Geth version accept only single argument in this RPC
-        Box::new(self.web3.eth().estimate_gas(req, None).compat())
-    }
-
     /// Gets `SenderRefunded` events from etomic swap smart contract since `from_block`
     fn refund_events(
         &self,
@@ -2861,6 +2856,11 @@ impl EthCoin {
                 MmError::err(BalanceError::InvalidResponse(error))
             },
         }
+    }
+
+    fn estimate_gas(&self, req: CallRequest) -> Box<dyn Future<Item = U256, Error = web3::Error> + Send> {
+        // always using None block number as old Geth version accept only single argument in this RPC
+        Box::new(self.web3.eth().estimate_gas(req, None).compat())
     }
 
     /// Estimates how much gas is necessary to allow the contract call to complete.
