@@ -643,24 +643,6 @@ impl EthCoinImpl {
         Box::new(self.web3.eth().estimate_gas(req, None).compat())
     }
 
-    /// Gets `ReceiverSpent` events from etomic swap smart contract since `from_block`
-    fn spend_events(
-        &self,
-        swap_contract_address: Address,
-        from_block: u64,
-        to_block: u64,
-    ) -> Box<dyn Future<Item = Vec<Log>, Error = String> + Send> {
-        let contract_event = try_fus!(SWAP_CONTRACT.event("ReceiverSpent"));
-        let filter = FilterBuilder::default()
-            .topics(Some(vec![contract_event.signature()]), None, None, None)
-            .from_block(BlockNumber::Number(from_block.into()))
-            .to_block(BlockNumber::Number(to_block.into()))
-            .address(vec![swap_contract_address])
-            .build();
-
-        Box::new(self.web3.eth().logs(filter).compat().map_err(|e| ERRL!("{}", e)))
-    }
-
     /// Gets `SenderRefunded` events from etomic swap smart contract since `from_block`
     fn refund_events(
         &self,
@@ -2995,6 +2977,24 @@ impl EthCoin {
         to_block: u64,
     ) -> Box<dyn Future<Item = Vec<Log>, Error = String> + Send> {
         let contract_event = try_fus!(SWAP_CONTRACT.event("PaymentSent"));
+        let filter = FilterBuilder::default()
+            .topics(Some(vec![contract_event.signature()]), None, None, None)
+            .from_block(BlockNumber::Number(from_block.into()))
+            .to_block(BlockNumber::Number(to_block.into()))
+            .address(vec![swap_contract_address])
+            .build();
+
+        Box::new(self.web3.eth().logs(filter).compat().map_err(|e| ERRL!("{}", e)))
+    }
+
+    /// Gets `ReceiverSpent` events from etomic swap smart contract since `from_block`
+    fn spend_events(
+        &self,
+        swap_contract_address: Address,
+        from_block: u64,
+        to_block: u64,
+    ) -> Box<dyn Future<Item = Vec<Log>, Error = String> + Send> {
+        let contract_event = try_fus!(SWAP_CONTRACT.event("ReceiverSpent"));
         let filter = FilterBuilder::default()
             .topics(Some(vec![contract_event.signature()]), None, None, None)
             .from_block(BlockNumber::Number(from_block.into()))

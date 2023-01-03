@@ -416,7 +416,7 @@ fn test_nonce_several_urls() {
 
 #[test]
 fn test_wait_for_payment_spend_timeout() {
-    EthCoinImpl::spend_events.mock_safe(|_, _, _, _| MockResult::Return(Box::new(futures01::future::ok(vec![]))));
+    EthCoin::spend_events.mock_safe(|_, _, _, _| MockResult::Return(Box::new(futures01::future::ok(vec![]))));
     EthCoin::current_block.mock_safe(|_| MockResult::Return(Box::new(futures01::future::ok(900))));
 
     let key_pair = KeyPair::from_secret_slice(
