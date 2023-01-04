@@ -6374,6 +6374,7 @@ version = "1.0.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e8d9fa5c3b304765ce1fd9c4c8a3de2c8db365a5b91be52f186efc675681d95"
 dependencies = [
+ "indexmap",
  "itoa 1.0.1",
  "ryu",
  "serde",
@@ -8707,8 +8708,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "632f73e236b219150ea279196e54e610f5dbafa5d61786303d4da54f84e47fce"
 dependencies = [
  "cfg-if 1.0.0",
- "serde",
- "serde_json",
  "wasm-bindgen-macro",
 ]
 
@@ -8820,7 +8819,7 @@ dependencies = [
 [[package]]
 name = "web3"
 version = "0.19.0"
-source = "git+https://github.com/tomusdrw/rust-web3#c593b722d57da0c2885123867a7d4662a288d6cc"
+source = "git+https://github.com/sergeyboyko0791/rust-web3#cc40a190d42a5656cb0bca43ea0c8b427bca0c45"
 dependencies = [
  "arrayvec 0.7.1",
  "derive_more",
@@ -8839,6 +8838,7 @@ dependencies = [
  "rand 0.8.4",
  "rlp",
  "serde",
+ "serde-wasm-bindgen",
  "serde_json",
  "tiny-keccak 2.0.2",
  "wasm-bindgen",

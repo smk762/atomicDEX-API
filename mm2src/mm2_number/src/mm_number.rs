@@ -6,7 +6,9 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::Zero;
 use serde::Serialize;
-use serde::{Deserialize, Deserializer};
+use serde::{de, Deserialize, Deserializer};
+use serde_json::value::RawValue;
+use std::str::FromStr;
 
 /// Construct a `$name` detailed number that have decimal, fraction and rational representations.
 /// The macro takes the `$name` name of the structure and the `$base_name` that is used to generate three different fields:
@@ -71,19 +73,24 @@ impl<'de> Deserialize<'de> for MmNumber {
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum MmNumberHelper {
-            BigDecimal(BigDecimal),
-            BigRational(BigRational),
-            Fraction(Fraction),
-        }
+        let raw: Box<RawValue> = Deserialize::deserialize(deserializer)?;
 
-        match MmNumberHelper::deserialize(deserializer)? {
-            MmNumberHelper::BigDecimal(decimal) => Ok(MmNumber(from_dec_to_ratio(&decimal))),
-            MmNumberHelper::BigRational(ratio) => Ok(MmNumber(ratio)),
-            MmNumberHelper::Fraction(fraction) => Ok(MmNumber(fraction.into())),
-        }
+        if let Ok(dec) = BigDecimal::from_str(raw.get().trim_matches('"')) {
+            return Ok(MmNumber(from_dec_to_ratio(&dec)));
+        };
+
+        if let Ok(rat) = serde_json::from_str::<BigRational>(raw.get()) {
+            return Ok(MmNumber(rat));
+        };
+
+        if let Ok(fraction) = serde_json::from_str::<Fraction>(raw.get()) {
+            return Ok(MmNumber(fraction.into()));
+        };
+
+        Err(de::Error::custom(format!(
+            "Could not deserialize any variant of MmNumber from {}",
+            raw.get()
+        )))
     }
 }
 
@@ -371,5 +378,20 @@ mod tests {
         assert_eq!(actual.number, expected.number);
         assert_eq!(actual.number_rat, expected.number_rat);
         // Fraction doesn't implement `PartialEq` trait
+    }
+
+    #[test]
+    fn test_from_non_str_decimal() {
+        let json_str = r#"{"num":218998218471824891289891282187398.99999999128948218418948571392148}"#;
+
+        #[derive(Deserialize)]
+        struct Helper {
+            num: MmNumber,
+        }
+
+        let actual: Helper = json::from_str(json_str).unwrap();
+        let expected = MmNumber::from("218998218471824891289891282187398.99999999128948218418948571392148");
+
+        assert_eq!(actual.num, expected);
     }
 }

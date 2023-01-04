@@ -34,7 +34,7 @@ ser_error = { path = "../derives/ser_error" }
 ser_error_derive = { path = "../derives/ser_error_derive" }
 serde = "1.0"
 serde_derive = "1.0"
-serde_json = "1.0"
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 tiny-bip39 = "0.8.0"
 trezor = { path = "../trezor" }
 
@@ -42,4 +42,4 @@ trezor = { path = "../trezor" }
 mm2_eth = { path = "../mm2_eth" }
 mm2_metamask = { path = "../mm2_metamask" }
 wasm-bindgen-test = { version = "0.3.2" }
-web3 = { git = "https://github.com/tomusdrw/rust-web3", default-features = false }
+web3 = { git = "https://github.com/sergeyboyko0791/rust-web3", default-features = false }

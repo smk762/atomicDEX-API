@@ -15,5 +15,5 @@ itertools = "0.10"
 mm2_err_handle = { path = "../mm2_err_handle" }
 secp256k1 = { version = "0.20", features = ["recovery"] }
 serde = "1.0"
-serde_json = "1.0"
-web3 = { git = "https://github.com/tomusdrw/rust-web3", default-features = false }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+web3 = { git = "https://github.com/sergeyboyko0791/rust-web3", default-features = false }
