@@ -72,8 +72,6 @@ impl From<BalanceError> for HDAccountBalanceRpcError {
             BalanceError::Transport(transport) => HDAccountBalanceRpcError::Transport(transport),
             BalanceError::InvalidResponse(rpc) => HDAccountBalanceRpcError::RpcInvalidResponse(rpc),
             BalanceError::UnexpectedDerivationMethod(der_method) => HDAccountBalanceRpcError::from(der_method),
-            #[cfg(target_arch = "wasm32")]
-            BalanceError::MetamaskError(metamask) => HDAccountBalanceRpcError::Internal(metamask.to_string()),
             BalanceError::WalletStorageError(e) | BalanceError::Internal(e) => HDAccountBalanceRpcError::Internal(e),
         }
     }

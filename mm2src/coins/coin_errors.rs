@@ -58,8 +58,6 @@ impl From<Web3RpcError> for ValidatePaymentError {
     fn from(e: Web3RpcError) -> Self {
         match e {
             Web3RpcError::Transport(tr) | Web3RpcError::InvalidResponse(tr) => ValidatePaymentError::Transport(tr),
-            #[cfg(target_arch = "wasm32")]
-            Web3RpcError::MetamaskError(e) => ValidatePaymentError::InternalError(e.to_string()),
             Web3RpcError::Internal(internal) => ValidatePaymentError::InternalError(internal),
         }
     }

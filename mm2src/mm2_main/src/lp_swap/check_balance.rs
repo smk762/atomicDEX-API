@@ -224,8 +224,6 @@ impl From<BalanceError> for CheckBalanceError {
             BalanceError::UnexpectedDerivationMethod(_) | BalanceError::WalletStorageError(_) => {
                 CheckBalanceError::InternalError(e.to_string())
             },
-            #[cfg(target_arch = "wasm32")]
-            BalanceError::MetamaskError(metamask) => CheckBalanceError::InternalError(metamask.to_string()),
             BalanceError::Internal(internal) => CheckBalanceError::InternalError(internal),
         }
     }

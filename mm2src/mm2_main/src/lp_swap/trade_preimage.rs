@@ -262,8 +262,6 @@ impl From<BalanceError> for TradePreimageRpcError {
             },
             BalanceError::UnexpectedDerivationMethod(_) => TradePreimageRpcError::InternalError(e.to_string()),
             BalanceError::WalletStorageError(_) => TradePreimageRpcError::InternalError(e.to_string()),
-            #[cfg(target_arch = "wasm32")]
-            BalanceError::MetamaskError(metamask) => TradePreimageRpcError::InternalError(metamask.to_string()),
             BalanceError::Internal(internal) => TradePreimageRpcError::InternalError(internal),
         }
     }

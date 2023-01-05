@@ -52,7 +52,9 @@ impl From<EthActivationV2Error> for EnablePlatformCoinWithTokensError {
                 EnablePlatformCoinWithTokensError::PrivKeyPolicyNotAllowed(e)
             },
             #[cfg(target_arch = "wasm32")]
-            EthActivationV2Error::MetamaskError(metamask) => EnablePlatformCoinWithTokensError::MetamaskError(metamask),
+            EthActivationV2Error::MetamaskError(metamask) => {
+                EnablePlatformCoinWithTokensError::Transport(metamask.to_string())
+            },
             EthActivationV2Error::InternalError(e) => EnablePlatformCoinWithTokensError::Internal(e),
         }
     }

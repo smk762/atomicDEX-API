@@ -99,8 +99,6 @@ impl From<BalanceError> for EnableTokenError {
         match e {
             BalanceError::Transport(e) | BalanceError::InvalidResponse(e) => EnableTokenError::Transport(e),
             BalanceError::UnexpectedDerivationMethod(e) => EnableTokenError::UnexpectedDerivationMethod(e),
-            #[cfg(target_arch = "wasm32")]
-            BalanceError::MetamaskError(metamask) => EnableTokenError::MetamaskError(metamask),
             BalanceError::Internal(e) | BalanceError::WalletStorageError(e) => EnableTokenError::Internal(e),
         }
     }

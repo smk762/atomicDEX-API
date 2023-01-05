@@ -28,7 +28,6 @@ use common::{get_utc_timestamp, now_ms, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
 use crypto::privkey::key_pair_from_secret;
 use crypto::{CryptoCtx, CryptoCtxError, GlobalHDAccountArc, KeyPairPolicy};
 use derive_more::Display;
-use enum_from::EnumFromTrait;
 use ethabi::{Contract, Function, Token};
 pub use ethcore_transaction::SignedTransaction as SignedEthTx;
 use ethcore_transaction::{Action, Transaction as UnSignedEthTx, UnverifiedTransaction};
@@ -40,7 +39,7 @@ use futures::future::{join_all, select, Either, FutureExt, TryFutureExt};
 use futures01::Future;
 use http::StatusCode;
 use mm2_core::mm_ctx::{MmArc, MmWeak};
-use mm2_err_handle::{common_errors::WithInternal, prelude::*};
+use mm2_err_handle::prelude::*;
 use mm2_net::transport::{slurp_url, GuiAuthValidation, GuiAuthValidationGenerator, SlurpError};
 use mm2_number::{BigDecimal, MmNumber};
 #[cfg(test)] use mocktopus::macros::*;
@@ -64,9 +63,8 @@ use web3_transport::{http_transport::HttpTransportNode, EthFeeHistoryNamespace, 
 
 cfg_wasm32! {
     use crypto::MetamaskArc;
-    use enum_from::EnumFromInner;
     use ethereum_types::{H264, H520};
-    use mm2_metamask::{from_metamask_error, MetamaskError, MetamaskRpcError, WithMetamaskRpcError};
+    use mm2_metamask::MetamaskError;
     use web3::types::TransactionRequest;
 }
 
@@ -175,19 +173,13 @@ impl From<SlurpError> for GasStationReqErr {
     }
 }
 
-#[derive(Debug, Display, EnumFromTrait)]
-#[cfg_attr(target_arch = "wasm32", derive(EnumFromInner))]
+#[derive(Debug, Display)]
 pub enum Web3RpcError {
     #[display(fmt = "Transport: {}", _0)]
     Transport(String),
     #[display(fmt = "Invalid response: {}", _0)]
     InvalidResponse(String),
-    #[cfg(target_arch = "wasm32")]
-    #[from_trait(WithMetamaskRpcError::metamask_rpc_error)]
-    #[from_inner]
-    MetamaskError(MetamaskRpcError),
     #[display(fmt = "Internal: {}", _0)]
-    #[from_trait(WithInternal::internal)]
     Internal(String),
 }
 
@@ -226,8 +218,6 @@ impl From<Web3RpcError> for RawTransactionError {
     fn from(e: Web3RpcError) -> Self {
         match e {
             Web3RpcError::Transport(tr) | Web3RpcError::InvalidResponse(tr) => RawTransactionError::Transport(tr),
-            #[cfg(target_arch = "wasm32")]
-            Web3RpcError::MetamaskError(metamask) => RawTransactionError::MetamaskError(metamask),
             Web3RpcError::Internal(internal) => RawTransactionError::InternalError(internal),
         }
     }
@@ -243,7 +233,12 @@ impl From<ethabi::Error> for Web3RpcError {
 
 #[cfg(target_arch = "wasm32")]
 impl From<MetamaskError> for Web3RpcError {
-    fn from(e: MetamaskError) -> Self { from_metamask_error(e) }
+    fn from(e: MetamaskError) -> Self {
+        match e {
+            MetamaskError::Internal(internal) => Web3RpcError::Internal(internal),
+            other => Web3RpcError::Transport(other.to_string()),
+        }
+    }
 }
 
 impl From<ethabi::Error> for WithdrawError {
@@ -262,8 +257,6 @@ impl From<Web3RpcError> for WithdrawError {
     fn from(e: Web3RpcError) -> Self {
         match e {
             Web3RpcError::Transport(err) | Web3RpcError::InvalidResponse(err) => WithdrawError::Transport(err),
-            #[cfg(target_arch = "wasm32")]
-            Web3RpcError::MetamaskError(metamask) => WithdrawError::MetamaskError(metamask),
             Web3RpcError::Internal(internal) => WithdrawError::InternalError(internal),
         }
     }
@@ -277,8 +270,6 @@ impl From<Web3RpcError> for TradePreimageError {
     fn from(e: Web3RpcError) -> Self {
         match e {
             Web3RpcError::Transport(err) | Web3RpcError::InvalidResponse(err) => TradePreimageError::Transport(err),
-            #[cfg(target_arch = "wasm32")]
-            Web3RpcError::MetamaskError(metamask) => TradePreimageError::InternalError(metamask.to_string()),
             Web3RpcError::Internal(internal) => TradePreimageError::InternalError(internal),
         }
     }
@@ -308,8 +299,6 @@ impl From<Web3RpcError> for BalanceError {
     fn from(e: Web3RpcError) -> Self {
         match e {
             Web3RpcError::Transport(tr) | Web3RpcError::InvalidResponse(tr) => BalanceError::Transport(tr),
-            #[cfg(target_arch = "wasm32")]
-            Web3RpcError::MetamaskError(metamask) => BalanceError::MetamaskError(metamask),
             Web3RpcError::Internal(internal) => BalanceError::Internal(internal),
         }
     }
