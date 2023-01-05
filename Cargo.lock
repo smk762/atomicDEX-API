@@ -8819,7 +8819,7 @@ dependencies = [
 [[package]]
 name = "web3"
 version = "0.19.0"
-source = "git+https://github.com/sergeyboyko0791/rust-web3#cc40a190d42a5656cb0bca43ea0c8b427bca0c45"
+source = "git+https://github.com/KomodoPlatform/rust-web3#ec5e72a5c95e3935ea0c9ab77b501e3926686fa9"
 dependencies = [
  "arrayvec 0.7.1",
  "derive_more",

@@ -20,4 +20,4 @@ serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 serde_derive = "1.0"
 wasm-bindgen = { version = "0.2.50", features = ["nightly"] }
 wasm-bindgen-futures = { version = "0.4.1" }
-web3 = { git = "https://github.com/sergeyboyko0791/rust-web3", default-features = false, features = ["eip-1193"] }
+web3 = { git = "https://github.com/KomodoPlatform/rust-web3", default-features = false, features = ["eip-1193"] }
