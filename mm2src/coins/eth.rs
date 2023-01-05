@@ -93,7 +93,7 @@ mod web3_transport;
 use v2_activation::build_address_and_priv_key_policy;
 
 pub mod nonce;
-use nonce::{EthNonce, ParityNonce};
+use nonce::ParityNonce;
 
 /// https://github.com/artemii235/etomic-swap/blob/master/contracts/EtomicSwap.sol
 /// Dev chain (195.201.0.6:8565) contract address: 0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd
@@ -435,6 +435,11 @@ pub struct EthCoinImpl {
 pub struct Web3Instance {
     web3: Web3<Web3Transport>,
     is_parity: bool,
+}
+
+impl Web3Instance {
+    #[cfg(target_arch = "wasm32")]
+    pub fn is_metamask(&self) -> bool { self.web3.transport().is_metamask() }
 }
 
 #[derive(Clone, Debug)]
@@ -805,7 +810,7 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
                 gas_price: Some(gas_price),
                 value: Some(eth_value),
                 data: Some(data.clone().into()),
-                nonce: Some(nonce),
+                nonce: None,
                 ..TransactionRequest::default()
             };
 
@@ -1755,7 +1760,7 @@ async fn sign_and_send_transaction_impl(
                 gas_price: Some(gas_price),
                 value: Some(value),
                 data: Some(data.clone().into()),
-                nonce: Some(nonce),
+                nonce: None,
                 ..TransactionRequest::default()
             };
 
@@ -1775,6 +1780,11 @@ async fn sign_and_send_transaction_impl(
             }))
         },
     };
+
+    #[cfg(target_arch = "wasm32")]
+    if coin.web3_instances.iter().any(Web3Instance::is_metamask) {
+        return Ok(signed);
+    }
 
     status.status(tags!(), "get_addr_nonce…");
     loop {
@@ -3925,6 +3935,14 @@ pub fn decode_contract_call(function: &Function, contract_call_bytes: &[u8]) -> 
         ));
     }
 
+    let actual_signature = &contract_call_bytes[..4];
+    let expected_signature = &function.short_signature();
+    if actual_signature != expected_signature {
+        let error =
+            format!("Unexpected contract call signature: expected {expected_signature:?}, found {actual_signature:?}");
+        return Err(ethabi::Error::Other(error.into()));
+    }
+
     function.decode_input(&contract_call_bytes[4..])
 }
 
@@ -4123,6 +4141,11 @@ fn is_valid_checksum_addr(addr: &str) -> bool { addr == checksum_address(addr) }
 /// We need to be sure that nonce is updated on all of them before and after transaction is sent.
 #[cfg_attr(test, mockable)]
 fn get_addr_nonce(addr: Address, web3s: Vec<Web3Instance>) -> Box<dyn Future<Item = U256, Error = String> + Send> {
+    #[cfg(target_arch = "wasm32")]
+    if web3s.iter().any(Web3Instance::is_metamask) {
+        return Box::new(futures01::future::ok(U256::default()));
+    }
+
     let fut = async move {
         let mut errors: u32 = 0;
         loop {
@@ -4133,9 +4156,7 @@ fn get_addr_nonce(addr: Address, web3s: Vec<Web3Instance>) -> Box<dyn Future<Ite
                         let parity: ParityNonce<_> = web3.web3.api();
                         Either::Left(parity.parity_next_nonce(addr))
                     } else {
-                        let eth_nonce: EthNonce<_> = web3.web3.api();
-                        let fut = async move { eth_nonce.transaction_count(addr, Some(BlockNumber::Pending)).await };
-                        Either::Right(fut)
+                        Either::Right(web3.web3.eth().transaction_count(addr, Some(BlockNumber::Pending)))
                     }
                 })
                 .collect();
