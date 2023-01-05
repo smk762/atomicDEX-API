@@ -1666,8 +1666,7 @@ pub enum WithdrawError {
     #[from_trait(WithHwRpcError::hw_rpc_error)]
     HwError(HwRpcError),
     #[cfg(target_arch = "wasm32")]
-    #[display(fmt = "Set 'broadcast' to generate, sign and broadcast a transaction with MetaMask")]
-    MetamaskBroadcastExpected,
+    BroadcastExpected(String),
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[from_trait(WithInternal::internal)]
@@ -1694,7 +1693,7 @@ impl HttpStatusCode for WithdrawError {
             | WithdrawError::UnexpectedUserAction { .. } => StatusCode::BAD_REQUEST,
             WithdrawError::HwError(_) => StatusCode::GONE,
             #[cfg(target_arch = "wasm32")]
-            WithdrawError::MetamaskBroadcastExpected => StatusCode::BAD_REQUEST,
+            WithdrawError::BroadcastExpected(_) => StatusCode::BAD_REQUEST,
             WithdrawError::Transport(_) | WithdrawError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

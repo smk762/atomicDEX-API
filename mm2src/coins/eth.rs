@@ -800,7 +800,8 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
         #[cfg(target_arch = "wasm32")]
         EthPrivKeyPolicy::Metamask(_) => {
             if !req.broadcast {
-                return MmError::err(WithdrawError::MetamaskBroadcastExpected);
+                let error = "Set 'broadcast' to generate, sign and broadcast a transaction with MetaMask".to_string();
+                return MmError::err(WithdrawError::BroadcastExpected(error));
             }
 
             let tx_to_send = TransactionRequest {
