@@ -265,7 +265,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         let from_block_height = match storage.get_last_block_height().await {
             Ok(Some(height)) => height,
             Ok(None) => {
-                if let SPVConf::WithVerification(conf) = &spv_conf {
+                if let SPVConf::Verification(conf) = &spv_conf {
                     let header_hex = conf.starting_block_header_hex.clone();
                     let block_header = match BlockHeader::try_from_string_with_coin_variant(header_hex, ticker.into()) {
                         Ok(h) => h,
@@ -379,6 +379,8 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
                 .error_log();
         }
 
+        // to be removed
+        // println!("max_stored_block_headers {max_stored_block_headers} current_total{current_total}");
         let sleep = args.success_sleep;
         ok_or_continue_after_sleep!(storage.add_block_headers_to_storage(block_registry).await, sleep);
     }

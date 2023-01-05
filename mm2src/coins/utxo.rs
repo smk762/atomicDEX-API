@@ -485,7 +485,7 @@ impl UtxoSyncStatusLoopHandle {
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
-pub struct SPVConfWithVerification {
+pub struct SPVConfVerification {
     // Determine if spv proof should be enable. Default to false.
     pub enable_spv_proof: bool,
     // Limit of block headers allowed to be stored in db..
@@ -511,8 +511,10 @@ pub struct SPVConfNoVerification {
 
 #[derive(Debug, Clone, Deserialize)]
 pub enum SPVConf {
+    #[serde(rename = "verification")]
+    Verification(SPVConfVerification),
+    #[serde(rename = "no_verification")]
     NoVerification(SPVConfNoVerification),
-    WithVerification(SPVConfWithVerification),
 }
 
 impl Default for SPVConf {
@@ -523,28 +525,28 @@ impl SPVConf {
     pub fn enable_spv_proof(&self) -> bool {
         match self {
             SPVConf::NoVerification(conf) => conf.enable_spv_proof,
-            SPVConf::WithVerification(conf) => conf.enable_spv_proof,
+            SPVConf::Verification(conf) => conf.enable_spv_proof,
         }
     }
 
     pub fn max_stored_block_headers(&self) -> u64 {
         match self {
             SPVConf::NoVerification(s) => s.max_stored_block_headers.unwrap_or(0),
-            SPVConf::WithVerification(s) => s.max_stored_block_headers.unwrap_or(0),
+            SPVConf::Verification(s) => s.max_stored_block_headers.unwrap_or(0),
         }
     }
 
     pub fn starting_block_height(&self) -> u64 {
         match self {
             SPVConf::NoVerification(s) => s.starting_block_height,
-            SPVConf::WithVerification(s) => s.starting_block_height,
+            SPVConf::Verification(s) => s.starting_block_height,
         }
     }
 
     pub fn validate_starting_block_header(&self, coin: &str) -> Result<(), SPVError> {
         match self {
             SPVConf::NoVerification(_) => Ok(()),
-            SPVConf::WithVerification(conf) => {
+            SPVConf::Verification(conf) => {
                 // Check if verification params is set. If not set then we can return Ok response.
                 if conf.verification_params.is_none() {
                     return Ok(());
@@ -576,7 +578,7 @@ impl SPVConf {
     pub fn with_validation(&self) -> Option<BlockHeaderVerificationParams> {
         match self {
             SPVConf::NoVerification(_) => None,
-            SPVConf::WithVerification(conf) => conf.verification_params.clone(),
+            SPVConf::Verification(conf) => conf.verification_params.clone(),
         }
     }
 }
