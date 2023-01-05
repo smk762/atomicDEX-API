@@ -23,7 +23,7 @@
 use async_trait::async_trait;
 use bitcrypto::{keccak256, ripemd160, sha256};
 use common::executor::{abortable_queue::AbortableQueue, AbortableSystem, AbortedError, Timer};
-use common::log::{error, info, warn};
+use common::log::{debug, error, info, warn};
 use common::{get_utc_timestamp, now_ms, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
 use crypto::privkey::key_pair_from_secret;
 use crypto::{CryptoCtx, CryptoCtxError, GlobalHDAccountArc, KeyPairPolicy};
@@ -1135,6 +1135,19 @@ impl SwapOps for EthCoin {
     async fn extract_secret(&self, _secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
         let unverified: UnverifiedTransaction = try_s!(rlp::decode(spend_tx));
         let function = try_s!(SWAP_CONTRACT.function("receiverSpend"));
+
+        // Validate contract call; expected to be receiverSpend.
+        // https://www.4byte.directory/signatures/?bytes4_signature=02ed292b.
+        let expected_signature = function.short_signature();
+        let actual_signature = &unverified.data[0..4];
+        if actual_signature != expected_signature {
+            return ERR!(
+                "Expected 'receiverSpend' contract call signature: {:?}, found {:?}",
+                expected_signature,
+                actual_signature
+            );
+        };
+
         let tokens = try_s!(function.decode_input(&unverified.data));
         if tokens.len() < 3 {
             return ERR!("Invalid arguments in 'receiverSpend' call: {:?}", tokens);
@@ -3210,14 +3223,14 @@ impl EthCoin {
                     .first()
                     .map(|val| increase_by_percent_one_gwei(*val, BASE_BLOCK_FEE_DIFF_PCT)),
                 Err(e) => {
-                    error!("Error {} on eth_feeHistory request", e);
+                    debug!("Error {} on eth_feeHistory request", e);
                     None
                 },
             };
 
-            let all_prices = vec![gas_station_price, eth_gas_price, eth_fee_history_price];
-            all_prices
-                .into_iter()
+            // on editions < 2021 the compiler will resolve array.into_iter() as (&array).into_iter()
+            // https://doc.rust-lang.org/edition-guide/rust-2021/IntoIterator-for-arrays.html#details
+            IntoIterator::into_iter([gas_station_price, eth_gas_price, eth_fee_history_price])
                 .flatten()
                 .max()
                 .or_mm_err(|| Web3RpcError::Internal("All requests failed".into()))
