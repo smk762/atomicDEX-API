@@ -36,6 +36,7 @@
 
 use async_trait::async_trait;
 use base58::FromBase58Error;
+use common::custom_futures::timeout::TimeoutError;
 use common::executor::{abortable_queue::{AbortableQueue, WeakSpawner},
                        AbortSettings, AbortedError, SpawnAbortable, SpawnFuture};
 use common::log::LogOnError;
@@ -1735,6 +1736,10 @@ impl From<UnexpectedDerivationMethod> for WithdrawError {
 
 impl From<PrivKeyPolicyNotAllowed> for WithdrawError {
     fn from(e: PrivKeyPolicyNotAllowed) -> Self { WithdrawError::InternalError(e.to_string()) }
+}
+
+impl From<TimeoutError> for WithdrawError {
+    fn from(e: TimeoutError) -> Self { WithdrawError::Timeout(e.duration) }
 }
 
 impl WithdrawError {

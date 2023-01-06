@@ -10,8 +10,6 @@ use common::{HttpStatusCode, StatusCode};
 use derive_more::Display;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
-#[cfg(target_arch = "wasm32")]
-use mm2_metamask::MetamaskRpcError;
 use ser_error_derive::SerializeErrorType;
 use serde_derive::{Deserialize, Serialize};
 
@@ -62,8 +60,6 @@ pub enum EnableTokenError {
     UnexpectedDerivationMethod(UnexpectedDerivationMethod),
     CouldNotFetchBalance(String),
     InvalidConfig(String),
-    #[cfg(target_arch = "wasm32")]
-    MetamaskError(MetamaskRpcError),
     Transport(String),
     Internal(String),
 }
@@ -173,8 +169,6 @@ impl HttpStatusCode for EnableTokenError {
             | EnableTokenError::CouldNotFetchBalance(_)
             | EnableTokenError::InvalidConfig(_)
             | EnableTokenError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            #[cfg(target_arch = "wasm32")]
-            EnableTokenError::MetamaskError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

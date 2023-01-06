@@ -765,14 +765,15 @@ fn test_nonce_lock() {
     let (ctx, coin) = eth_coin_for_test(EthCoinType::Eth, vec!["http://195.201.0.6:8565".into()], None);
     let mut futures = vec![];
     for _ in 0..5 {
-        futures.push(sign_and_send_transaction_impl(
-            ctx.clone(),
-            coin.clone(),
-            1000000000000u64.into(),
-            Action::Call(coin.my_address),
-            vec![],
-            21000.into(),
-        ));
+        futures.push(
+            coin.sign_and_send_transaction(
+                1000000000000u64.into(),
+                Action::Call(coin.my_address),
+                vec![],
+                21000.into(),
+            )
+            .compat(),
+        );
     }
     let results = block_on(join_all(futures));
     for result in results {

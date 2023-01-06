@@ -56,9 +56,6 @@ impl Web3Transport {
             Web3Transport::Metamask(_) => None,
         }
     }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn is_metamask(&self) -> bool { matches!(self, Web3Transport::Metamask(_)) }
 }
 
 impl Transport for Web3Transport {

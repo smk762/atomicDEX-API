@@ -22,6 +22,8 @@
 //
 use async_trait::async_trait;
 use bitcrypto::{keccak256, ripemd160, sha256};
+use common::custom_futures::repeatable::{Ready, Retry};
+use common::custom_futures::timeout::FutureTimerExt;
 use common::executor::{abortable_queue::AbortableQueue, AbortableSystem, AbortedError, Timer};
 use common::log::{debug, error, info, warn};
 use common::{get_utc_timestamp, now_ms, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
@@ -35,7 +37,7 @@ use ethereum_types::{Address, H160, H256, U256};
 use ethkey::{public_to_address, KeyPair, Public, Signature};
 use ethkey::{sign, verify_address};
 use futures::compat::Future01CompatExt;
-use futures::future::{join_all, select, Either, FutureExt, TryFutureExt};
+use futures::future::{join_all, Either, FutureExt, TryFutureExt};
 use futures01::Future;
 use http::StatusCode;
 use mm2_core::mm_ctx::{MmArc, MmWeak};
@@ -437,11 +439,6 @@ pub struct Web3Instance {
     is_parity: bool,
 }
 
-impl Web3Instance {
-    #[cfg(target_arch = "wasm32")]
-    pub fn is_metamask(&self) -> bool { self.web3.transport().is_metamask() }
-}
-
 #[derive(Clone, Debug)]
 pub struct Erc20TokenInfo {
     pub token_address: Address,
@@ -774,15 +771,16 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
         eth_value -= total_fee;
         wei_amount -= total_fee;
     };
-    let _nonce_lock = coin.nonce_lock.lock().await;
-    let nonce_fut = get_addr_nonce(coin.my_address, coin.web3_instances.clone()).compat();
-    let nonce = match select(nonce_fut, Timer::sleep(30.)).await {
-        Either::Left((nonce_res, _)) => nonce_res.map_to_mm(WithdrawError::Transport)?,
-        Either::Right(_) => return MmError::err(WithdrawError::Transport("Get address nonce timed out".to_owned())),
-    };
 
     let (tx_hash, tx_hex) = match coin.priv_key_policy {
         EthPrivKeyPolicy::KeyPair(ref key_pair) => {
+            let _nonce_lock = coin.nonce_lock.lock().await;
+            let nonce = get_addr_nonce(coin.my_address, coin.web3_instances.clone())
+                .compat()
+                .timeout_secs(30.)
+                .await?
+                .map_to_mm(WithdrawError::Transport)?;
+
             let tx = UnSignedEthTx {
                 nonce,
                 value: eth_value,
@@ -818,10 +816,14 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
             // Wait for 10 seconds for the transaction to appear on the RPC node.
             let wait_rpc_timeout = 10_000;
             let check_every = 1.;
-            let SendMetamaskTx { tx_hash, signed_tx } = coin
-                .metamask_send_transaction(tx_to_send, wait_rpc_timeout, check_every)
-                .await?;
 
+            // Please note that this method may take a long time
+            // due to `wallet_switchEthereumChain` and `eth_sendTransaction` requests.
+            let tx_hash = coin.web3.eth().send_transaction(tx_to_send).await?;
+
+            let signed_tx = coin
+                .wait_for_tx_appears_on_rpc(tx_hash, wait_rpc_timeout, check_every)
+                .await?;
             let tx_hex = signed_tx
                 .map(|tx| BytesJson::from(rlp::encode(&tx).to_vec()))
                 // Return an empty `tx_hex` if the transaction is still not appeared on the RPC node.
@@ -1698,9 +1700,10 @@ lazy_static! {
 
 type EthTxFut = Box<dyn Future<Item = SignedEthTx, Error = TransactionErr> + Send + 'static>;
 
-async fn sign_and_send_transaction_impl(
+async fn sign_and_send_transaction_with_keypair(
     ctx: MmArc,
-    coin: EthCoin,
+    coin: &EthCoin,
+    key_pair: &KeyPair,
     value: U256,
     action: Action,
     data: Vec<u8>,
@@ -1722,94 +1725,79 @@ async fn sign_and_send_transaction_impl(
     status.status(tags!(), "get_gas_price…");
     let gas_price = try_tx_s!(coin.get_gas_price().compat().await);
 
-    let signed = match coin.priv_key_policy {
-        EthPrivKeyPolicy::KeyPair(ref key_pair) => {
-            let tx = UnSignedEthTx {
-                nonce,
-                gas_price,
-                gas,
-                action,
-                value,
-                data,
-            };
-
-            let signed = tx.sign(key_pair.secret(), coin.chain_id);
-            let bytes = Bytes(rlp::encode(&signed).to_vec());
-            status.status(tags!(), "send_raw_transaction…");
-
-            try_tx_s!(
-                coin.web3
-                    .eth()
-                    .send_raw_transaction(bytes)
-                    .await
-                    .map_err(|e| ERRL!("{}", e)),
-                signed
-            );
-            signed
-        },
-        #[cfg(target_arch = "wasm32")]
-        EthPrivKeyPolicy::Metamask(_) => {
-            let to = match action {
-                Action::Create => None,
-                Action::Call(to) => Some(to),
-            };
-
-            let tx_to_send = TransactionRequest {
-                from: coin.my_address,
-                to,
-                gas: Some(gas),
-                gas_price: Some(gas_price),
-                value: Some(value),
-                data: Some(data.clone().into()),
-                nonce: None,
-                ..TransactionRequest::default()
-            };
-
-            // It's important to return the transaction hex for the swap,
-            // so wait up to 30 seconds for the transaction to appear on the RPC node.
-            let wait_rpc_timeout = 30_000;
-            let check_every = 1.;
-            let SendMetamaskTx { tx_hash, signed_tx } = try_tx_s!(
-                coin.metamask_send_transaction(tx_to_send, wait_rpc_timeout, check_every)
-                    .await
-            );
-            try_tx_s!(signed_tx.ok_or_else(|| {
-                ERRL!(
-                    "Waited too long until the transaction {:?} appear on the RPC node",
-                    tx_hash
-                )
-            }))
-        },
+    let tx = UnSignedEthTx {
+        nonce,
+        gas_price,
+        gas,
+        action,
+        value,
+        data,
     };
 
-    #[cfg(target_arch = "wasm32")]
-    if coin.web3_instances.iter().any(Web3Instance::is_metamask) {
-        return Ok(signed);
-    }
+    let signed = tx.sign(key_pair.secret(), coin.chain_id);
+    let bytes = Bytes(rlp::encode(&signed).to_vec());
+    status.status(tags!(), "send_raw_transaction…");
+
+    try_tx_s!(
+        coin.web3
+            .eth()
+            .send_raw_transaction(bytes)
+            .await
+            .map_err(|e| ERRL!("{}", e)),
+        signed
+    );
 
     status.status(tags!(), "get_addr_nonce…");
-    loop {
-        // Check every second till ETH nodes recognize that nonce is increased
-        // Parity has reliable "nextNonce" method that always returns correct nonce for address
-        // But we can't expect that all nodes will always be Parity.
-        // Some of ETH forks use Geth only so they don't have Parity nodes at all.
-        let new_nonce = match get_addr_nonce(coin.my_address, coin.web3_instances.clone())
-            .compat()
-            .await
-        {
-            Ok(n) => n,
-            Err(e) => {
-                error!("Error getting {} {} nonce: {}", coin.ticker(), coin.my_address, e);
-                // we can just keep looping in case of error hoping it will go away
-                continue;
-            },
-        };
-        if new_nonce > nonce {
-            break;
-        };
-        Timer::sleep(1.).await;
-    }
+    coin.wait_for_addr_nonce_increase(coin.my_address, nonce).await;
     Ok(signed)
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn sign_and_send_transaction_with_metamask(
+    coin: EthCoin,
+    value: U256,
+    action: Action,
+    data: Vec<u8>,
+    gas: U256,
+) -> Result<SignedEthTx, TransactionErr> {
+    let to = match action {
+        Action::Create => None,
+        Action::Call(to) => Some(to),
+    };
+
+    let gas_price = try_tx_s!(coin.get_gas_price().compat().await);
+
+    let tx_to_send = TransactionRequest {
+        from: coin.my_address,
+        to,
+        gas: Some(gas),
+        gas_price: Some(gas_price),
+        value: Some(value),
+        data: Some(data.clone().into()),
+        nonce: None,
+        ..TransactionRequest::default()
+    };
+
+    // It's important to return the transaction hex for the swap,
+    // so wait up to 60 seconds for the transaction to appear on the RPC node.
+    let wait_rpc_timeout = 60_000;
+    let check_every = 1.;
+
+    // Please note that this method may take a long time
+    // due to `wallet_switchEthereumChain` and `eth_sendTransaction` requests.
+    let tx_hash = try_tx_s!(coin.web3.eth().send_transaction(tx_to_send).await);
+
+    let maybe_signed_tx = try_tx_s!(
+        coin.wait_for_tx_appears_on_rpc(tx_hash, wait_rpc_timeout, check_every)
+            .await
+    );
+    match maybe_signed_tx {
+        Some(signed_tx) => Ok(signed_tx),
+        None => TX_PLAIN_ERR!(
+            "Waited too long until the transaction {:?} appear on the RPC node",
+            tx_hash
+        ),
+    }
 }
 
 impl EthCoin {
@@ -2542,15 +2530,19 @@ impl EthCoin {
 impl EthCoin {
     fn sign_and_send_transaction(&self, value: U256, action: Action, data: Vec<u8>, gas: U256) -> EthTxFut {
         let ctx = try_tx_fus!(MmArc::from_weak(&self.ctx).ok_or("!ctx"));
-        let fut = Box::pin(sign_and_send_transaction_impl(
-            ctx,
-            self.clone(),
-            value,
-            action,
-            data,
-            gas,
-        ));
-        Box::new(fut.compat())
+        let coin = self.clone();
+        let fut = async move {
+            match coin.priv_key_policy {
+                EthPrivKeyPolicy::KeyPair(ref key_pair) => {
+                    sign_and_send_transaction_with_keypair(ctx, &coin, key_pair, value, action, data, gas).await
+                },
+                #[cfg(target_arch = "wasm32")]
+                EthPrivKeyPolicy::Metamask(_) => {
+                    sign_and_send_transaction_with_metamask(coin, value, action, data, gas).await
+                },
+            }
+        };
+        Box::new(fut.boxed().compat())
     }
 
     pub fn send_to_address(&self, address: Address, value: U256) -> EthTxFut {
@@ -3359,44 +3351,55 @@ impl EthCoin {
         Box::new(fut.boxed().compat())
     }
 
-    /// Please note that this method may take a long time
-    /// due to `wallet_switchEthereumChain` and `eth_sendTransaction` requests.
+    /// Checks every second till ETH nodes recognize that nonce is increased.
+    /// Parity has reliable "nextNonce" method that always returns correct nonce for address.
+    /// But we can't expect that all nodes will always be Parity.
+    /// Some of ETH forks use Geth only so they don't have Parity nodes at all.
+    ///
+    /// Please note that we just keep looping in case of a transport error hoping it will go away.
+    ///
+    /// # Warning
+    ///
+    /// The function is endless, we just keep looping in case of a transport error hoping it will go away.
+    async fn wait_for_addr_nonce_increase(&self, addr: Address, prev_nonce: U256) {
+        repeatable!(async {
+            match get_addr_nonce(addr, self.web3_instances.clone()).compat().await {
+                Ok(new_nonce) if new_nonce > prev_nonce => Ready(()),
+                Ok(_nonce) => Retry(()),
+                Err(e) => {
+                    error!("Error getting {} {} nonce: {}", self.ticker(), self.my_address, e);
+                    Retry(())
+                },
+            }
+        })
+        .until_ready()
+        .repeat_every_secs(1.)
+        .await
+        .ok();
+    }
+
+    /// Returns `None` if the transaction hasn't appeared on the RPC nodes at the specified time.
     #[cfg(target_arch = "wasm32")]
-    async fn metamask_send_transaction(
+    async fn wait_for_tx_appears_on_rpc(
         &self,
-        tx: TransactionRequest,
+        tx_hash: H256,
         wait_rpc_timeout_ms: u64,
         check_every: f64,
-    ) -> Web3RpcResult<SendMetamaskTx> {
-        let tx_hash = self.web3.eth().send_transaction(tx).await?;
-
+    ) -> Web3RpcResult<Option<SignedEthTx>> {
         let wait_until = now_ms() + wait_rpc_timeout_ms;
         while now_ms() < wait_until {
             let maybe_tx = self.web3.eth().transaction(TransactionId::Hash(tx_hash)).await?;
             if let Some(tx) = maybe_tx {
                 let signed_tx = signed_tx_from_web3_tx(tx).map_to_mm(Web3RpcError::InvalidResponse)?;
-                return Ok(SendMetamaskTx {
-                    tx_hash,
-                    signed_tx: Some(signed_tx),
-                });
+                return Ok(Some(signed_tx));
             }
 
             Timer::sleep(check_every).await;
         }
 
         warn!("Couldn't fetch the '{tx_hash:02x}' transaction hex");
-        Ok(SendMetamaskTx {
-            tx_hash,
-            signed_tx: None,
-        })
+        Ok(None)
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub struct SendMetamaskTx {
-    tx_hash: H256,
-    /// `None` if we couldn't fetch the transaction from the RPC.
-    signed_tx: Option<SignedEthTx>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -4142,11 +4145,6 @@ fn is_valid_checksum_addr(addr: &str) -> bool { addr == checksum_address(addr) }
 /// We need to be sure that nonce is updated on all of them before and after transaction is sent.
 #[cfg_attr(test, mockable)]
 fn get_addr_nonce(addr: Address, web3s: Vec<Web3Instance>) -> Box<dyn Future<Item = U256, Error = String> + Send> {
-    #[cfg(target_arch = "wasm32")]
-    if web3s.iter().any(Web3Instance::is_metamask) {
-        return Box::new(futures01::future::ok(U256::default()));
-    }
-
     let fut = async move {
         let mut errors: u32 = 0;
         loop {
