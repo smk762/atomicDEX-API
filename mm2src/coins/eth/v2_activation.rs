@@ -443,7 +443,7 @@ async fn build_metamask_transport(
 ) -> MmResult<(Web3<Web3Transport>, Vec<Web3Instance>), EthActivationV2Error> {
     let event_handlers = rpc_event_handlers_for_eth_transport(ctx, coin_ticker.clone());
 
-    let eth_config = web3_transport::metamask_transport::EthConfig { chain_id };
+    let eth_config = web3_transport::metamask_transport::MetamaskEthConfig { chain_id };
     let web3 = Web3::new(Web3Transport::new_metamask(eth_config, event_handlers)?);
 
     // Check if MetaMask supports the given `chain_id`.

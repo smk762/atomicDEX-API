@@ -7,18 +7,18 @@ use std::fmt;
 use std::sync::Arc;
 use web3::{RequestId, Transport};
 
-pub struct EthConfig {
+pub(crate) struct MetamaskEthConfig {
     /// The `ChainId` that the MetaMask wallet should be targeted on each RPC.
     pub chain_id: u64,
 }
 
 #[derive(Clone)]
-pub struct MetamaskTransport {
+pub(crate) struct MetamaskTransport {
     inner: Arc<MetamaskTransportInner>,
 }
 
 struct MetamaskTransportInner {
-    eth_config: EthConfig,
+    eth_config: MetamaskEthConfig,
     eip1193: Eip1193Provider,
     // TODO use `event_handlers` properly.
     _event_handlers: Vec<RpcTransportEventHandlerShared>,
@@ -26,7 +26,7 @@ struct MetamaskTransportInner {
 
 impl MetamaskTransport {
     pub fn detect(
-        eth_config: EthConfig,
+        eth_config: MetamaskEthConfig,
         event_handlers: Vec<RpcTransportEventHandlerShared>,
     ) -> MetamaskResult<MetamaskTransport> {
         let eip1193 = detect_metamask_provider()?;
@@ -66,7 +66,7 @@ impl MetamaskTransport {
 
     /// Ensures that the MetaMask wallet is targeted to [`EthConfig::chain_id`].
     async fn request_preparation(&self) -> Result<MetamaskSession<'_>, web3::Error> {
-        // Lock the MetaMask session and keep it until the RPC is not finished.
+        // Lock the MetaMask session and keep it until the RPC is finished.
         let metamask_session = MetamaskSession::lock(&self.inner.eip1193).await;
         metamask_session
             .wallet_switch_ethereum_chain(self.inner.eth_config.chain_id)

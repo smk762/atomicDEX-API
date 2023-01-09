@@ -5,7 +5,7 @@ use web3::{api::Namespace,
 
 /// `ParityNonce` namespace.
 #[derive(Debug, Clone)]
-pub struct ParityNonce<T> {
+pub(crate) struct ParityNonce<T> {
     transport: T,
 }
 
@@ -22,7 +22,7 @@ impl<T: Transport> Namespace<T> for ParityNonce<T> {
 
 impl<T: Transport> ParityNonce<T> {
     /// Parity next nonce.
-    pub fn parity_next_nonce(&self, addr: Address) -> CallFuture<U256, T::Out> {
+    pub(crate) fn parity_next_nonce(&self, addr: Address) -> CallFuture<U256, T::Out> {
         let addr = helpers::serialize(&addr);
         CallFuture::new(self.transport.execute("parity_nextNonce", vec![addr]))
     }

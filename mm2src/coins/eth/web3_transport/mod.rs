@@ -17,7 +17,7 @@ pub(crate) mod http_transport;
 type Web3SendOut = BoxFuture<'static, Result<Json, Error>>;
 
 #[derive(Clone, Debug)]
-pub enum Web3Transport {
+pub(crate) enum Web3Transport {
     Http(http_transport::HttpTransport),
     #[cfg(target_arch = "wasm32")]
     Metamask(metamask_transport::MetamaskTransport),
@@ -32,8 +32,8 @@ impl Web3Transport {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub fn new_metamask(
-        eth_config: metamask_transport::EthConfig,
+    pub(crate) fn new_metamask(
+        eth_config: metamask_transport::MetamaskEthConfig,
         event_handlers: Vec<RpcTransportEventHandlerShared>,
     ) -> MetamaskResult<Web3Transport> {
         Ok(metamask_transport::MetamaskTransport::detect(eth_config, event_handlers)?.into())

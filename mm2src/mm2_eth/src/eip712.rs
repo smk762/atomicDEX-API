@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 pub(crate) const EIP712_DOMAIN: &str = "EIP712Domain";
 
-pub type CustomTypes = HashMap<String, Vec<ObjectProperty>>;
+pub(crate) type CustomTypes = HashMap<String, Vec<ObjectProperty>>;
 
 /// `ObjectType` is used to describes an object type accordingly to:
 /// https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md#definition-of-typed-structured-data-%F0%9D%95%8A

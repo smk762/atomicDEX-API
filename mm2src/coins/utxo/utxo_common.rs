@@ -4191,6 +4191,7 @@ pub fn derive_htlc_key_pair(coin: &UtxoCoinFields, _swap_unique_data: &[u8]) -> 
     }
 }
 
+#[inline]
 pub fn derive_htlc_pubkey(coin: &dyn SwapOps, swap_unique_data: &[u8]) -> Vec<u8> {
     coin.derive_htlc_key_pair(swap_unique_data).public_slice().to_vec()
 }
