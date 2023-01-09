@@ -484,7 +484,7 @@ impl UtxoSyncStatusLoopHandle {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SPVConfVerification {
     // Determine if spv proof should be enable. Default to false.
     pub enable_spv_proof: bool,
@@ -499,7 +499,7 @@ pub struct SPVConfVerification {
     pub verification_params: Option<BlockHeaderVerificationParams>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SPVConfNoVerification {
     // Determine if spv proof should be enable. Default to false.
     pub enable_spv_proof: bool,
@@ -515,10 +515,6 @@ pub enum SPVConf {
     Verification(SPVConfVerification),
     #[serde(rename = "no_verification")]
     NoVerification(SPVConfNoVerification),
-}
-
-impl Default for SPVConf {
-    fn default() -> Self { Self::NoVerification(SPVConfNoVerification::default()) }
 }
 
 impl SPVConf {
@@ -662,7 +658,15 @@ pub struct UtxoCoinConf {
 }
 
 impl UtxoCoinConf {
-    pub fn spv_conf(&self) -> SPVConf { self.spv_conf.clone().unwrap_or_default() }
+    pub fn spv_conf(&self) -> SPVConf {
+        self.spv_conf
+            .clone()
+            .unwrap_or(SPVConf::NoVerification(SPVConfNoVerification {
+                enable_spv_proof: false,
+                max_stored_block_headers: None,
+                starting_block_height: 0,
+            }))
+    }
 }
 
 pub struct UtxoCoinFields {
