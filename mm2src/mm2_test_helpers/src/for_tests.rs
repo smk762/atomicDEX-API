@@ -498,15 +498,19 @@ pub fn btc_with_spv_conf() -> Json {
         "txfee": 0,
         "estimate_fee_mode": "ECONOMICAL",
         "required_confirmations": 0,
-        "enable_spv_proof": true,
         "protocol": {
             "type": "UTXO"
         },
-        "block_headers_verification_params": {
-            "difficulty_check": true,
-            "constant_difficulty": false,
-            "difficulty_algorithm": "Bitcoin Mainnet",
-            "genesis_block_header": "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299"
+        "spv_conf": {
+            "starting_header": {
+                "type": "genesis",
+                "hex": "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299"
+            },
+            "validation_params": {
+                "difficulty_check": true,
+                "constant_difficulty": false,
+                "difficulty_algorithm": "Bitcoin Mainnet"
+            }
         }
     })
 }
@@ -527,11 +531,16 @@ pub fn tbtc_with_spv_conf() -> Json {
         "protocol": {
             "type": "UTXO"
         },
-        "block_headers_verification_params": {
-            "difficulty_check": true,
-            "constant_difficulty": false,
-            "difficulty_algorithm": "Bitcoin Testnet",
-            "genesis_block_header": "0100000043497fd7f826957108f4a30fd9cec3aeba79972084e90ead01ea330900000000bac8b0fa927c0ac8234287e33c5f74d38d354820e24756ad709d7038fc5f31f020e7494dffff001d03e4b672"
+        "spv_conf": {
+            "starting_header": {
+                "type": "genesis",
+                "hex": "0100000043497fd7f826957108f4a30fd9cec3aeba79972084e90ead01ea330900000000bac8b0fa927c0ac8234287e33c5f74d38d354820e24756ad709d7038fc5f31f020e7494dffff001d03e4b672"
+            },
+            "validation_params": {
+                "difficulty_check": true,
+                "constant_difficulty": false,
+                "difficulty_algorithm": "Bitcoin Testnet"
+            }
         }
     })
 }

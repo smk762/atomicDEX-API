@@ -39,8 +39,6 @@ use mocktopus::mocking::*;
 use rpc::v1::types::H256 as H256Json;
 use serialization::{deserialize, CoinVariant};
 use spv_validation::storage::BlockHeaderStorageOps;
-use spv_validation::work::DifficultyAlgorithm;
-use spv_validation::work::DifficultyAlgorithm::BitcoinMainnet;
 use std::convert::TryFrom;
 use std::iter;
 use std::mem::discriminant;
@@ -4310,7 +4308,7 @@ fn test_block_header_utxo_loop() {
         .collect();
     let req = json!({ "method": "electrum", "servers": servers });
     let params = UtxoActivationParams::from_legacy_req(&req).unwrap();
-    let conf = json!({"coin":"RICK", "asset":"RICK", "rpcport":8923, "enable_spv_proof": false});
+    let conf = json!({"coin":"RICK", "asset":"RICK", "rpcport":8923});
     let builder = UtxoArcBuilder::new(&ctx, "RICK", &conf, &params, priv_key_policy, UtxoStandardCoin::from);
     let arc: UtxoArc = block_on(builder.build_utxo_fields()).unwrap().into();
     let client = match &arc.rpc_client {
@@ -4389,89 +4387,30 @@ fn test_block_header_utxo_loop() {
 }
 
 #[test]
-fn spv_conf_des() {
-    // Test for SPVConf with verification.
-    let actual = SPVConfVerification {
-        enable_spv_proof: true,
-        max_stored_block_headers: Some(0),
-        starting_block_height: 4032,
-        starting_block_header_hex: String::from(""),
-        verification_params: Some(BlockHeaderVerificationParams {
-            difficulty_check: false,
-            constant_difficulty: false,
-            difficulty_algorithm: Some(BitcoinMainnet),
-        }),
-    };
-    let json = json!({
-        "verification": {
-            "enable_spv_proof": true,
-            "max_stored_block_headers": 0,
-            "starting_block_height": 4032,
-            "starting_block_header_hex": "",
-            "verification_params": {
-                "difficulty_check": false,
-                "constant_difficulty": false,
-                "difficulty_algorithm": DifficultyAlgorithm::BitcoinMainnet,
-            },
-        }
-    });
-    let spv_conf = serde_json::from_value::<SPVConf>(json).unwrap();
-    if let SPVConf::ValidateHeaders(expected) = spv_conf {
-        assert_eq!(actual.enable_spv_proof, expected.enable_spv_proof);
-        assert_eq!(actual.starting_block_height, expected.starting_block_height);
-        assert_eq!(actual.starting_block_height, expected.starting_block_height);
-        assert_eq!(actual.starting_block_header_hex, expected.starting_block_header_hex);
-    };
-
-    // Test for SPVConf with no verification.
-    let actual = SPVConfNoVerification {
-        enable_spv_proof: true,
-        max_stored_block_headers: Some(0),
-        starting_block_height: 4032,
-    };
-    let json = json!({
-        "no_verification": {
-            "enable_spv_proof": true,
-            "max_stored_block_headers": 0,
-            "starting_block_height": 4032,
-        }
-    });
-    let spv_conf = serde_json::from_value::<SPVConf>(json).unwrap();
-    if let SPVConf::NoHeadersValidation(expected) = spv_conf {
-        assert_eq!(actual.enable_spv_proof, expected.enable_spv_proof);
-        assert_eq!(actual.starting_block_height, expected.starting_block_height);
-        assert_eq!(actual.starting_block_height, expected.starting_block_height);
-    };
-}
-
-#[test]
 fn test_spv_conf_with_verification() {
     // Block header hex for BLOCK HEIGHT 2016
     let hex =
         "010000006397bb6abd4fc521c0d3f6071b5650389f0b4551bc40b4e6b067306900000000ace470aecda9c8818c8fe57688cd2a772b5a57954a00df0420a7dd546b6d2c576b0e7f49ffff001d33f0192f";
-
-    let with_verifiction = SPVConfVerification {
-        enable_spv_proof: true,
+    // test for good retarget_block_header_height
+    let mut spv_conf = SPVConf {
+        starting_header: StartingHeader::Other {
+            height: 4032,
+            hex: hex.to_string(),
+        },
         max_stored_block_headers: None,
-        starting_block_height: 4032,
-        starting_block_header_hex: hex.to_string(),
-        verification_params: Some(BlockHeaderVerificationParams {
+        validation_params: Some(BlockHeaderValidationParams {
             difficulty_check: false,
             constant_difficulty: false,
             difficulty_algorithm: None,
         }),
     };
-    // test for good retarget_block_header_height
-    let spv_conf = SPVConf::ValidateHeaders(with_verifiction.clone());
     assert!(spv_conf.validate_starting_block_header("BTC").is_ok());
 
     // test for bad retarget_block_header_height
-    let with_verifiction = SPVConfVerification {
-        starting_block_height: 4037,
-
-        ..with_verifiction
+    spv_conf.starting_header = StartingHeader::Other {
+        height: 4037,
+        hex: hex.to_string(),
     };
-    let spv_conf = SPVConf::ValidateHeaders(with_verifiction);
     let validate = spv_conf.validate_starting_block_header("BTC").err().unwrap();
     if let SPVError::WrongRetargetHeight { coin, expected_height } = validate {
         assert_eq!(coin, "BTC");

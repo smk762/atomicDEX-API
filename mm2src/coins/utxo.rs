@@ -74,7 +74,7 @@ use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as 
 use script::{Builder, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::{serialize, serialize_with_flags, Error as SerError, SERIALIZE_TRANSACTION_WITNESS};
-use spv_validation::helpers_validation::{BlockHeaderVerificationParams, SPVError};
+use spv_validation::helpers_validation::{BlockHeaderValidationParams, SPVError};
 use spv_validation::storage::BlockHeaderStorageError;
 use spv_validation::work::RETARGETING_INTERVAL;
 use std::array::TryFromSliceError;
@@ -485,86 +485,67 @@ impl UtxoSyncStatusLoopHandle {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct SPVConfVerification {
-    // Limit of block headers allowed to be stored in db..
-    max_stored_block_headers: Option<u64>,
-    // Starting block height
-    starting_block_height: u64,
-    // Starting block header hex
-    starting_block_header_hex: String,
-    /// The parameters that specify how the coin block headers should be verified. If None and enable_spv_proof is true,
-    /// headers will be saved in DB without verification, can be none if the coin's RPC server is trusted.
-    pub verification_params: Option<BlockHeaderVerificationParams>,
+#[serde(tag = "type")]
+pub enum StartingHeader {
+    #[serde(rename = "genesis")]
+    Genesis { hex: String },
+    #[serde(rename = "other")]
+    Other { height: u64, hex: String },
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct SPVConfNoVerification {
-    // Limit of block headers allowed to be stored in db..
-    max_stored_block_headers: Option<u64>,
-    // Starting block height
-    starting_block_height: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub enum SPVConf {
-    #[serde(rename = "verification")]
-    ValidateHeaders(SPVConfVerification),
-    #[serde(rename = "no_verification")]
-    NoHeadersValidation(SPVConfNoVerification),
+pub struct SPVConf {
+    /// Where to start block headers sync from.
+    starting_header: StartingHeader,
+    /// Max number of block headers to be stored in db, when reached, old header will be deleted.
+    max_stored_block_headers: Option<NonZeroU64>,
+    /// The parameters that specify how the coin block headers should be validated. If None,
+    /// headers will be saved in DB without validation, can be none if the coin's RPC server is trusted.
+    validation_params: Option<BlockHeaderValidationParams>,
 }
 
 impl SPVConf {
-    pub fn max_stored_block_headers(&self) -> u64 {
-        match self {
-            SPVConf::NoHeadersValidation(s) => s.max_stored_block_headers.unwrap_or(0),
-            SPVConf::ValidateHeaders(s) => s.max_stored_block_headers.unwrap_or(0),
+    pub fn starting_block_height(&self) -> u64 {
+        match self.starting_header {
+            StartingHeader::Genesis { .. } => 0,
+            StartingHeader::Other { height, .. } => height,
         }
     }
 
-    pub fn starting_block_height(&self) -> u64 {
-        match self {
-            SPVConf::NoHeadersValidation(s) => s.starting_block_height,
-            SPVConf::ValidateHeaders(s) => s.starting_block_height,
+    pub fn starting_block_header_hex(&self) -> String {
+        match self.starting_header.clone() {
+            StartingHeader::Genesis { hex } => hex,
+            StartingHeader::Other { hex, .. } => hex,
         }
     }
 
     pub fn validate_starting_block_header(&self, coin: &str) -> Result<(), SPVError> {
-        match self {
-            SPVConf::NoHeadersValidation(_) => Ok(()),
-            SPVConf::ValidateHeaders(conf) => {
-                // Check if verification params is set. If not set then we can return Ok response.
-                if conf.verification_params.is_none() {
-                    return Ok(());
-                }
-
-                let retarget_interval = RETARGETING_INTERVAL as u64;
-                // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
-                if self.max_stored_block_headers() > 0 && self.max_stored_block_headers() < retarget_interval {
-                    return Err(SPVError::StartingBlockHeaderError(format!(
-                        "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
-                        conf.max_stored_block_headers
-                    )));
-                }
-
-                // Verify retarget_height is the right target header.
-                let height = conf.starting_block_height;
-                let is_retarget = height % retarget_interval;
-                if is_retarget != 0 {
-                    return Err(SPVError::WrongRetargetHeight {
-                        coin: coin.to_string(),
-                        expected_height: height - is_retarget,
-                    });
-                };
-                Ok(())
-            },
+        // Check if verification params is set. If not set then we can return Ok response.
+        if self.validation_params.is_none() {
+            return Ok(());
         }
-    }
 
-    pub fn with_validation(&self) -> Option<BlockHeaderVerificationParams> {
-        match self {
-            SPVConf::NoHeadersValidation(_) => None,
-            SPVConf::ValidateHeaders(conf) => conf.verification_params.clone(),
+        let retarget_interval = RETARGETING_INTERVAL as u64;
+        // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
+        if let Some(max_stored_block_headers) = self.max_stored_block_headers {
+            if retarget_interval > max_stored_block_headers.into() {
+                return Err(SPVError::StartingBlockHeaderError(format!(
+                    "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
+                    max_stored_block_headers
+                )));
+            }
         }
+
+        // Verify retarget_height is the right target header.
+        let height = self.starting_block_height();
+        let is_retarget = height % retarget_interval;
+        if is_retarget != 0 {
+            return Err(SPVError::WrongRetargetHeight {
+                coin: coin.to_string(),
+                expected_height: height - is_retarget,
+            });
+        };
+        Ok(())
     }
 }
 
@@ -644,17 +625,6 @@ pub struct UtxoCoinConf {
     /// where the full `BIP44` address has the following structure:
     /// `m/purpose'/coin_type'/account'/change/address_index`.
     pub derivation_path: Option<StandardHDPathToCoin>,
-}
-
-impl UtxoCoinConf {
-    pub fn spv_conf(&self) -> SPVConf {
-        self.spv_conf
-            .clone()
-            .unwrap_or(SPVConf::NoHeadersValidation(SPVConfNoVerification {
-                max_stored_block_headers: None,
-                starting_block_height: 0,
-            }))
-    }
 }
 
 pub struct UtxoCoinFields {

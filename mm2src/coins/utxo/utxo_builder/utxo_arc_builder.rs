@@ -2,8 +2,8 @@ use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use crate::utxo::utxo_builder::{UtxoCoinBuildError, UtxoCoinBuilder, UtxoCoinBuilderCommonOps,
                                 UtxoFieldsWithGlobalHDBuilder, UtxoFieldsWithHardwareWalletBuilder,
                                 UtxoFieldsWithIguanaSecretBuilder};
-use crate::utxo::{generate_and_send_tx, FeePolicy, GetUtxoListOps, SPVConf, UtxoArc, UtxoCommonOps,
-                  UtxoSyncStatusLoopHandle, UtxoWeak};
+use crate::utxo::{generate_and_send_tx, FeePolicy, GetUtxoListOps, UtxoArc, UtxoCommonOps, UtxoSyncStatusLoopHandle,
+                  UtxoWeak};
 use crate::{DerivationMethod, PrivKeyBuildPolicy, UtxoActivationParams};
 use async_trait::async_trait;
 use chain::{BlockHeader, TransactionOutput};
@@ -255,7 +255,10 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     while let Some(arc) = weak.upgrade() {
         let coin = constructor(arc);
         let ticker = coin.as_ref().conf.ticker.as_str();
-        let spv_conf = coin.as_ref().conf.spv_conf();
+        let spv_conf = match &coin.as_ref().conf.spv_conf {
+            Some(conf) => conf,
+            None => break,
+        };
         let client = match &coin.as_ref().rpc_client {
             UtxoRpcClientEnum::Native(_) => break,
             UtxoRpcClientEnum::Electrum(client) => client,
@@ -265,22 +268,21 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         let from_block_height = match storage.get_last_block_height().await {
             Ok(Some(height)) => height,
             Ok(None) => {
-                if let SPVConf::ValidateHeaders(conf) = &spv_conf {
-                    let header_hex = conf.starting_block_header_hex.clone();
-                    let block_header = match BlockHeader::try_from_string_with_coin_variant(header_hex, ticker.into()) {
-                        Ok(h) => h,
-                        Err(e) => {
-                            sync_status_loop_handle.notify_on_permanent_error(e.to_string());
-                            break;
-                        },
-                    };
-                    let headers_map = std::iter::once((conf.starting_block_height, block_header)).collect();
-                    if let Err(e) = storage.add_block_headers_to_storage(headers_map).await {
+                let header_hex = spv_conf.starting_block_header_hex();
+                let block_header = match BlockHeader::try_from_string_with_coin_variant(header_hex, ticker.into()) {
+                    Ok(h) => h,
+                    Err(e) => {
                         sync_status_loop_handle.notify_on_permanent_error(e.to_string());
                         break;
-                    }
+                    },
                 };
-                spv_conf.starting_block_height()
+                let height = spv_conf.starting_block_height();
+                let headers_map = std::iter::once((height, block_header)).collect();
+                if let Err(e) = storage.add_block_headers_to_storage(headers_map).await {
+                    sync_status_loop_handle.notify_on_permanent_error(e.to_string());
+                    break;
+                }
+                height
             },
             Err(e) => {
                 error!("Error {e:?} on getting the height of the last stored {ticker} header in DB!",);
@@ -359,7 +361,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         };
 
         // Validate retrieved block headers.
-        if let Some(params) = &spv_conf.with_validation() {
+        if let Some(params) = &spv_conf.validation_params {
             if let Err(e) = validate_headers(ticker, from_block_height, block_headers, storage, params).await {
                 error!("Error {e:?} on validating the latest headers for {ticker}!");
                 // Todo: remove this electrum server and use another in this case since the headers from this server are invalid
@@ -370,13 +372,15 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
 
         // Check if we need to max the number of headers to be stored in storage.
         let headers_in_storage_count = storage.get_total_block_headers_from_storage().await.unwrap_or(0);
-        let max_stored_block_headers = spv_conf.max_stored_block_headers();
         let current_total = block_registry.len() as u64 + headers_in_storage_count;
-        if max_stored_block_headers > 0 && current_total >= max_stored_block_headers {
-            storage
-                .remove_block_headers_from_storage((current_total - max_stored_block_headers) as i64)
-                .await
-                .error_log();
+        if let Some(max_stored_block_headers) = spv_conf.max_stored_block_headers {
+            let max_stored_block_headers: u64 = max_stored_block_headers.into();
+            if current_total >= max_stored_block_headers {
+                storage
+                    .remove_block_headers_from_storage((current_total - max_stored_block_headers) as i64)
+                    .await
+                    .error_log();
+            }
         }
 
         // to be removed
