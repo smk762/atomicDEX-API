@@ -4416,7 +4416,7 @@ fn spv_conf_des() {
         }
     });
     let spv_conf = serde_json::from_value::<SPVConf>(json).unwrap();
-    if let SPVConf::Verification(expected) = spv_conf {
+    if let SPVConf::ValidateHeaders(expected) = spv_conf {
         assert_eq!(actual.enable_spv_proof, expected.enable_spv_proof);
         assert_eq!(actual.starting_block_height, expected.starting_block_height);
         assert_eq!(actual.starting_block_height, expected.starting_block_height);
@@ -4437,7 +4437,7 @@ fn spv_conf_des() {
         }
     });
     let spv_conf = serde_json::from_value::<SPVConf>(json).unwrap();
-    if let SPVConf::NoVerification(expected) = spv_conf {
+    if let SPVConf::NoHeadersValidation(expected) = spv_conf {
         assert_eq!(actual.enable_spv_proof, expected.enable_spv_proof);
         assert_eq!(actual.starting_block_height, expected.starting_block_height);
         assert_eq!(actual.starting_block_height, expected.starting_block_height);
@@ -4462,7 +4462,7 @@ fn test_spv_conf_with_verification() {
         }),
     };
     // test for good retarget_block_header_height
-    let spv_conf = SPVConf::Verification(with_verifiction.clone());
+    let spv_conf = SPVConf::ValidateHeaders(with_verifiction.clone());
     assert!(spv_conf.validate_starting_block_header("BTC").is_ok());
 
     // test for bad retarget_block_header_height
@@ -4471,7 +4471,7 @@ fn test_spv_conf_with_verification() {
 
         ..with_verifiction
     };
-    let spv_conf = SPVConf::Verification(with_verifiction);
+    let spv_conf = SPVConf::ValidateHeaders(with_verifiction);
     let validate = spv_conf.validate_starting_block_header("BTC").err().unwrap();
     if let SPVError::WrongRetargetHeight { coin, expected_height } = validate {
         assert_eq!(coin, "BTC");

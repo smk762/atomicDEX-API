@@ -486,8 +486,6 @@ impl UtxoSyncStatusLoopHandle {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SPVConfVerification {
-    // Determine if spv proof should be enable. Default to false.
-    pub enable_spv_proof: bool,
     // Limit of block headers allowed to be stored in db..
     max_stored_block_headers: Option<u64>,
     // Starting block height
@@ -501,8 +499,6 @@ pub struct SPVConfVerification {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SPVConfNoVerification {
-    // Determine if spv proof should be enable. Default to false.
-    pub enable_spv_proof: bool,
     // Limit of block headers allowed to be stored in db..
     max_stored_block_headers: Option<u64>,
     // Starting block height
@@ -512,37 +508,30 @@ pub struct SPVConfNoVerification {
 #[derive(Debug, Clone, Deserialize)]
 pub enum SPVConf {
     #[serde(rename = "verification")]
-    Verification(SPVConfVerification),
+    ValidateHeaders(SPVConfVerification),
     #[serde(rename = "no_verification")]
-    NoVerification(SPVConfNoVerification),
+    NoHeadersValidation(SPVConfNoVerification),
 }
 
 impl SPVConf {
-    pub fn enable_spv_proof(&self) -> bool {
-        match self {
-            SPVConf::NoVerification(conf) => conf.enable_spv_proof,
-            SPVConf::Verification(conf) => conf.enable_spv_proof,
-        }
-    }
-
     pub fn max_stored_block_headers(&self) -> u64 {
         match self {
-            SPVConf::NoVerification(s) => s.max_stored_block_headers.unwrap_or(0),
-            SPVConf::Verification(s) => s.max_stored_block_headers.unwrap_or(0),
+            SPVConf::NoHeadersValidation(s) => s.max_stored_block_headers.unwrap_or(0),
+            SPVConf::ValidateHeaders(s) => s.max_stored_block_headers.unwrap_or(0),
         }
     }
 
     pub fn starting_block_height(&self) -> u64 {
         match self {
-            SPVConf::NoVerification(s) => s.starting_block_height,
-            SPVConf::Verification(s) => s.starting_block_height,
+            SPVConf::NoHeadersValidation(s) => s.starting_block_height,
+            SPVConf::ValidateHeaders(s) => s.starting_block_height,
         }
     }
 
     pub fn validate_starting_block_header(&self, coin: &str) -> Result<(), SPVError> {
         match self {
-            SPVConf::NoVerification(_) => Ok(()),
-            SPVConf::Verification(conf) => {
+            SPVConf::NoHeadersValidation(_) => Ok(()),
+            SPVConf::ValidateHeaders(conf) => {
                 // Check if verification params is set. If not set then we can return Ok response.
                 if conf.verification_params.is_none() {
                     return Ok(());
@@ -573,8 +562,8 @@ impl SPVConf {
 
     pub fn with_validation(&self) -> Option<BlockHeaderVerificationParams> {
         match self {
-            SPVConf::NoVerification(_) => None,
-            SPVConf::Verification(conf) => conf.verification_params.clone(),
+            SPVConf::NoHeadersValidation(_) => None,
+            SPVConf::ValidateHeaders(conf) => conf.verification_params.clone(),
         }
     }
 }
@@ -661,8 +650,7 @@ impl UtxoCoinConf {
     pub fn spv_conf(&self) -> SPVConf {
         self.spv_conf
             .clone()
-            .unwrap_or(SPVConf::NoVerification(SPVConfNoVerification {
-                enable_spv_proof: false,
+            .unwrap_or(SPVConf::NoHeadersValidation(SPVConfNoVerification {
                 max_stored_block_headers: None,
                 starting_block_height: 0,
             }))
