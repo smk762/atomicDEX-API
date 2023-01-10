@@ -4184,6 +4184,7 @@ where
         .mm_err(From::from)
 }
 
+#[inline]
 pub fn derive_htlc_key_pair(coin: &UtxoCoinFields, _swap_unique_data: &[u8]) -> KeyPair {
     match coin.priv_key_policy {
         PrivKeyPolicy::KeyPair(k) => k,

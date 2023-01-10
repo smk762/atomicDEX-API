@@ -94,7 +94,7 @@ mod web3_transport;
 #[path = "eth/v2_activation.rs"] pub mod v2_activation;
 use v2_activation::build_address_and_priv_key_policy;
 
-pub mod nonce;
+mod nonce;
 use nonce::ParityNonce;
 
 /// https://github.com/artemii235/etomic-swap/blob/master/contracts/EtomicSwap.sol

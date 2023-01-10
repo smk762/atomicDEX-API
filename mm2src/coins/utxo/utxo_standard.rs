@@ -455,12 +455,10 @@ impl SwapOps for UtxoStandardCoin {
         Ok(None)
     }
 
-    #[inline]
     fn derive_htlc_key_pair(&self, swap_unique_data: &[u8]) -> KeyPair {
         utxo_common::derive_htlc_key_pair(self.as_ref(), swap_unique_data)
     }
 
-    #[inline]
     fn derive_htlc_pubkey(&self, swap_unique_data: &[u8]) -> Vec<u8> {
         utxo_common::derive_htlc_pubkey(self, swap_unique_data)
     }
