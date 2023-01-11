@@ -1201,6 +1201,7 @@ dependencies = [
  "log4rs",
  "parking_lot 0.12.0",
  "parking_lot_core 0.6.2",
+ "primitive-types",
  "rand 0.7.3",
  "ser_error",
  "ser_error_derive",

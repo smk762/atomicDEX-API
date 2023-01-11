@@ -26,6 +26,7 @@ use common::custom_futures::repeatable::{Ready, Retry};
 use common::custom_futures::timeout::FutureTimerExt;
 use common::executor::{abortable_queue::AbortableQueue, AbortableSystem, AbortedError, Timer};
 use common::log::{debug, error, info, warn};
+use common::number_type_casting::SafeTypeCastingNumbers;
 use common::{get_utc_timestamp, now_ms, small_rng, DEX_FEE_ADDR_RAW_PUBKEY};
 use crypto::privkey::key_pair_from_secret;
 use crypto::{CryptoCtx, CryptoCtxError, GlobalHDAccountArc, KeyPairPolicy};
@@ -2128,7 +2129,7 @@ impl EthCoin {
                     tx_hash: format!("{:02x}", BytesJson(raw.hash.as_bytes().to_vec())),
                     tx_hex: BytesJson(rlp::encode(&raw).to_vec()),
                     internal_id,
-                    timestamp: u64::try_from(block.timestamp).unwrap_or(u64::MAX),
+                    timestamp: block.timestamp.into_or_max(),
                     kmd_rewards: None,
                     transaction_type: Default::default(),
                     memo: None,
@@ -2493,7 +2494,7 @@ impl EthCoin {
                     tx_hash: format!("{:02x}", BytesJson(raw.hash.as_bytes().to_vec())),
                     tx_hex: BytesJson(rlp::encode(&raw).to_vec()),
                     internal_id: BytesJson(internal_id.to_vec()),
-                    timestamp: u64::try_from(block.timestamp).unwrap_or(u64::MAX),
+                    timestamp: block.timestamp.into_or_max(),
                     kmd_rewards: None,
                     transaction_type: Default::default(),
                     memo: None,
