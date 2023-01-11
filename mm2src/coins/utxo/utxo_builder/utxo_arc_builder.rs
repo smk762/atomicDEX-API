@@ -2,8 +2,8 @@ use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use crate::utxo::utxo_builder::{UtxoCoinBuildError, UtxoCoinBuilder, UtxoCoinBuilderCommonOps,
                                 UtxoFieldsWithGlobalHDBuilder, UtxoFieldsWithHardwareWalletBuilder,
                                 UtxoFieldsWithIguanaSecretBuilder};
-use crate::utxo::{generate_and_send_tx, FeePolicy, GetUtxoListOps, UtxoArc, UtxoCommonOps, UtxoSyncStatusLoopHandle,
-                  UtxoWeak};
+use crate::utxo::{generate_and_send_tx, FeePolicy, GetUtxoListOps, SPVConf, UtxoArc, UtxoCommonOps,
+                  UtxoSyncStatusLoopHandle, UtxoWeak};
 use crate::{DerivationMethod, PrivKeyBuildPolicy, UtxoActivationParams};
 use async_trait::async_trait;
 use chain::{BlockHeader, TransactionOutput};
@@ -112,11 +112,17 @@ where
                 .compat()
                 .await
                 .map_err(|err| UtxoCoinBuildError::CantGetBlockCount(err.to_string()))?;
+            let Some(spv_conf) = result_coin.as_ref().conf.spv_conf.clone() else {
+                return MmError::err(UtxoCoinBuildError::Internal(format!("Unable to read spv_conf from coin config \
+                file for {}", result_coin.as_ref().conf.ticker)));
+            };
+
             self.spawn_block_header_utxo_loop(
                 &utxo_arc,
                 self.constructor.clone(),
                 sync_status_loop_handle,
                 block_count,
+                spv_conf,
             );
         }
 
@@ -249,16 +255,13 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     constructor: impl Fn(UtxoArc) -> T,
     mut sync_status_loop_handle: UtxoSyncStatusLoopHandle,
     mut block_count: u64,
+    spv_conf: SPVConf,
 ) {
     let args = BlockHeaderUtxoLoopExtraArgs::default();
     let mut chunk_size = args.chunk_size;
     while let Some(arc) = weak.upgrade() {
         let coin = constructor(arc);
         let ticker = coin.as_ref().conf.ticker.as_str();
-        let spv_conf = match &coin.as_ref().conf.spv_conf {
-            Some(conf) => conf,
-            None => break,
-        };
         let client = match &coin.as_ref().rpc_client {
             UtxoRpcClientEnum::Native(_) => break,
             UtxoRpcClientEnum::Electrum(client) => client,
@@ -397,6 +400,7 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
         constructor: F,
         sync_status_loop_handle: UtxoSyncStatusLoopHandle,
         block_count: u64,
+        spv_conf: SPVConf,
     ) where
         F: Fn(UtxoArc) -> T + Send + Sync + 'static,
         T: UtxoCommonOps,
@@ -405,7 +409,7 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
         info!("Starting UTXO block header loop for coin {ticker}");
 
         let utxo_weak = utxo_arc.downgrade();
-        let fut = block_header_utxo_loop(utxo_weak, constructor, sync_status_loop_handle, block_count);
+        let fut = block_header_utxo_loop(utxo_weak, constructor, sync_status_loop_handle, block_count, spv_conf);
 
         let settings = AbortSettings::info_on_abort(format!("spawn_block_header_utxo_loop stopped for {ticker}"));
         utxo_arc
