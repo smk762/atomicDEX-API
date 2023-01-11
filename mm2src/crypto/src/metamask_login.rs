@@ -1,13 +1,13 @@
 use lazy_static::lazy_static;
 use mm2_metamask::{Eip712, ObjectType, PropertyType};
 
-pub const ADEX_LOGIN_TYPE: &str = "AtomicDEXLogin";
+const ADEX_LOGIN_TYPE: &str = "AtomicDEXLogin";
 
 lazy_static! {
     static ref ADEX_TYPES: [ObjectType; 2] = adex_login_types();
 }
 
-pub fn adex_eip712_request(
+pub(crate) fn adex_eip712_request(
     domain: AtomicDEXDomain,
     req: AtomicDEXLoginRequest,
 ) -> Eip712<AtomicDEXDomain, AtomicDEXLoginRequest> {
@@ -24,7 +24,7 @@ pub fn adex_eip712_request(
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct AtomicDEXDomain {
+pub(crate) struct AtomicDEXDomain {
     name: String,
 }
 
@@ -33,7 +33,7 @@ impl AtomicDEXDomain {
 }
 
 #[derive(Debug, Serialize)]
-pub struct AtomicDEXLoginRequest {
+pub(crate) struct AtomicDEXLoginRequest {
     message: String,
 }
 

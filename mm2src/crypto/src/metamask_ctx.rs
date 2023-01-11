@@ -84,10 +84,13 @@ impl MetamaskCtx {
         })
     }
 
+    #[inline]
     pub fn eth_account(&self) -> Address { self.eth_account }
 
+    #[inline]
     pub fn eth_account_str(&self) -> &str { &self.eth_account_str }
 
+    #[inline]
     pub fn eth_account_pubkey_uncompressed(&self) -> H520 { self.eth_account_pubkey }
 
     /// Checks if the `MetamaskCtx::eth_account` is still active.

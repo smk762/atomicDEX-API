@@ -3200,9 +3200,12 @@ impl EthCoin {
 
         Box::new(fut.boxed().compat().map_err(|e| ERRL!("{}", e)).and_then(move |bytes| {
             let decoded_tokens = try_s!(function.decode_output(&bytes.0));
-            match decoded_tokens[2] {
-                Token::Uint(state) => Ok(state),
-                _ => ERR!("Payment status must be uint, got {:?}", decoded_tokens[2]),
+            let state = decoded_tokens
+                .get(2)
+                .ok_or_else(|| ERRL!("Payment status must contain 'state' as the 2nd token"))?;
+            match state {
+                Token::Uint(state) => Ok(*state),
+                _ => ERR!("Payment status must be uint, got {:?}", state),
             }
         }))
     }
@@ -3400,7 +3403,10 @@ impl EthCoin {
             Timer::sleep(check_every).await;
         }
 
-        warn!("Couldn't fetch the '{tx_hash:02x}' transaction hex");
+        let timeout_s = wait_rpc_timeout_ms / 1000;
+        warn!(
+            "Couldn't fetch the '{tx_hash:02x}' transaction hex as it hasn't appeared on the RPC node in {timeout_s}s"
+        );
         Ok(None)
     }
 }
@@ -3696,9 +3702,11 @@ impl TryToAddress for [u8] {
 
 impl<'a> TryToAddress for &'a [u8] {
     fn try_to_address(&self) -> Result<Address, String> {
-        let expected = Address::len_bytes();
-        if self.len() != expected {
-            return ERR!("Cannot construct an Ethereum address from {} bytes slice", expected);
+        if self.len() != Address::len_bytes() {
+            return ERR!(
+                "Cannot construct an Ethereum address from {} bytes slice",
+                Address::len_bytes()
+            );
         }
 
         Ok(Address::from_slice(self))
