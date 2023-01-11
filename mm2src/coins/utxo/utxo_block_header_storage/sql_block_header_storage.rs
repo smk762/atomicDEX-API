@@ -249,18 +249,19 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
 
         async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
-            if let Some(height) = query_single_row(&conn, &sql, NO_PARAMS, |row| row.get::<usize, i64>(0))? {
-                let height = height
-                    .try_into()
-                    .map_err(|e: TryFromIntError| BlockHeaderStorageError::DecodeError {
-                        coin,
-                        reason: e.to_string(),
-                    })?;
-                return Ok(Some(height));
-            };
-            Ok(None)
+            query_single_row(&conn, &sql, NO_PARAMS, |row| row.get::<_, i64>(0))
         })
         .await
+        .map_err(|e| BlockHeaderStorageError::GetFromStorageError {
+            coin: coin.clone(),
+            reason: e.to_string(),
+        })?
+        .map(|h| h.try_into())
+        .transpose()
+        .map_err(|e: TryFromIntError| BlockHeaderStorageError::DecodeError {
+            coin,
+            reason: e.to_string(),
+        })
     }
 
     async fn get_last_block_header_with_non_max_bits(&self) -> Result<Option<BlockHeader>, BlockHeaderStorageError> {
