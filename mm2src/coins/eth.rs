@@ -2072,6 +2072,9 @@ impl EthCoin {
                     Some(r) => {
                         let gas_used = r.gas_used.unwrap_or_default();
                         let gas_price = web3_tx.gas_price.unwrap_or_default();
+                        // It's relatively safe to unwrap `EthTxFeeDetails::new` as it may fail
+                        // due to `u256_to_big_decimal` only.
+                        // Also TX history is not used by any GUI and has significant disadvantages.
                         Some(EthTxFeeDetails::new(gas_used, gas_price, fee_coin).unwrap())
                     },
                     None => None,
@@ -2450,6 +2453,9 @@ impl EthCoin {
                     Some(r) => {
                         let gas_used = r.gas_used.unwrap_or_default();
                         let gas_price = web3_tx.gas_price.unwrap_or_default();
+                        // It's relatively safe to unwrap `EthTxFeeDetails::new` as it may fail
+                        // due to `u256_to_big_decimal` only.
+                        // Also TX history is not used by any GUI and has significant disadvantages.
                         Some(EthTxFeeDetails::new(gas_used, gas_price, fee_coin).unwrap())
                     },
                     None => None,
