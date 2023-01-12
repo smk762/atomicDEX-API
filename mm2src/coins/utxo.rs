@@ -486,7 +486,7 @@ impl UtxoSyncStatusLoopHandle {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
-pub enum StartingHeader {
+pub enum StartingBlockHeader {
     #[serde(rename = "genesis")]
     Genesis { hex: String },
     #[serde(rename = "other")]
@@ -496,7 +496,7 @@ pub enum StartingHeader {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SPVConf {
     /// Where to start block headers sync from.
-    starting_header: StartingHeader,
+    starting_block_header: StartingBlockHeader,
     /// Max number of block headers to be stored in db, when reached, old header will be deleted.
     max_stored_block_headers: Option<NonZeroU64>,
     /// The parameters that specify how the coin block headers should be validated. If None,
@@ -506,16 +506,16 @@ pub struct SPVConf {
 
 impl SPVConf {
     pub fn starting_block_height(&self) -> u64 {
-        match self.starting_header {
-            StartingHeader::Genesis { .. } => 0,
-            StartingHeader::Other { height, .. } => height,
+        match self.starting_block_header {
+            StartingBlockHeader::Genesis { .. } => 0,
+            StartingBlockHeader::Other { height, .. } => height,
         }
     }
 
     pub fn starting_block_header_hex(&self) -> String {
-        match self.starting_header.clone() {
-            StartingHeader::Genesis { hex } => hex,
-            StartingHeader::Other { hex, .. } => hex,
+        match self.starting_block_header.clone() {
+            StartingBlockHeader::Genesis { hex } => hex,
+            StartingBlockHeader::Other { hex, .. } => hex,
         }
     }
 
