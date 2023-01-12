@@ -207,7 +207,9 @@ impl From<web3::Error> for Web3RpcError {
             web3::Error::InvalidResponse(_) | web3::Error::Decoder(_) | web3::Error::Rpc(_) => {
                 Web3RpcError::InvalidResponse(error_str)
             },
-            web3::Error::Transport(_) | web3::Error::Io(_) => Web3RpcError::Transport(error_str),
+            web3::Error::Unreachable | web3::Error::Transport(_) | web3::Error::Io(_) => {
+                Web3RpcError::Transport(error_str)
+            },
             _ => Web3RpcError::Internal(error_str),
         }
     }
