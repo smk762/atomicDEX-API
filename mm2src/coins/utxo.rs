@@ -520,31 +520,33 @@ impl SPVConf {
     }
 
     pub fn validate_starting_block_header(&self, coin: &str) -> Result<(), SPVError> {
-        // Check if verification params is set. If not set then we can return Ok response.
-        if self.validation_params.is_none() {
-            return Ok(());
-        }
-
-        let retarget_interval = RETARGETING_INTERVAL as u64;
-        // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
-        if let Some(max_stored_block_headers) = self.max_stored_block_headers {
-            if retarget_interval > max_stored_block_headers.into() {
-                return Err(SPVError::StartingBlockHeaderError(format!(
-                    "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
-                    max_stored_block_headers
-                )));
+        if let Some(params) = &self.validation_params {
+            if params.difficulty_algorithm.is_none() {
+                return Ok(());
             }
+
+            let retarget_interval = RETARGETING_INTERVAL as u64;
+            // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
+            if let Some(max_stored_block_headers) = self.max_stored_block_headers {
+                if retarget_interval > max_stored_block_headers.into() {
+                    return Err(SPVError::StartingBlockHeaderError(format!(
+                        "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
+                        max_stored_block_headers
+                    )));
+                }
+            }
+
+            // Verify retarget_height is the right target header.
+            let height = self.starting_block_height();
+            let is_retarget = height % retarget_interval;
+            if is_retarget != 0 {
+                return Err(SPVError::WrongRetargetHeight {
+                    coin: coin.to_string(),
+                    expected_height: height - is_retarget,
+                });
+            };
         }
 
-        // Verify retarget_height is the right target header.
-        let height = self.starting_block_height();
-        let is_retarget = height % retarget_interval;
-        if is_retarget != 0 {
-            return Err(SPVError::WrongRetargetHeight {
-                coin: coin.to_string(),
-                expected_height: height - is_retarget,
-            });
-        };
         Ok(())
     }
 }
