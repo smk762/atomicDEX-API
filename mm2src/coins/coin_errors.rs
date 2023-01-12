@@ -57,7 +57,8 @@ impl From<UtxoRpcError> for ValidatePaymentError {
 impl From<Web3RpcError> for ValidatePaymentError {
     fn from(e: Web3RpcError) -> Self {
         match e {
-            Web3RpcError::Transport(tr) | Web3RpcError::InvalidResponse(tr) => ValidatePaymentError::Transport(tr),
+            Web3RpcError::Transport(tr) => ValidatePaymentError::Transport(tr),
+            Web3RpcError::InvalidResponse(resp) => ValidatePaymentError::InvalidRpcResponse(resp),
             Web3RpcError::Internal(internal) => ValidatePaymentError::InternalError(internal),
         }
     }
