@@ -91,6 +91,7 @@ impl<'a> UtxoConfBuilder<'a> {
         let estimate_fee_blocks = self.estimate_fee_blocks();
         let trezor_coin = self.trezor_coin();
         let derivation_path = self.derivation_path()?;
+        let avg_blocktime = self.avg_blocktime();
 
         let spv_conf = self.spv_conf()?;
         // Todo: validation shouldn't be in this build function
@@ -132,6 +133,7 @@ impl<'a> UtxoConfBuilder<'a> {
             trezor_coin,
             spv_conf,
             derivation_path,
+            avg_blocktime,
         })
     }
 
@@ -301,4 +303,6 @@ impl<'a> UtxoConfBuilder<'a> {
         json::from_value(self.conf["derivation_path"].clone())
             .map_to_mm(|e| UtxoConfError::ErrorDeserializingDerivationPath(e.to_string()))
     }
+
+    fn avg_blocktime(&self) -> Option<u64> { self.conf["avg_blocktime"].as_u64() }
 }
