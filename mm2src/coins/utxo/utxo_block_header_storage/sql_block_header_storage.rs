@@ -9,7 +9,6 @@ use db_common::{sqlite::rusqlite::Error as SqlError,
 use primitives::hash::H256;
 use serialization::Reader;
 use spv_validation::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
-use spv_validation::work::MAX_BITS_BTC;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::num::TryFromIntError;
@@ -68,11 +67,14 @@ fn get_last_block_height_sql(for_coin: &str) -> Result<String, BlockHeaderStorag
     Ok(sql)
 }
 
-fn get_last_block_header_with_non_max_bits_sql(for_coin: &str) -> Result<String, BlockHeaderStorageError> {
+fn get_last_block_header_with_non_max_bits_sql(
+    for_coin: &str,
+    max_bits: u32,
+) -> Result<String, BlockHeaderStorageError> {
     let table_name = get_table_name_and_validate(for_coin)?;
     let sql = format!(
         "SELECT hex FROM {} WHERE block_bits<>{} ORDER BY block_height DESC LIMIT 1;",
-        table_name, MAX_BITS_BTC
+        table_name, max_bits
     );
 
     Ok(sql)
@@ -264,9 +266,12 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         })
     }
 
-    async fn get_last_block_header_with_non_max_bits(&self) -> Result<Option<BlockHeader>, BlockHeaderStorageError> {
+    async fn get_last_block_header_with_non_max_bits(
+        &self,
+        max_bits: u32,
+    ) -> Result<Option<BlockHeader>, BlockHeaderStorageError> {
         let coin = self.ticker.clone();
-        let sql = get_last_block_header_with_non_max_bits_sql(&coin)?;
+        let sql = get_last_block_header_with_non_max_bits_sql(&coin, max_bits)?;
         let selfi = self.clone();
 
         let maybe_header_raw = async_blocking(move || {
@@ -377,6 +382,7 @@ mod sql_block_headers_storage_tests {
     use chain::BlockHeaderBits;
     use common::block_on;
     use primitives::hash::H256;
+    use spv_validation::work::MAX_BITS_BTC;
 
     #[test]
     fn test_init_collection() {
@@ -467,7 +473,7 @@ mod sql_block_headers_storage_tests {
         block_on(storage.add_block_headers_to_storage(headers)).unwrap();
         assert!(!storage.is_table_empty(&table));
 
-        let actual_block_header = block_on(storage.get_last_block_header_with_non_max_bits())
+        let actual_block_header = block_on(storage.get_last_block_header_with_non_max_bits(MAX_BITS_BTC))
             .unwrap()
             .unwrap();
         assert_ne!(actual_block_header.bits, BlockHeaderBits::Compact(MAX_BITS_BTC.into()));

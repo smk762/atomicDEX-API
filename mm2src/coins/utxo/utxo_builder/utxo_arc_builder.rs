@@ -2,11 +2,11 @@ use crate::utxo::rpc_clients::UtxoRpcClientEnum;
 use crate::utxo::utxo_builder::{UtxoCoinBuildError, UtxoCoinBuilder, UtxoCoinBuilderCommonOps,
                                 UtxoFieldsWithGlobalHDBuilder, UtxoFieldsWithHardwareWalletBuilder,
                                 UtxoFieldsWithIguanaSecretBuilder};
-use crate::utxo::{generate_and_send_tx, FeePolicy, GetUtxoListOps, SPVConf, UtxoArc, UtxoCommonOps,
-                  UtxoSyncStatusLoopHandle, UtxoWeak};
+use crate::utxo::{generate_and_send_tx, FeePolicy, GetUtxoListOps, UtxoArc, UtxoCommonOps, UtxoSyncStatusLoopHandle,
+                  UtxoWeak};
 use crate::{DerivationMethod, PrivKeyBuildPolicy, UtxoActivationParams};
 use async_trait::async_trait;
-use chain::{BlockHeader, TransactionOutput};
+use chain::TransactionOutput;
 use common::executor::{AbortSettings, SpawnAbortable, Timer};
 use common::log::{error, info, warn, LogOnError};
 use futures::compat::Future01CompatExt;
@@ -112,17 +112,12 @@ where
                 .compat()
                 .await
                 .map_err(|err| UtxoCoinBuildError::CantGetBlockCount(err.to_string()))?;
-            let Some(spv_conf) = result_coin.as_ref().conf.spv_conf.clone() else {
-                return MmError::err(UtxoCoinBuildError::Internal(format!("Unable to read spv_conf from coin config \
-                file for {}", result_coin.as_ref().conf.ticker)));
-            };
 
             self.spawn_block_header_utxo_loop(
                 &utxo_arc,
                 self.constructor.clone(),
                 sync_status_loop_handle,
                 block_count,
-                spv_conf,
             );
         }
 
@@ -255,7 +250,6 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     constructor: impl Fn(UtxoArc) -> T,
     mut sync_status_loop_handle: UtxoSyncStatusLoopHandle,
     mut block_count: u64,
-    spv_conf: SPVConf,
 ) {
     let args = BlockHeaderUtxoLoopExtraArgs::default();
     let mut chunk_size = args.chunk_size;
@@ -266,27 +260,16 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
             UtxoRpcClientEnum::Native(_) => break,
             UtxoRpcClientEnum::Electrum(client) => client,
         };
+        let spv_conf = match &coin.as_ref().conf.spv_conf {
+            Some(conf) => conf,
+            // Todo: notify_on_permanent_error here
+            None => break,
+        };
 
         let storage = client.block_headers_storage();
         let from_block_height = match storage.get_last_block_height().await {
             Ok(Some(height)) => height,
-            Ok(None) => {
-                let header_hex = spv_conf.starting_block_header_hex();
-                let block_header = match BlockHeader::try_from_string_with_coin_variant(header_hex, ticker.into()) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        sync_status_loop_handle.notify_on_permanent_error(e.to_string());
-                        break;
-                    },
-                };
-                let height = spv_conf.starting_block_height();
-                let headers_map = std::iter::once((height, block_header)).collect();
-                if let Err(e) = storage.add_block_headers_to_storage(headers_map).await {
-                    sync_status_loop_handle.notify_on_permanent_error(e.to_string());
-                    break;
-                }
-                height
-            },
+            Ok(None) => spv_conf.starting_block_height(),
             Err(e) => {
                 error!("Error {e:?} on getting the height of the last stored {ticker} header in DB!",);
                 sync_status_loop_handle.notify_on_temp_error(e.to_string());
@@ -364,14 +347,12 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         };
 
         // Validate retrieved block headers.
-        if let Some(params) = &spv_conf.validation_params {
-            if let Err(e) = validate_headers(ticker, from_block_height, block_headers, storage, params).await {
-                error!("Error {e:?} on validating the latest headers for {ticker}!");
-                // Todo: remove this electrum server and use another in this case since the headers from this server are invalid
-                sync_status_loop_handle.notify_on_permanent_error(e.to_string());
-                break;
-            };
-        }
+        if let Err(e) = validate_headers(ticker, from_block_height, block_headers, storage, spv_conf).await {
+            error!("Error {e:?} on validating the latest headers for {ticker}!");
+            // Todo: remove this electrum server and use another in this case since the headers from this server are invalid
+            sync_status_loop_handle.notify_on_permanent_error(e.to_string());
+            break;
+        };
 
         // Check if we need to max the number of headers to be stored in storage.
         let headers_in_storage_count = storage.get_total_block_headers_from_storage().await.unwrap_or(0);
@@ -400,7 +381,6 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
         constructor: F,
         sync_status_loop_handle: UtxoSyncStatusLoopHandle,
         block_count: u64,
-        spv_conf: SPVConf,
     ) where
         F: Fn(UtxoArc) -> T + Send + Sync + 'static,
         T: UtxoCommonOps,
@@ -409,7 +389,7 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
         info!("Starting UTXO block header loop for coin {ticker}");
 
         let utxo_weak = utxo_arc.downgrade();
-        let fut = block_header_utxo_loop(utxo_weak, constructor, sync_status_loop_handle, block_count, spv_conf);
+        let fut = block_header_utxo_loop(utxo_weak, constructor, sync_status_loop_handle, block_count);
 
         let settings = AbortSettings::info_on_abort(format!("spawn_block_header_utxo_loop stopped for {ticker}"));
         utxo_arc

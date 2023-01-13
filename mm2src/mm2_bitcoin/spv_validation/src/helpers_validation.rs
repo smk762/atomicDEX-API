@@ -1,5 +1,5 @@
 use crate::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
-use crate::work::{next_block_bits, DifficultyAlgorithm, NextBlockBitsError};
+use crate::work::{next_block_bits, DifficultyAlgorithm, NextBlockBitsError, RETARGETING_INTERVAL};
 use chain::{BlockHeader, RawHeaderError};
 use derive_more::Display;
 use primitives::hash::H256;
@@ -7,6 +7,7 @@ use ripemd160::Digest;
 use serde::Deserialize;
 use serialization::parse_compact_int;
 use sha2::Sha256;
+use std::num::NonZeroU64;
 
 #[derive(Clone, Debug, Display, Eq, PartialEq)]
 pub enum SPVError {
@@ -312,12 +313,87 @@ pub(crate) fn merkle_prove(
 
 fn validate_header_prev_hash(actual: &H256, to_compare_with: &H256) -> bool { actual == to_compare_with }
 
+fn validate_btc_max_stored_headers_value(max_stored_block_headers: u64) -> Result<(), SPVError> {
+    if RETARGETING_INTERVAL > max_stored_block_headers as u32 {
+        return Err(SPVError::StartingBlockHeaderError(format!(
+            "max_stored_block_headers {} must be greater than retargeting interval {}",
+            max_stored_block_headers, RETARGETING_INTERVAL
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_btc_starting_header_height(coin: &str, height: u64) -> Result<(), SPVError> {
+    let is_retarget = height % RETARGETING_INTERVAL as u64;
+    if is_retarget != 0 {
+        return Err(SPVError::WrongRetargetHeight {
+            coin: coin.to_string(),
+            expected_height: height - is_retarget,
+        });
+    }
+    Ok(())
+}
+
 /// SPV headers verification parameters
 #[derive(Clone, Debug, Deserialize)]
 pub struct BlockHeaderValidationParams {
     pub difficulty_check: bool,
     pub constant_difficulty: bool,
     pub difficulty_algorithm: Option<DifficultyAlgorithm>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+pub enum StartingBlockHeader {
+    #[serde(rename = "genesis")]
+    Genesis { hex: String },
+    #[serde(rename = "other")]
+    Other { height: u64, hex: String },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SPVConf {
+    /// Where to start block headers sync from.
+    pub starting_block_header: StartingBlockHeader,
+    /// Max number of block headers to be stored in db, when reached, old header will be deleted.
+    pub max_stored_block_headers: Option<NonZeroU64>,
+    /// The parameters that specify how the coin block headers should be validated. If None,
+    /// headers will be saved in DB without validation, can be none if the coin's RPC server is trusted.
+    pub validation_params: Option<BlockHeaderValidationParams>,
+}
+
+impl SPVConf {
+    pub fn starting_block_height(&self) -> u64 {
+        match self.starting_block_header {
+            StartingBlockHeader::Genesis { .. } => 0,
+            StartingBlockHeader::Other { height, .. } => height,
+        }
+    }
+
+    pub fn starting_block_header_hex(&self) -> String {
+        match self.starting_block_header.clone() {
+            StartingBlockHeader::Genesis { hex } => hex,
+            StartingBlockHeader::Other { hex, .. } => hex,
+        }
+    }
+
+    pub fn validate_spv_conf(&self, coin: &str) -> Result<(), SPVError> {
+        if let Some(params) = &self.validation_params {
+            if let Some(algo) = &params.difficulty_algorithm {
+                match algo {
+                    DifficultyAlgorithm::BitcoinMainnet => {
+                        validate_btc_starting_header_height(coin, self.starting_block_height())?;
+                        if let Some(max) = self.max_stored_block_headers {
+                            validate_btc_max_stored_headers_value(max.into())?;
+                        }
+                    },
+                    DifficultyAlgorithm::BitcoinTestnet => todo!(),
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Checks validity of header chain.
@@ -342,50 +418,48 @@ pub async fn validate_headers(
     previous_height: u64,
     headers: Vec<BlockHeader>,
     storage: &dyn BlockHeaderStorageOps,
-    params: &BlockHeaderValidationParams,
+    conf: &SPVConf,
 ) -> Result<(), SPVError> {
-    let mut previous_height = previous_height;
-    let mut previous_header =
+    let mut previous_header = if previous_height == conf.starting_block_height() {
+        BlockHeader::try_from_string_with_coin_variant(conf.starting_block_header_hex(), coin.into())
+            .map_err(|e| SPVError::Internal(e.to_string()))?
+    } else {
         storage
             .get_block_header(previous_height)
             .await?
             .ok_or(BlockHeaderStorageError::GetFromStorageError {
                 coin: coin.to_string(),
                 reason: format!("Header with height {} is not found in storage", previous_height),
-            })?;
+            })?
+    };
+    let mut previous_height = previous_height;
     let mut previous_hash = previous_header.hash();
     let mut prev_bits = previous_header.bits.clone();
     for header in headers.into_iter() {
-        if previous_height == 0 {
-            // previous_header is genesis header in this case, checking that the first header hash is the same as the genesis header hash is enough
-            if header.hash() != previous_hash {
-                return Err(SPVError::InvalidChain(previous_height + 1));
-            }
-            previous_height += 1;
-            continue;
-        }
-        let cur_bits = header.bits.clone();
-        if params.constant_difficulty && params.difficulty_check && cur_bits != prev_bits {
-            return Err(SPVError::UnexpectedDifficultyChange);
-        }
         if !validate_header_prev_hash(&header.previous_header_hash, &previous_hash) {
             return Err(SPVError::InvalidChain(previous_height + 1));
         }
-        if let Some(algorithm) = &params.difficulty_algorithm {
-            if !params.constant_difficulty
-                && params.difficulty_check
-                && cur_bits
-                    != next_block_bits(
-                        coin,
-                        header.time,
-                        previous_header,
-                        previous_height as u32,
-                        storage,
-                        algorithm,
-                    )
-                    .await?
-            {
-                return Err(SPVError::InsufficientWork);
+        let cur_bits = header.bits.clone();
+        if let Some(params) = &conf.validation_params {
+            if params.constant_difficulty && params.difficulty_check && cur_bits != prev_bits {
+                return Err(SPVError::UnexpectedDifficultyChange);
+            }
+            if let Some(algorithm) = &params.difficulty_algorithm {
+                if !params.constant_difficulty
+                    && params.difficulty_check
+                    && cur_bits
+                        != next_block_bits(
+                            coin,
+                            header.time,
+                            previous_header,
+                            previous_height as u32,
+                            storage,
+                            algorithm,
+                        )
+                        .await?
+                {
+                    return Err(SPVError::InsufficientWork);
+                }
             }
         }
         prev_bits = cur_bits;
@@ -597,12 +671,17 @@ mod tests {
             constant_difficulty: false,
             difficulty_algorithm: None,
         };
+        let conf = SPVConf {
+            starting_block_header: StartingBlockHeader::Genesis { hex: "".into() },
+            max_stored_block_headers: None,
+            validation_params: Some(params),
+        };
         block_on(validate_headers(
             "MORTY",
             1330480,
             headers,
             &TestBlockHeadersStorage { ticker: "MORTY".into() },
-            &params,
+            &conf,
         ))
         .unwrap()
     }
@@ -618,12 +697,17 @@ mod tests {
             constant_difficulty: false,
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
         };
+        let conf = SPVConf {
+            starting_block_header: StartingBlockHeader::Genesis { hex: "".into() },
+            max_stored_block_headers: None,
+            validation_params: Some(params),
+        };
         block_on(validate_headers(
             "BTC",
             724608,
             headers,
             &TestBlockHeadersStorage { ticker: "BTC".into() },
-            &params,
+            &conf,
         ))
         .unwrap()
     }

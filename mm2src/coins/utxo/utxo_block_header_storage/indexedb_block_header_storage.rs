@@ -28,7 +28,10 @@ impl BlockHeaderStorageOps for IndexedDBBlockHeadersStorage {
         Err(BlockHeaderStorageError::Internal("Not implemented".into()))
     }
 
-    async fn get_last_block_header_with_non_max_bits(&self) -> Result<Option<BlockHeader>, BlockHeaderStorageError> {
+    async fn get_last_block_header_with_non_max_bits(
+        &self,
+        _max_bits: u32,
+    ) -> Result<Option<BlockHeader>, BlockHeaderStorageError> {
         Ok(None)
     }
 

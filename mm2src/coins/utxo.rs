@@ -74,9 +74,8 @@ use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as 
 use script::{Builder, Script, SignatureVersion, TransactionInputSigner};
 use serde_json::{self as json, Value as Json};
 use serialization::{serialize, serialize_with_flags, Error as SerError, SERIALIZE_TRANSACTION_WITNESS};
-use spv_validation::helpers_validation::{BlockHeaderValidationParams, SPVError};
+use spv_validation::helpers_validation::{SPVConf, SPVError};
 use spv_validation::storage::BlockHeaderStorageError;
-use spv_validation::work::RETARGETING_INTERVAL;
 use std::array::TryFromSliceError;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
@@ -481,73 +480,6 @@ impl UtxoSyncStatusLoopHandle {
         self.0
             .try_send(UtxoSyncStatus::Finished { block_number })
             .debug_log_with_msg("No one seems interested in UtxoSyncStatus");
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type")]
-pub enum StartingBlockHeader {
-    #[serde(rename = "genesis")]
-    Genesis { hex: String },
-    #[serde(rename = "other")]
-    Other { height: u64, hex: String },
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SPVConf {
-    /// Where to start block headers sync from.
-    starting_block_header: StartingBlockHeader,
-    /// Max number of block headers to be stored in db, when reached, old header will be deleted.
-    max_stored_block_headers: Option<NonZeroU64>,
-    /// The parameters that specify how the coin block headers should be validated. If None,
-    /// headers will be saved in DB without validation, can be none if the coin's RPC server is trusted.
-    validation_params: Option<BlockHeaderValidationParams>,
-}
-
-impl SPVConf {
-    pub fn starting_block_height(&self) -> u64 {
-        match self.starting_block_header {
-            StartingBlockHeader::Genesis { .. } => 0,
-            StartingBlockHeader::Other { height, .. } => height,
-        }
-    }
-
-    pub fn starting_block_header_hex(&self) -> String {
-        match self.starting_block_header.clone() {
-            StartingBlockHeader::Genesis { hex } => hex,
-            StartingBlockHeader::Other { hex, .. } => hex,
-        }
-    }
-
-    pub fn validate_starting_block_header(&self, coin: &str) -> Result<(), SPVError> {
-        if let Some(params) = &self.validation_params {
-            if params.difficulty_algorithm.is_none() {
-                return Ok(());
-            }
-
-            let retarget_interval = RETARGETING_INTERVAL as u64;
-            // Verify max_stored_block_headers is not equal to or lesser than retarget_interval.
-            if let Some(max_stored_block_headers) = self.max_stored_block_headers {
-                if retarget_interval > max_stored_block_headers.into() {
-                    return Err(SPVError::StartingBlockHeaderError(format!(
-                        "max_stored_block_headers {:?} must be greater than retargeting interval {retarget_interval}",
-                        max_stored_block_headers
-                    )));
-                }
-            }
-
-            // Verify retarget_height is the right target header.
-            let height = self.starting_block_height();
-            let is_retarget = height % retarget_interval;
-            if is_retarget != 0 {
-                return Err(SPVError::WrongRetargetHeight {
-                    coin: coin.to_string(),
-                    expected_height: height - is_retarget,
-                });
-            };
-        }
-
-        Ok(())
     }
 }
 

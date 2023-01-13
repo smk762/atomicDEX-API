@@ -1,6 +1,6 @@
 use crate::utxo::rpc_clients::EstimateFeeMode;
-use crate::utxo::{parse_hex_encoded_u32, SPVConf, UtxoCoinConf, DEFAULT_DYNAMIC_FEE_VOLATILITY_PERCENT,
-                  KMD_MTP_BLOCK_COUNT, MATURE_CONFIRMATIONS_DEFAULT};
+use crate::utxo::{parse_hex_encoded_u32, UtxoCoinConf, DEFAULT_DYNAMIC_FEE_VOLATILITY_PERCENT, KMD_MTP_BLOCK_COUNT,
+                  MATURE_CONFIRMATIONS_DEFAULT};
 use crate::UtxoActivationParams;
 use bitcrypto::ChecksumType;
 use crypto::{Bip32Error, StandardHDPathToCoin};
@@ -10,7 +10,7 @@ pub use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHashEnum, Key
 use mm2_err_handle::prelude::*;
 use script::SignatureVersion;
 use serde_json::{self as json, Value as Json};
-use spv_validation::helpers_validation::SPVError;
+use spv_validation::helpers_validation::{SPVConf, SPVError};
 use std::num::NonZeroU64;
 use std::sync::atomic::AtomicBool;
 
@@ -28,6 +28,8 @@ pub enum UtxoConfError {
     TrezorCoinIsNotSet,
     #[display(fmt = "Error deserializing 'derivation_path': {}", _0)]
     ErrorDeserializingDerivationPath(String),
+    #[display(fmt = "Error deserializing 'spv_conf': {}", _0)]
+    ErrorDeserializingSPVConf(String),
     InvalidConsensusBranchId(String),
     InvalidVersionGroupId(String),
     InvalidAddressFormat(String),
@@ -90,10 +92,11 @@ impl<'a> UtxoConfBuilder<'a> {
         let trezor_coin = self.trezor_coin();
         let derivation_path = self.derivation_path()?;
 
-        let spv_conf = self.spv_conf();
+        let spv_conf = self.spv_conf()?;
+        // Todo: validation shouldn't be in this build function
         // Validate SPVConf starting_block_header if provided.
         if let Some(spv) = &spv_conf {
-            spv.validate_starting_block_header(self.ticker)
+            spv.validate_spv_conf(self.ticker)
                 .map_to_mm(UtxoConfError::SPVVerificationFailed)?;
         }
 
@@ -289,7 +292,10 @@ impl<'a> UtxoConfBuilder<'a> {
     fn spv_conf(&self) -> Option<SPVConf> { None }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn spv_conf(&self) -> Option<SPVConf> { json::from_value(self.conf["spv_conf"].clone()).unwrap_or(None) }
+    fn spv_conf(&self) -> UtxoConfResult<Option<SPVConf>> {
+        json::from_value(self.conf["spv_conf"].clone())
+            .map_to_mm(|e| UtxoConfError::ErrorDeserializingSPVConf(e.to_string()))
+    }
 
     fn derivation_path(&self) -> UtxoConfResult<Option<StandardHDPathToCoin>> {
         json::from_value(self.conf["derivation_path"].clone())

@@ -11,7 +11,7 @@ const TARGET_SPACING_SECONDS: u32 = 10 * 60;
 const TARGET_TIMESPAN_SECONDS: u32 = 2 * 7 * 24 * 60 * 60;
 
 /// The Target number of blocks equals to 2 weeks or 2016 blocks
-pub const RETARGETING_INTERVAL: u32 = TARGET_TIMESPAN_SECONDS / TARGET_SPACING_SECONDS;
+pub(crate) const RETARGETING_INTERVAL: u32 = TARGET_TIMESPAN_SECONDS / TARGET_SPACING_SECONDS;
 
 /// The upper and lower bounds for retargeting timespan
 const MIN_TIMESPAN: u32 = TARGET_TIMESPAN_SECONDS / RETARGETING_FACTOR;
@@ -165,7 +165,7 @@ async fn btc_testnet_next_block_bits(
         Ok(last_block_bits.clone())
     } else {
         let last_non_max_bits = storage
-            .get_last_block_header_with_non_max_bits()
+            .get_last_block_header_with_non_max_bits(MAX_BITS_BTC)
             .await?
             .map(|header| header.bits)
             .unwrap_or(max_bits);
@@ -243,9 +243,10 @@ pub(crate) mod tests {
 
         async fn get_last_block_header_with_non_max_bits(
             &self,
+            max_bits: u32,
         ) -> Result<Option<BlockHeader>, BlockHeaderStorageError> {
             let mut headers = get_block_headers_for_coin(&self.ticker);
-            headers.retain(|_, h| h.bits != BlockHeaderBits::Compact(MAX_BITS_BTC.into()));
+            headers.retain(|_, h| h.bits != BlockHeaderBits::Compact(max_bits.into()));
             let header = headers.into_iter().max_by(|a, b| a.0.cmp(&b.0));
             Ok(header.map(|(_, h)| h))
         }

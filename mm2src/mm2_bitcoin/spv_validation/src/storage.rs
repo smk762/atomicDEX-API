@@ -68,7 +68,10 @@ pub trait BlockHeaderStorageOps: Send + Sync + 'static {
 
     async fn get_last_block_height(&self) -> Result<Option<u64>, BlockHeaderStorageError>;
 
-    async fn get_last_block_header_with_non_max_bits(&self) -> Result<Option<BlockHeader>, BlockHeaderStorageError>;
+    async fn get_last_block_header_with_non_max_bits(
+        &self,
+        max_bits: u32,
+    ) -> Result<Option<BlockHeader>, BlockHeaderStorageError>;
 
     async fn get_block_height_by_hash(&self, hash: H256) -> Result<Option<i64>, BlockHeaderStorageError>;
 

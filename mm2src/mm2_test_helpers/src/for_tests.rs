@@ -507,9 +507,9 @@ pub fn btc_with_spv_conf() -> Json {
             "type": "UTXO"
         },
         "spv_conf": {
-            "starting_header": {
+            "starting_block_header": {
                 "type": "genesis",
-                "hex": "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649ffff001d01e36299"
+                "hex": "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c"
             },
             "validation_params": {
                 "difficulty_check": true,
@@ -577,7 +577,7 @@ pub fn tbtc_with_spv_conf() -> Json {
             "type": "UTXO"
         },
         "spv_conf": {
-            "starting_header": {
+            "starting_block_header": {
                 "type": "genesis",
                 "hex": "0100000043497fd7f826957108f4a30fd9cec3aeba79972084e90ead01ea330900000000bac8b0fa927c0ac8234287e33c5f74d38d354820e24756ad709d7038fc5f31f020e7494dffff001d03e4b672"
             },
