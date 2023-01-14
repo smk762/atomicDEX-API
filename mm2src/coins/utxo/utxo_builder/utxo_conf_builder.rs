@@ -291,7 +291,7 @@ impl<'a> UtxoConfBuilder<'a> {
 
     // Todo: implement spv for wasm
     #[cfg(target_arch = "wasm32")]
-    fn spv_conf(&self) -> Option<SPVConf> { None }
+    fn spv_conf(&self) -> UtxoConfResult<Option<SPVConf>> { Ok(None) }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn spv_conf(&self) -> UtxoConfResult<Option<SPVConf>> {
