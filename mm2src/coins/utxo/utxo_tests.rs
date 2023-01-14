@@ -4285,13 +4285,15 @@ fn test_block_header_utxo_loop() {
     ElectrumClient::get_block_count
         .mock_safe(move |_| MockResult::Return(Box::new(futures01::future::ok(unsafe { CURRENT_BLOCK_COUNT }))));
     let expected_steps: Arc<Mutex<Vec<(u64, u64)>>> = Arc::new(Mutex::new(vec![]));
-    let expected_steps_to_move = expected_steps.clone();
 
-    ElectrumClient::retrieve_headers.mock_safe(move |this, from, to| {
-        let (expected_from, expected_to) = expected_steps_to_move.lock().unwrap().remove(0);
-        assert_eq!(from, expected_from);
-        assert_eq!(to, expected_to);
-        MockResult::Continue((this, from, to))
+    ElectrumClient::retrieve_headers.mock_safe({
+        let expected_steps = expected_steps.clone();
+        move |this, from, to| {
+            let (expected_from, expected_to) = expected_steps.lock().unwrap().remove(0);
+            assert_eq!(from, expected_from);
+            assert_eq!(to, expected_to);
+            MockResult::Continue((this, from, to))
+        }
     });
 
     BlockHeaderUtxoLoopExtraArgs::default.mock_safe(move || {
@@ -4310,13 +4312,7 @@ fn test_block_header_utxo_loop() {
         .collect();
     let req = json!({ "method": "electrum", "servers": servers });
     let params = UtxoActivationParams::from_legacy_req(&req).unwrap();
-    let spv_conf = json!({
-        "starting_block_header": {
-            "type": "genesis",
-            "hex": "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a000000000000000000000000000000000000000000000000000000000000000029ab5f490f0f0f200b00000000000000000000000000000000000000000000000000000000000000fd4005000d5ba7cda5d473947263bf194285317179d2b0d307119c2e7cc4bd8ac456f0774bd52b0cd9249be9d40718b6397a4c7bbd8f2b3272fed2823cd2af4bd1632200ba4bf796727d6347b225f670f292343274cc35099466f5fb5f0cd1c105121b28213d15db2ed7bdba490b4cedc69742a57b7c25af24485e523aadbb77a0144fc76f79ef73bd8530d42b9f3b9bed1c135ad1fe152923fafe98f95f76f1615e64c4abb1137f4c31b218ba2782bc15534788dda2cc08a0ee2987c8b27ff41bd4e31cd5fb5643dfe862c9a02ca9f90c8c51a6671d681d04ad47e4b53b1518d4befafefe8cadfb912f3d03051b1efbf1dfe37b56e93a741d8dfd80d576ca250bee55fab1311fc7b3255977558cdda6f7d6f875306e43a14413facdaed2f46093e0ef1e8f8a963e1632dcbeebd8e49fd16b57d49b08f9762de89157c65233f60c8e38a1f503a48c555f8ec45dedecd574a37601323c27be597b956343107f8bd80f3a925afaf30811df83c402116bb9c1e5231c70fff899a7c82f73c902ba54da53cc459b7bf1113db65cc8f6914d3618560ea69abd13658fa7b6af92d374d6eca9529f8bd565166e4fcbf2a8dfb3c9b69539d4d2ee2e9321b85b331925df195915f2757637c2805e1d4131e1ad9ef9bc1bb1c732d8dba4738716d351ab30c996c8657bab39567ee3b29c6d054b711495c0d52e1cd5d8e55b4f0f0325b97369280755b46a02afd54be4ddd9f77c22272b8bbb17ff5118fedbae2564524e797bd28b5f74f7079d532ccc059807989f94d267f47e724b3f1ecfe00ec9e6541c961080d8891251b84b4480bc292f6a180bea089fef5bbda56e1e41390d7c0e85ba0ef530f7177413481a226465a36ef6afe1e2bca69d2078712b3912bba1a99b1fbff0d355d6ffe726d2bb6fbc103c4ac5756e5bee6e47e17424ebcbf1b63d8cb90ce2e40198b4f4198689daea254307e52a25562f4c1455340f0ffeb10f9d8e914775e37d0edca019fb1b9c6ef81255ed86bc51c5391e0591480f66e2d88c5f4fd7277697968656a9b113ab97f874fdd5f2465e5559533e01ba13ef4a8f7a21d02c30c8ded68e8c54603ab9c8084ef6d9eb4e92c75b078539e2ae786ebab6dab73a09e0aa9ac575bcefb29e930ae656e58bcb513f7e3c17e079dce4f05b5dbc18c2a872b22509740ebe6a3903e00ad1abc55076441862643f93606e3dc35e8d9f2caef3ee6be14d513b2e062b21d0061de3bd56881713a1a5c17f5ace05e1ec09da53f99442df175a49bd154aa96e4949decd52fed79ccf7ccbce32941419c314e374e4a396ac553e17b5340336a1a25c22f9e42a243ba5404450b650acfc826a6e432971ace776e15719515e1634ceb9a4a35061b668c74998d3dfb5827f6238ec015377e6f9c94f38108768cf6e5c8b132e0303fb5a200368f845ad9d46343035a6ff94031df8d8309415bb3f6cd5ede9c135fdabcc030599858d803c0f85be7661c88984d88faa3d26fb0e9aac0056a53f1b5d0baed713c853c4a2726869a0a124a8a5bbc0fc0ef80c8ae4cb53636aa02503b86a1eb9836fcc259823e2692d921d88e1ffc1e6cb2bde43939ceb3f32a611686f539f8f7c9f0bf00381f743607d40960f06d347d1cd8ac8a51969c25e37150efdf7aa4c2037a2fd0516fb444525ab157a0ed0a7412b2fa69b217fe397263153782c0f64351fbdf2678fa0dc8569912dcd8e3ccad38f34f23bbbce14c6a26ac24911b308b82c7e43062d180baeac4ba7153858365c72c63dcf5f6a5b08070b730adb017aeae925b7d0439979e2679f45ed2f25a7edcfd2fb77a8794630285ccb0a071f5cce410b46dbf9750b0354aae8b65574501cc69efb5b6a43444074fee116641bb29da56c2b4a7f456991fc92b2"
-        }
-    });
-    let conf = json!({"coin":"RICK", "asset":"RICK", "spv_conf": spv_conf,"rpcport":8923});
+    let conf = json!({"coin":"RICK", "asset":"RICK", "rpcport":8923});
     let builder = UtxoArcBuilder::new(&ctx, "RICK", &conf, &params, priv_key_policy, UtxoStandardCoin::from);
     let arc: UtxoArc = block_on(builder.build_utxo_fields()).unwrap().into();
     let client = match &arc.rpc_client {
@@ -4327,6 +4323,13 @@ fn test_block_header_utxo_loop() {
     let (sync_status_notifier, _) = channel::<UtxoSyncStatus>(1);
     let loop_handle = UtxoSyncStatusLoopHandle::new(sync_status_notifier);
 
+    let spv_conf = json!({
+        "starting_block_header": {
+            "type": "other",
+            "height": 1,
+            "hex": "0400000071aeaa7dfb5c6cf5977832aebea1bf630a6d482b464610aa125ba6c358377e02c21d47f8f6f207707c9353392aa80bdb7ec12bb982cb90371db04760bf71f292fbc2f4300c01f0b7820d00e3347c8da4ee614674376cbc45359daa54f9b5493e4d1a405d0f0f0f2003007e2b590e83c83ff458206efbc41f224e0ebbfdbeb0bc16635b92fff40000fd4005000cbae53b522a9fab8201731655c03971ceba8a1f24161cb0c01039b7038ac512de5d0afa0133d94e6a0376e99e1e0eec12b1ecf099db79ae6c8b11a5baca1879e482ad57afc5578134ab8c697145476857bf430010ab50569a8399bfd7661c3bf447b9b7dc5008cb0e153c98aa742d0de24be3cf5c719bddf8db37231201718f057dc817f86cd2f168fd68fed5ee6fd3872e107afacaa3143d6da1b732300b25b6c5ffc9fb7ee501bcceee1c8f75a5ef8e41910d2215fcb81b186157246b020df454f2b74b8e441919dd4bb92cbf8e8f4e093f776b6382845e272910afcb6a8530b7a0491e4f0c8db113ed6c444fe853d5aec1e7a486f485bba75c12778ddcbf93337d1b94d588de375aaeb9593c167518ca3f289b9d066f888341fa6b30a785b4b696110528c7be0ee117dbd332edd63547df5d9dc2ce33c00629ec1fb84afc4555eaf624d5da5d4c7de2ffde11f30339071096090689ee2c90bf070ea4c8b43c4cd2e80bf9fb4597751d1fb817f75fb85231eaa5bc98eec3184a7c89c6d5bfc5e10265d582c30dbd94265ae86b243f8b3e9c110b0badec32b6457935d27348fd0e98069b4c43ff439580c584a2df6ff5dd95de4a70021f1cb539e844e9f769b5143315b57c4126569f1c737c0967f4d1fbe6186db68177b5e4f4eef1ef993b78351797e36f0a476443b05d3736dad23636fd965e797c03fce86f3462a8919e0eb75417ed0daae9fff9f8e704a7167cb5ab2b2f742ca1191a5f3bd8858171fa4d195772aa1b46688948f40219d1ccea8cecd9d43fce452de2ce7d1b06ed761f096339d90dd676067df44906a93723550fdc22dd70c38bb4db7bd97b5f9ff9f208d1de1da2a0daefe058c234563cc2559ef5fd125a13b844b66797f777d70575aafbb308ed87634ea2ad237d6584eeae6607e827341dc1faf301c98aafa41808018e04955a663bc35dc6d2ddfe5755d983bfc0f61154ad7258c7f3bdd7a1c346317db0016c7a3b845f180609dec7deb56b16e5935daaf0175daeb80fb67a20209295ad133e6b7ece349b3af86e859ae18f49c70c15ef328f090da46aedd969f7cfeda6977cbad62f24984f334a5bb25d05de8467ac57863b443e9f5e5b18209a230b0cf790bcf7d1951a9b120ddc7cdcd5182e32dd7302d04f7b12ad736af43b862e9dcb5534170d8239796ce8e73fa246f44e82ef3bfd525cbef16c6fe206ef30a6198ba8fb895e8f6e2b4f30a75ceb0e37fc3fff2b9510afefa0f431ea5d3bb9566452c91740f77df55e152b6f27a0b4ff15497a2a7d32be53531c2b7972d55e2d0b08094b444aea99af46fe7bee07321697d91e99f95bcb7acb2cb673ff1b52269d333b1f9f3e16f9576986cb8da27e709985535ab1bc587e245d07da8adabf930476879b5776d32396bd1e7aa508d56dc1b29cb419fbe574d93766e941a252d0864c553edf6eede9b395f45ccbc53372871f4ad15c201b35c3863acbacfa23cd08c57da7e53d16c8a33cb21549090b370f93ef55ed8d976f654b18a63951debe8909f29d8ecded319ba98c8260661d1bf93da654d5681064bb4458ac7435aaa1c3fd95d39981293290d65514fb0f2a6ced9c0fc96d3288f4c593633f875d34641b7dc7e4697a821de56e751ad2ca51c723c09b50ee0a3106357c5d966af20fea6affd7a2cb2c63ba4918130e8205f3e2d357a46481fe7bf1f585a0636f58d40c8808db83160a451645c1a37b2c98d8f16bd3536e5f6bfbf277e56ac9caf4a8ec4255dc0e3f039a1f8a0bdd70f64a132579d739444b346990cead43b7360611b627a40ec6b5865ec0230cd564cde2adbada282a0cfbb4941212b1c9a70e827017228881e53e7a9438205e3efefecf0f66c51e63a5a72d5a86941ebeb444"
+        }
+    });
     let loop_fut = async move {
         unsafe {
             block_header_utxo_loop(
@@ -4334,14 +4337,15 @@ fn test_block_header_utxo_loop() {
                 UtxoStandardCoin::from,
                 loop_handle,
                 CURRENT_BLOCK_COUNT,
+                json::from_value(spv_conf).ok(),
             )
             .await
         }
     };
 
     let test_fut = async move {
-        *expected_steps.lock().unwrap() = vec![(1, 4), (5, 8), (9, 12), (13, 13)];
-        unsafe { CURRENT_BLOCK_COUNT = 13 }
+        *expected_steps.lock().unwrap() = vec![(2, 5), (6, 9), (10, 13), (14, 14)];
+        unsafe { CURRENT_BLOCK_COUNT = 14 }
         Timer::sleep(2.).await;
         let get_headers_count = client
             .block_headers_storage()
@@ -4349,22 +4353,10 @@ fn test_block_header_utxo_loop() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(get_headers_count, 13);
-        assert!(expected_steps.lock().unwrap().is_empty());
-        *expected_steps.lock().unwrap() = vec![(14, 17)];
-
-        unsafe { CURRENT_BLOCK_COUNT = 17 }
-        Timer::sleep(2.).await;
-        let get_headers_count = client
-            .block_headers_storage()
-            .get_last_block_height()
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(get_headers_count, 17);
+        assert_eq!(get_headers_count, 14);
         assert!(expected_steps.lock().unwrap().is_empty());
 
-        *expected_steps.lock().unwrap() = vec![(18, 18)];
+        *expected_steps.lock().unwrap() = vec![(15, 18)];
         unsafe { CURRENT_BLOCK_COUNT = 18 }
         Timer::sleep(2.).await;
         let get_headers_count = client
@@ -4376,8 +4368,20 @@ fn test_block_header_utxo_loop() {
         assert_eq!(get_headers_count, 18);
         assert!(expected_steps.lock().unwrap().is_empty());
 
-        *expected_steps.lock().unwrap() = vec![(19, 22), (23, 25)];
-        unsafe { CURRENT_BLOCK_COUNT = 25 }
+        *expected_steps.lock().unwrap() = vec![(19, 19)];
+        unsafe { CURRENT_BLOCK_COUNT = 19 }
+        Timer::sleep(2.).await;
+        let get_headers_count = client
+            .block_headers_storage()
+            .get_last_block_height()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(get_headers_count, 19);
+        assert!(expected_steps.lock().unwrap().is_empty());
+
+        *expected_steps.lock().unwrap() = vec![(20, 23), (24, 26)];
+        unsafe { CURRENT_BLOCK_COUNT = 26 }
         Timer::sleep(3.).await;
         let get_headers_count = client
             .block_headers_storage()
@@ -4385,7 +4389,7 @@ fn test_block_header_utxo_loop() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(get_headers_count, 25);
+        assert_eq!(get_headers_count, 26);
         assert!(expected_steps.lock().unwrap().is_empty());
     };
 
