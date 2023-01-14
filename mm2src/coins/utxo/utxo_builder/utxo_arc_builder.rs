@@ -104,6 +104,14 @@ where
         self.spawn_merge_utxo_loop_if_required(&utxo_arc, self.constructor.clone());
 
         let result_coin = (self.constructor)(utxo_arc.clone());
+        let spv_conf = &result_coin.as_ref().conf.spv_conf;
+
+        // Validate SPVConf starting_block_header if provided.
+        if let Some(spv) = &spv_conf {
+            spv.validate_spv_conf(self.ticker)
+                .map_to_mm(UtxoCoinBuildError::SPVError)?;
+        }
+
         if let Some(sync_status_loop_handle) = sync_status_loop_handle {
             let block_count = result_coin
                 .as_ref()
@@ -112,7 +120,6 @@ where
                 .compat()
                 .await
                 .map_err(|err| UtxoCoinBuildError::CantGetBlockCount(err.to_string()))?;
-            let spv_conf = &result_coin.as_ref().conf.spv_conf;
 
             self.spawn_block_header_utxo_loop(
                 &utxo_arc,

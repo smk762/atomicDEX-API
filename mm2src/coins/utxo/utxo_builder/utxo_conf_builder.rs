@@ -92,14 +92,7 @@ impl<'a> UtxoConfBuilder<'a> {
         let trezor_coin = self.trezor_coin();
         let derivation_path = self.derivation_path()?;
         let avg_blocktime = self.avg_blocktime();
-
         let spv_conf = self.spv_conf()?;
-        // Todo: validation shouldn't be in this build function
-        // Validate SPVConf starting_block_header if provided.
-        if let Some(spv) = &spv_conf {
-            spv.validate_spv_conf(self.ticker)
-                .map_to_mm(UtxoConfError::SPVVerificationFailed)?;
-        }
 
         Ok(UtxoCoinConf {
             ticker: self.ticker.to_owned(),

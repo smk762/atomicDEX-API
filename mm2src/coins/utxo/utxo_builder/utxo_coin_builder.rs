@@ -32,7 +32,7 @@ use mm2_err_handle::prelude::*;
 use primitives::hash::H160;
 use rand::seq::SliceRandom;
 use serde_json::{self as json, Value as Json};
-use spv_validation::helpers_validation::SPVConf;
+use spv_validation::helpers_validation::{SPVConf, SPVError};
 use spv_validation::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -83,6 +83,8 @@ pub enum UtxoCoinBuildError {
     CantGetBlockCount(String),
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
+    #[display(fmt = "SPV params verificaiton failed. Error: {_0}")]
+    SPVError(SPVError),
 }
 
 impl From<UtxoConfError> for UtxoCoinBuildError {
