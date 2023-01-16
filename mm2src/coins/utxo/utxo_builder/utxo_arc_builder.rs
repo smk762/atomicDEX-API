@@ -363,18 +363,17 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         // Validate retrieved block headers.
         if let Err(e) = validate_headers(ticker, from_block_height, block_headers, storage, spv_conf).await {
             error!("Error {e:?} on validating the latest headers for {ticker}!");
-            println!("ERR {e:?}!");
-
             // Todo: remove this electrum server and use another in this case since the headers from this server are invalid
             sync_status_loop_handle.notify_on_permanent_error(e.to_string());
             break;
         };
 
         // Check if we need to max the number of headers to be stored in storage.
-        let headers_in_storage_count = storage.get_total_block_headers_from_storage().await.unwrap_or(0);
-        let current_total = block_registry.len() as u64 + headers_in_storage_count;
         if let Some(max_stored_block_headers) = spv_conf.max_stored_block_headers {
+            let headers_in_storage_count = storage.get_total_block_headers_from_storage().await.unwrap_or(0);
+            let current_total = block_registry.len() as u64 + headers_in_storage_count;
             let max_stored_block_headers: u64 = max_stored_block_headers.into();
+
             if current_total >= max_stored_block_headers {
                 storage
                     .remove_block_headers_from_storage((current_total - max_stored_block_headers) as i64)

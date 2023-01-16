@@ -316,8 +316,7 @@ fn validate_header_prev_hash(actual: &H256, to_compare_with: &H256) -> bool { ac
 fn validate_btc_max_stored_headers_value(max_stored_block_headers: u64) -> Result<(), SPVError> {
     if RETARGETING_INTERVAL > max_stored_block_headers as u32 {
         return Err(SPVError::StartingBlockHeaderError(format!(
-            "max_stored_block_headers {} must be greater than retargeting interval {}",
-            max_stored_block_headers, RETARGETING_INTERVAL
+            "max_stored_block_headers {max_stored_block_headers} must be greater than retargeting interval {RETARGETING_INTERVAL}",
         )));
     }
 
@@ -332,6 +331,7 @@ fn validate_btc_starting_header_height(coin: &str, height: u64) -> Result<(), SP
             expected_height: height - is_retarget,
         });
     }
+
     Ok(())
 }
 
@@ -380,18 +380,14 @@ impl SPVConf {
 
     pub fn validate_spv_conf(&self, coin: &str) -> Result<(), SPVError> {
         if let Some(params) = &self.validation_params {
-            if let Some(algo) = &params.difficulty_algorithm {
-                match algo {
-                    DifficultyAlgorithm::BitcoinMainnet => {
-                        validate_btc_starting_header_height(coin, self.starting_block_height())?;
-                        if let Some(max) = self.max_stored_block_headers {
-                            validate_btc_max_stored_headers_value(max.into())?;
-                        }
-                    },
-                    DifficultyAlgorithm::BitcoinTestnet => todo!(),
+            if let Some(DifficultyAlgorithm::BitcoinMainnet) = &params.difficulty_algorithm {
+                validate_btc_starting_header_height(coin, self.starting_block_height())?;
+                if let Some(max) = self.max_stored_block_headers {
+                    validate_btc_max_stored_headers_value(max.into())?;
                 }
             }
         }
+
         Ok(())
     }
 }
@@ -698,7 +694,7 @@ mod tests {
         let params = BlockHeaderValidationParams {
             difficulty_check: true,
             constant_difficulty: false,
-            difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
+            difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinTestnet),
         };
         let conf = SPVConf {
             starting_block_header: StartingBlockHeader::Genesis { hex: "".into() },
