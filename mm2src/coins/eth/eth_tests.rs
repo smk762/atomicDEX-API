@@ -1248,6 +1248,7 @@ fn polygon_check_if_my_payment_sent() {
         swap_contract_address: &Some(swap_contract_address),
         swap_unique_data: &[],
         amount: &BigDecimal::default(),
+        payment_instructions: &None,
     };
     let my_payment = coin
         .check_if_my_payment_sent(if_my_payment_sent_args)
