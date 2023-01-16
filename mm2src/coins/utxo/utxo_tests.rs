@@ -4331,16 +4331,14 @@ fn test_block_header_utxo_loop() {
         }
     });
     let loop_fut = async move {
-        unsafe {
-            block_header_utxo_loop(
-                arc.downgrade(),
-                UtxoStandardCoin::from,
-                loop_handle,
-                CURRENT_BLOCK_COUNT,
-                json::from_value(spv_conf).ok(),
-            )
-            .await
-        }
+        block_header_utxo_loop(
+            arc.downgrade(),
+            UtxoStandardCoin::from,
+            loop_handle,
+            unsafe { CURRENT_BLOCK_COUNT },
+            json::from_value(spv_conf).ok().unwrap(),
+        )
+        .await
     };
 
     let test_fut = async move {

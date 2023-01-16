@@ -106,13 +106,12 @@ where
         let result_coin = (self.constructor)(utxo_arc.clone());
         let spv_conf = &result_coin.as_ref().conf.spv_conf;
 
-        // Validate SPVConf starting_block_header if provided.
-        if let Some(spv) = &spv_conf {
-            spv.validate_spv_conf(self.ticker)
+        if let (Some(spv_conf), Some(sync_handle)) = (spv_conf, sync_status_loop_handle) {
+            // Validate SPVConf starting_block_header if provided.
+            spv_conf
+                .validate_spv_conf(self.ticker)
                 .map_to_mm(UtxoCoinBuildError::SPVError)?;
-        }
 
-        if let Some(sync_status_loop_handle) = sync_status_loop_handle {
             let block_count = result_coin
                 .as_ref()
                 .rpc_client
@@ -120,11 +119,10 @@ where
                 .compat()
                 .await
                 .map_err(|err| UtxoCoinBuildError::CantGetBlockCount(err.to_string()))?;
-
             self.spawn_block_header_utxo_loop(
                 &utxo_arc,
                 self.constructor.clone(),
-                sync_status_loop_handle,
+                sync_handle,
                 block_count,
                 spv_conf.clone(),
             );
@@ -259,7 +257,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     constructor: impl Fn(UtxoArc) -> T,
     mut sync_status_loop_handle: UtxoSyncStatusLoopHandle,
     mut block_count: u64,
-    spv_conf: Option<SPVConf>,
+    spv_conf: SPVConf,
 ) {
     let args = BlockHeaderUtxoLoopExtraArgs::default();
     let mut chunk_size = args.chunk_size;
@@ -269,15 +267,6 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         let client = match &coin.as_ref().rpc_client {
             UtxoRpcClientEnum::Native(_) => break,
             UtxoRpcClientEnum::Electrum(client) => client,
-        };
-        let spv_conf = match &spv_conf {
-            Some(conf) => conf,
-            None => {
-                sync_status_loop_handle.notify_on_permanent_error(format!(
-                    "Please set spv_conf in coin config to enable spv for {ticker}"
-                ));
-                break;
-            },
         };
 
         let storage = client.block_headers_storage();
@@ -361,7 +350,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         };
 
         // Validate retrieved block headers.
-        if let Err(e) = validate_headers(ticker, from_block_height, block_headers, storage, spv_conf).await {
+        if let Err(e) = validate_headers(ticker, from_block_height, block_headers, storage, &spv_conf).await {
             error!("Error {e:?} on validating the latest headers for {ticker}!");
             // Todo: remove this electrum server and use another in this case since the headers from this server are invalid
             sync_status_loop_handle.notify_on_permanent_error(e.to_string());
@@ -372,7 +361,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         if let Some(max_stored_block_headers) = spv_conf.max_stored_block_headers {
             let headers_in_storage_count = storage.get_total_block_headers_from_storage().await.unwrap_or(0);
             let current_total = block_registry.len() as u64 + headers_in_storage_count;
-            let max_stored_block_headers: u64 = max_stored_block_headers.into();
+            let max_stored_block_headers = max_stored_block_headers.get();
 
             if current_total >= max_stored_block_headers {
                 storage
@@ -396,7 +385,7 @@ pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
         constructor: F,
         sync_status_loop_handle: UtxoSyncStatusLoopHandle,
         block_count: u64,
-        spv_conf: Option<SPVConf>,
+        spv_conf: SPVConf,
     ) where
         F: Fn(UtxoArc) -> T + Send + Sync + 'static,
         T: UtxoCommonOps,
