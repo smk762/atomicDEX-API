@@ -2508,6 +2508,8 @@ pub trait RpcTransportEventHandler {
     fn on_incoming_response(&self, data: &[u8]);
 
     fn on_connected(&self, address: String) -> Result<(), String>;
+
+    fn on_disconnected(&self, address: String) -> Result<(), String>;
 }
 
 impl fmt::Debug for dyn RpcTransportEventHandler + Send + Sync {
@@ -2522,6 +2524,8 @@ impl RpcTransportEventHandler for RpcTransportEventHandlerShared {
     fn on_incoming_response(&self, data: &[u8]) { self.as_ref().on_incoming_response(data) }
 
     fn on_connected(&self, address: String) -> Result<(), String> { self.as_ref().on_connected(address) }
+
+    fn on_disconnected(&self, address: String) -> Result<(), String> { self.as_ref().on_disconnected(address) }
 }
 
 impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
@@ -2545,6 +2549,13 @@ impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
     fn on_connected(&self, address: String) -> Result<(), String> {
         for handler in self {
             try_s!(handler.on_connected(address.clone()))
+        }
+        Ok(())
+    }
+
+    fn on_disconnected(&self, address: String) -> Result<(), String> {
+        for handler in self {
+            try_s!(handler.on_disconnected(address.clone()))
         }
         Ok(())
     }
@@ -2607,6 +2618,12 @@ impl RpcTransportEventHandler for CoinTransportMetrics {
 
     fn on_connected(&self, _address: String) -> Result<(), String> {
         // Handle a new connected endpoint if necessary.
+        // Now just return the Ok
+        Ok(())
+    }
+
+    fn on_disconnected(&self, _address: String) -> Result<(), String> {
+        // Handle disconnected endpoint if necessary.
         // Now just return the Ok
         Ok(())
     }
