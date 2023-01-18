@@ -56,10 +56,10 @@ pub enum SPVError {
     HeaderStorageError(BlockHeaderStorageError),
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
-    #[display(fmt = "`Bits` is required field {_0} in spv config")]
-    InvalidBits(String),
-    #[display(fmt = "Unexpected {_0} starting block header `hash` in spv config")]
-    UnexpectedStartingBlockHeaderHash(String),
+    #[display(fmt = "Empty or Invalid {_0} starting block header `bits` in spv config")]
+    BlockHeaderBitsError(String),
+    #[display(fmt = "Empty or Invalid {_0} starting block header `hash` in spv config")]
+    BlockHeaderHashError(String),
     #[display(
         fmt = "Wrong retarget block header height in config for: {coin} expected block header height : 
         {expected_height}."
@@ -354,8 +354,8 @@ pub async fn validate_headers(
             .into()
     };
     let mut previous_height = previous_height;
-    let mut previous_hash = previous_header.hash(coin)?;
-    let mut prev_bits = previous_header.bits(coin)?;
+    let mut previous_hash = previous_header.hash;
+    let mut prev_bits = previous_header.bits.clone();
 
     for header in headers.into_iter() {
         if !validate_header_prev_hash(&header.previous_header_hash, &previous_hash) {
@@ -391,7 +391,7 @@ pub async fn validate_headers(
 
         prev_bits = current_block_bits;
         previous_header = header.into();
-        previous_hash = previous_header.hash(coin)?;
+        previous_hash = previous_header.hash;
         previous_height += 1;
     }
     Ok(())

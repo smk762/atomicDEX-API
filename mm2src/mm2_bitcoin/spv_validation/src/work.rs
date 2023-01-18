@@ -25,8 +25,6 @@ fn is_retarget_height(height: u32) -> bool { height % RETARGETING_INTERVAL == 0 
 
 #[derive(Clone, Debug, Display, Eq, PartialEq)]
 pub enum NextBlockBitsError {
-    #[display(fmt = "Expected block header bits but found none")]
-    ExpectedBlockBits,
     #[display(fmt = "Block headers storage error: {}", _0)]
     StorageError(BlockHeaderStorageError),
     #[display(fmt = "Can't find Block header for {} with height {}", coin, height)]
@@ -116,10 +114,7 @@ async fn btc_retarget_bits(
     // timestamp of last block
     let last_timestamp = last_block_header.time;
 
-    let retarget: Compact = last_block_header
-        .bits(coin)
-        .map_err(|_| NextBlockBitsError::ExpectedBlockBits)?
-        .into();
+    let retarget: Compact = last_block_header.bits.into();
     let retarget: U256 = retarget.into();
     let retarget_timespan: U256 = retarget_timespan(retarget_timestamp, last_timestamp).into();
     let retarget: U256 = retarget * retarget_timespan;
@@ -146,9 +141,7 @@ async fn btc_mainnet_next_block_bits(
     }
 
     let height = last_block_height + 1;
-    let last_block_bits = last_block_header
-        .bits(coin)
-        .map_err(|_| NextBlockBitsError::ExpectedBlockBits)?;
+    let last_block_bits = last_block_header.bits.clone();
 
     if is_retarget_height(height) {
         btc_retarget_bits(coin, height, last_block_header, storage, retarget_header).await
@@ -171,10 +164,7 @@ async fn btc_testnet_next_block_bits(
     }
 
     let height = last_block_height + 1;
-    let last_block_bits = last_block_header
-        .bits(coin)
-        .map_err(|_| NextBlockBitsError::ExpectedBlockBits)?
-        .clone();
+    let last_block_bits = last_block_header.bits.clone();
     let max_time_gap = last_block_header.time + 2 * TARGET_SPACING_SECONDS;
 
     if is_retarget_height(height) {
@@ -289,9 +279,9 @@ pub(crate) mod tests {
 
         let verification_header = SPVVerificationHeader {
             height: 0,
-            hash: None,
-            time: 0,
-            bits: None,
+            hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
+            time: 1231006500,
+            bits: BlockHeaderBits::Compact(486604799.into()),
         };
 
         let next_block_bits = block_on(btc_mainnet_next_block_bits(
@@ -341,9 +331,9 @@ pub(crate) mod tests {
 
         let verification_header = SPVVerificationHeader {
             height: 0,
-            hash: None,
-            time: 0,
-            bits: None,
+            hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
+            time: 1231006500,
+            bits: BlockHeaderBits::Compact(486604799.into()),
         };
 
         // https://live.blockcypher.com/btc-testnet/block/000000000057db3806384e2ec1b02b2c86bd928206ff8dff98f54d616b7fa5f2/
