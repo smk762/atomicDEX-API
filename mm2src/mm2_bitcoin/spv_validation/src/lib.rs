@@ -18,6 +18,7 @@ pub mod spv_proof;
 /// `storage` Contains traits that can be implemented to provide the storage needed for spv validation
 pub mod storage;
 
+pub mod conf;
 /// `work` Contains functions that can be used to calculate proof of work difficulty, target, bits, etc...
 pub mod work;
 

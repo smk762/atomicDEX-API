@@ -38,7 +38,7 @@ use mm2_test_helpers::for_tests::{mm_ctx_with_custom_db, MORTY_ELECTRUM_ADDRS, R
 use mocktopus::mocking::*;
 use rpc::v1::types::H256 as H256Json;
 use serialization::{deserialize, CoinVariant};
-use spv_validation::helpers_validation::{BlockHeaderValidationParams, StartingBlockHeader};
+use spv_validation::conf::{BlockHeaderValidationParams, StartingBlockHeader};
 use spv_validation::storage::BlockHeaderStorageOps;
 use spv_validation::work::DifficultyAlgorithm;
 use std::convert::TryFrom;
@@ -4325,11 +4325,13 @@ fn test_block_header_utxo_loop() {
 
     let spv_conf = json!({
         "starting_block_header": {
-            "type": "other",
             "height": 1,
-            "hex": "0400000071aeaa7dfb5c6cf5977832aebea1bf630a6d482b464610aa125ba6c358377e02c21d47f8f6f207707c9353392aa80bdb7ec12bb982cb90371db04760bf71f292fbc2f4300c01f0b7820d00e3347c8da4ee614674376cbc45359daa54f9b5493e4d1a405d0f0f0f2003007e2b590e83c83ff458206efbc41f224e0ebbfdbeb0bc16635b92fff40000fd4005000cbae53b522a9fab8201731655c03971ceba8a1f24161cb0c01039b7038ac512de5d0afa0133d94e6a0376e99e1e0eec12b1ecf099db79ae6c8b11a5baca1879e482ad57afc5578134ab8c697145476857bf430010ab50569a8399bfd7661c3bf447b9b7dc5008cb0e153c98aa742d0de24be3cf5c719bddf8db37231201718f057dc817f86cd2f168fd68fed5ee6fd3872e107afacaa3143d6da1b732300b25b6c5ffc9fb7ee501bcceee1c8f75a5ef8e41910d2215fcb81b186157246b020df454f2b74b8e441919dd4bb92cbf8e8f4e093f776b6382845e272910afcb6a8530b7a0491e4f0c8db113ed6c444fe853d5aec1e7a486f485bba75c12778ddcbf93337d1b94d588de375aaeb9593c167518ca3f289b9d066f888341fa6b30a785b4b696110528c7be0ee117dbd332edd63547df5d9dc2ce33c00629ec1fb84afc4555eaf624d5da5d4c7de2ffde11f30339071096090689ee2c90bf070ea4c8b43c4cd2e80bf9fb4597751d1fb817f75fb85231eaa5bc98eec3184a7c89c6d5bfc5e10265d582c30dbd94265ae86b243f8b3e9c110b0badec32b6457935d27348fd0e98069b4c43ff439580c584a2df6ff5dd95de4a70021f1cb539e844e9f769b5143315b57c4126569f1c737c0967f4d1fbe6186db68177b5e4f4eef1ef993b78351797e36f0a476443b05d3736dad23636fd965e797c03fce86f3462a8919e0eb75417ed0daae9fff9f8e704a7167cb5ab2b2f742ca1191a5f3bd8858171fa4d195772aa1b46688948f40219d1ccea8cecd9d43fce452de2ce7d1b06ed761f096339d90dd676067df44906a93723550fdc22dd70c38bb4db7bd97b5f9ff9f208d1de1da2a0daefe058c234563cc2559ef5fd125a13b844b66797f777d70575aafbb308ed87634ea2ad237d6584eeae6607e827341dc1faf301c98aafa41808018e04955a663bc35dc6d2ddfe5755d983bfc0f61154ad7258c7f3bdd7a1c346317db0016c7a3b845f180609dec7deb56b16e5935daaf0175daeb80fb67a20209295ad133e6b7ece349b3af86e859ae18f49c70c15ef328f090da46aedd969f7cfeda6977cbad62f24984f334a5bb25d05de8467ac57863b443e9f5e5b18209a230b0cf790bcf7d1951a9b120ddc7cdcd5182e32dd7302d04f7b12ad736af43b862e9dcb5534170d8239796ce8e73fa246f44e82ef3bfd525cbef16c6fe206ef30a6198ba8fb895e8f6e2b4f30a75ceb0e37fc3fff2b9510afefa0f431ea5d3bb9566452c91740f77df55e152b6f27a0b4ff15497a2a7d32be53531c2b7972d55e2d0b08094b444aea99af46fe7bee07321697d91e99f95bcb7acb2cb673ff1b52269d333b1f9f3e16f9576986cb8da27e709985535ab1bc587e245d07da8adabf930476879b5776d32396bd1e7aa508d56dc1b29cb419fbe574d93766e941a252d0864c553edf6eede9b395f45ccbc53372871f4ad15c201b35c3863acbacfa23cd08c57da7e53d16c8a33cb21549090b370f93ef55ed8d976f654b18a63951debe8909f29d8ecded319ba98c8260661d1bf93da654d5681064bb4458ac7435aaa1c3fd95d39981293290d65514fb0f2a6ced9c0fc96d3288f4c593633f875d34641b7dc7e4697a821de56e751ad2ca51c723c09b50ee0a3106357c5d966af20fea6affd7a2cb2c63ba4918130e8205f3e2d357a46481fe7bf1f585a0636f58d40c8808db83160a451645c1a37b2c98d8f16bd3536e5f6bfbf277e56ac9caf4a8ec4255dc0e3f039a1f8a0bdd70f64a132579d739444b346990cead43b7360611b627a40ec6b5865ec0230cd564cde2adbada282a0cfbb4941212b1c9a70e827017228881e53e7a9438205e3efefecf0f66c51e63a5a72d5a86941ebeb444"
+            "hash":Some("f5cd86754336c59b0f9c81cc3be2567138a5214e8ca014c0d5f2d5f8a44b710c".to_string()),
+            "time": 1564482125,
+            "bits": Some(537857807)
         }
     });
+    //f5cd86754336c59b0f9c81cc3be2567138a5214e8ca014c0d5f2d5f8a44b710c
     let loop_fut = async move {
         block_header_utxo_loop(
             arc.downgrade(),
@@ -4398,15 +4400,16 @@ fn test_block_header_utxo_loop() {
 
 #[test]
 fn test_spv_conf_with_verification() {
-    // Block header hex for BLOCK HEIGHT 2016
-    let hex =
-        "010000006397bb6abd4fc521c0d3f6071b5650389f0b4551bc40b4e6b067306900000000ace470aecda9c8818c8fe57688cd2a772b5a57954a00df0420a7dd546b6d2c576b0e7f49ffff001d33f0192f";
+    // Block header hash for BLOCK HEIGHT 2016
+    let hash = "00000000a141216a896c54f211301c436e557a8d55900637bbdce14c6c7bddef";
     // test for good retarget_block_header_height
     let mut spv_conf = SPVConf {
-        starting_block_header: StartingBlockHeader::Other {
+        starting_block_header: Some(StartingBlockHeader {
             height: 4032,
-            hex: hex.to_string(),
-        },
+            hash: Some(hash.to_string()),
+            time: 1234466190,
+            bits: Some(486604799),
+        }),
         max_stored_block_headers: None,
         validation_params: Some(BlockHeaderValidationParams {
             difficulty_check: false,
@@ -4417,10 +4420,12 @@ fn test_spv_conf_with_verification() {
     assert!(spv_conf.validate_spv_conf("BTC").is_ok());
 
     // test for bad retarget_block_header_height
-    spv_conf.starting_block_header = StartingBlockHeader::Other {
+    spv_conf.starting_block_header = Some(StartingBlockHeader {
         height: 4037,
-        hex: hex.to_string(),
-    };
+        hash: Some(hash.to_string()),
+        time: 1234470475,
+        bits: Some(486604799),
+    });
     let validate = spv_conf.validate_spv_conf("BTC").err().unwrap();
     if let SPVError::WrongRetargetHeight { coin, expected_height } = validate {
         assert_eq!(coin, "BTC");

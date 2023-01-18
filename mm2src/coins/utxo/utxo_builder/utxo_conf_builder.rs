@@ -10,7 +10,8 @@ pub use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHashEnum, Key
 use mm2_err_handle::prelude::*;
 use script::SignatureVersion;
 use serde_json::{self as json, Value as Json};
-use spv_validation::helpers_validation::{SPVConf, SPVError};
+use spv_validation::conf::SPVConf;
+use spv_validation::helpers_validation::SPVError;
 use std::num::NonZeroU64;
 use std::sync::atomic::AtomicBool;
 

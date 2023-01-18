@@ -5,6 +5,7 @@ use crate::utxo::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRe
 use crate::utxo::tx_cache::{UtxoVerboseCacheOps, UtxoVerboseCacheShared};
 use crate::utxo::utxo_block_header_storage::BlockHeaderStorage;
 use crate::utxo::utxo_builder::utxo_conf_builder::{UtxoConfBuilder, UtxoConfError};
+use crate::utxo::utxo_builder::UtxoConfResult;
 use crate::utxo::{output_script, utxo_common, ElectrumBuilderArgs, ElectrumProtoVerifier, RecentlySpentOutPoints,
                   TxFee, UtxoCoinConf, UtxoCoinFields, UtxoHDAccount, UtxoHDWallet, UtxoRpcMode, UtxoSyncStatus,
                   UtxoSyncStatusLoopHandle, DEFAULT_GAP_LIMIT, UTXO_DUST_AMOUNT};
@@ -32,7 +33,8 @@ use mm2_err_handle::prelude::*;
 use primitives::hash::H160;
 use rand::seq::SliceRandom;
 use serde_json::{self as json, Value as Json};
-use spv_validation::helpers_validation::{SPVConf, SPVError};
+use spv_validation::conf::SPVConf;
+use spv_validation::helpers_validation::SPVError;
 use spv_validation::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -660,18 +662,23 @@ pub trait UtxoCoinBuilderCommonOps {
         Option<UtxoSyncStatusLoopHandle>,
         Option<AsyncMutex<AsyncReceiver<UtxoSyncStatus>>>,
     ) {
-        if self.spv_conf().is_some() && !self.activation_params().mode.is_native() {
-            let (sync_status_notifier, sync_watcher) = channel(1);
-            return (
-                Some(UtxoSyncStatusLoopHandle::new(sync_status_notifier)),
-                Some(AsyncMutex::new(sync_watcher)),
-            );
+        if let Ok(Some(_)) = self.spv_conf() {
+            if !self.activation_params().mode.is_native() {
+                let (sync_status_notifier, sync_watcher) = channel(1);
+                return (
+                    Some(UtxoSyncStatusLoopHandle::new(sync_status_notifier)),
+                    Some(AsyncMutex::new(sync_watcher)),
+                );
+            }
         }
 
         (None, None)
     }
 
-    fn spv_conf(&self) -> Option<SPVConf> { serde_json::from_value::<SPVConf>(self.conf()["spv_conf"].clone()).ok() }
+    fn spv_conf(&self) -> UtxoConfResult<Option<SPVConf>> {
+        json::from_value(self.conf()["spv_conf"].clone())
+            .map_to_mm(|e| UtxoConfError::ErrorDeserializingSPVConf(e.to_string()))
+    }
 }
 
 /// Attempts to parse native daemon conf file and return rpcport, rpcuser and rpcpassword

@@ -1,4 +1,5 @@
 use crate::utxo::rpc_clients::UtxoRpcClientEnum;
+use crate::utxo::utxo_block_header_storage::BlockHeaderStorage;
 use crate::utxo::utxo_builder::{UtxoCoinBuildError, UtxoCoinBuilder, UtxoCoinBuilderCommonOps,
                                 UtxoFieldsWithGlobalHDBuilder, UtxoFieldsWithHardwareWalletBuilder,
                                 UtxoFieldsWithIguanaSecretBuilder};
@@ -13,10 +14,13 @@ use futures::compat::Future01CompatExt;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
 #[cfg(test)] use mocktopus::macros::*;
+use protobuf::reflect::ProtobufValue;
 use script::Builder;
 use serde_json::Value as Json;
-use spv_validation::helpers_validation::{validate_headers, SPVConf};
-use spv_validation::storage::BlockHeaderStorageOps;
+use spv_validation::conf::SPVConf;
+use spv_validation::helpers_validation::validate_headers;
+use spv_validation::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
+use std::num::NonZeroU64;
 
 const FETCH_BLOCK_HEADERS_ATTEMPTS: u64 = 3;
 const CHUNK_SIZE_REDUCER_VALUE: u64 = 100;
@@ -99,12 +103,12 @@ where
     async fn build(self) -> MmResult<Self::ResultCoin, Self::Error> {
         let utxo = self.build_utxo_fields().await?;
         let sync_status_loop_handle = utxo.block_headers_status_notifier.clone();
+        let spv_conf = utxo.conf.spv_conf.clone();
         let utxo_arc = UtxoArc::new(utxo);
 
         self.spawn_merge_utxo_loop_if_required(&utxo_arc, self.constructor.clone());
 
         let result_coin = (self.constructor)(utxo_arc.clone());
-        let spv_conf = &result_coin.as_ref().conf.spv_conf;
 
         if let (Some(spv_conf), Some(sync_handle)) = (spv_conf, sync_status_loop_handle) {
             // Validate SPVConf starting_block_header if provided.
@@ -119,13 +123,7 @@ where
                 .compat()
                 .await
                 .map_err(|err| UtxoCoinBuildError::CantGetBlockCount(err.to_string()))?;
-            self.spawn_block_header_utxo_loop(
-                &utxo_arc,
-                self.constructor.clone(),
-                sync_handle,
-                block_count,
-                spv_conf.clone(),
-            );
+            self.spawn_block_header_utxo_loop(&utxo_arc, self.constructor.clone(), sync_handle, block_count, spv_conf);
         }
 
         Ok(result_coin)
@@ -310,6 +308,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
 
         sync_status_loop_handle.notify_blocks_headers_sync_status(from_block_height + 1, to_block_height);
 
+        println!("BEFORE FETCH");
         let mut fetch_blocker_headers_attempts = FETCH_BLOCK_HEADERS_ATTEMPTS;
         let (block_registry, block_headers) = match client
             .retrieve_headers(from_block_height + 1, to_block_height)
@@ -358,24 +357,45 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         };
 
         // Check if we need to max the number of headers to be stored in storage.
-        if let Some(max_stored_block_headers) = spv_conf.max_stored_block_headers {
-            let headers_in_storage_count = storage.get_total_block_headers_from_storage().await.unwrap_or(0);
-            let current_total = block_registry.len() as u64 + headers_in_storage_count;
-            let max_stored_block_headers = max_stored_block_headers.get();
+        calculate_and_remove_headers_from_db(storage, spv_conf.max_stored_block_headers, block_registry.len() as u64)
+            .await
+            .error_log();
 
-            if current_total >= max_stored_block_headers {
-                storage
-                    .remove_block_headers_from_storage((current_total - max_stored_block_headers) as i64)
-                    .await
-                    .error_log();
-            }
-        }
-
-        // to be removed
-        // println!("max_stored_block_headers {max_stored_block_headers} current_total{current_total}");
         let sleep = args.success_sleep;
         ok_or_continue_after_sleep!(storage.add_block_headers_to_storage(block_registry).await, sleep);
     }
+}
+
+async fn calculate_and_remove_headers_from_db(
+    storage: &BlockHeaderStorage,
+    max_stored_block_headers: Option<NonZeroU64>,
+    block_registry_len: u64,
+) -> Result<(), BlockHeaderStorageError> {
+    if let Some(max_stored_block_headers) = max_stored_block_headers {
+        let headers_in_storage_count = storage.get_total_block_headers_from_storage().await?;
+        let current_total = block_registry_len + headers_in_storage_count;
+        let max_stored_block_headers = max_stored_block_headers.get();
+
+        if current_total >= max_stored_block_headers {
+            let mut headers_to_remove = 0;
+
+            if current_total > max_stored_block_headers {
+                headers_to_remove = current_total - max_stored_block_headers
+            }
+
+            if current_total == max_stored_block_headers {
+                headers_to_remove = max_stored_block_headers - block_registry_len
+            };
+
+            if headers_to_remove.is_non_zero() {
+                return storage
+                    .remove_block_headers_from_storage(headers_to_remove as i64)
+                    .await;
+            }
+        }
+    };
+
+    Ok(())
 }
 
 pub trait BlockHeaderUtxoArcOps<T>: UtxoCoinBuilderCommonOps {
