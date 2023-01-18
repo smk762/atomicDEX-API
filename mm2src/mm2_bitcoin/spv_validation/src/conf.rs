@@ -8,9 +8,13 @@ use std::str::FromStr;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartingBlockHeader {
+    // Starting block height
     pub height: u64,
+    // Hash of the starting block header.
     pub hash: Option<String>,
+    // Time of the starting block header.
     pub time: u32,
+    // Bits of the starting block header.
     pub bits: Option<u32>,
 }
 
@@ -31,6 +35,16 @@ fn validate_btc_starting_header_height(coin: &str, height: u64) -> Result<(), SP
             coin: coin.to_string(),
             expected_height: height - is_retarget,
         });
+    }
+
+    Ok(())
+}
+
+fn validate_btc_starting_header_bits(coin: &str, header: &Option<StartingBlockHeader>) -> Result<(), SPVError> {
+    if let Some(header) = header {
+        if header.height > 0 && header.bits.is_none() {
+            return Err(SPVError::InvalidBits(coin.to_string()));
+        }
     }
 
     Ok(())
@@ -77,7 +91,11 @@ impl SPVConf {
     pub fn validate_spv_conf(&self, coin: &str) -> Result<(), SPVError> {
         if let Some(params) = &self.validation_params {
             if let Some(DifficultyAlgorithm::BitcoinMainnet) = &params.difficulty_algorithm {
+                // Validate that starting block header is a retarget header.
                 validate_btc_starting_header_height(coin, self.starting_block_height())?;
+                // Validate that starting block header bits is not empty.
+                validate_btc_starting_header_bits(coin, &self.starting_block_header)?;
+                // Validate that max_stored_headers_value is always greater than retarget interval.
                 if let Some(max) = self.max_stored_block_headers {
                     validate_btc_max_stored_headers_value(max.into())?;
                 }
@@ -88,11 +106,16 @@ impl SPVConf {
     }
 }
 
-#[derive(Debug, Clone)]
+/// `SPVVerificationHeader` is needed to use in place of `Blockheader` because of the limited data needed to perform validations.
+#[derive(Clone)]
 pub struct SPVVerificationHeader {
+    // Starting block height
     pub height: u64,
+    // Hash of the starting block header.
     pub hash: Option<H256>,
+    // Time of the starting block header.
     pub time: u32,
+    // Bits of the starting block header.
     pub bits: Option<BlockHeaderBits>,
 }
 
@@ -108,17 +131,17 @@ impl From<StartingBlockHeader> for SPVVerificationHeader {
 }
 
 impl SPVVerificationHeader {
-    pub fn hash(&self) -> Result<H256, SPVError> {
+    pub(crate) fn hash(&self, coin: &str) -> Result<H256, SPVError> {
         let Some(hash) = self.hash else {
-            return Err(SPVError::UnexpectedStartingBlockHeaderHash);
+            return Err(SPVError::UnexpectedStartingBlockHeaderHash(coin.to_string()));
         };
 
         Ok(hash)
     }
 
-    pub fn bits(&self) -> Result<BlockHeaderBits, SPVError> {
+    pub(crate) fn bits(&self, coin: &str) -> Result<BlockHeaderBits, SPVError> {
         let Some(bits) = &self.bits else {
-            return Err(SPVError::InvalidBits)
+            return Err(SPVError::InvalidBits(coin.to_string()))
         };
 
         Ok(BlockHeaderBits::Compact(bits.clone().into()))

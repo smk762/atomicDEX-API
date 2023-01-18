@@ -387,6 +387,7 @@ async fn calculate_and_remove_headers_from_db(
                 headers_to_remove = max_stored_block_headers - block_registry_len
             };
 
+            drop_mutability!(headers_to_remove);
             if headers_to_remove.is_non_zero() {
                 return storage
                     .remove_block_headers_from_storage(headers_to_remove as i64)

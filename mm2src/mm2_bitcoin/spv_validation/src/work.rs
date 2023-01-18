@@ -117,7 +117,7 @@ async fn btc_retarget_bits(
     let last_timestamp = last_block_header.time;
 
     let retarget: Compact = last_block_header
-        .bits()
+        .bits(coin)
         .map_err(|_| NextBlockBitsError::ExpectedBlockBits)?
         .into();
     let retarget: U256 = retarget.into();
@@ -147,7 +147,7 @@ async fn btc_mainnet_next_block_bits(
 
     let height = last_block_height + 1;
     let last_block_bits = last_block_header
-        .bits()
+        .bits(coin)
         .map_err(|_| NextBlockBitsError::ExpectedBlockBits)?;
 
     if is_retarget_height(height) {
@@ -172,7 +172,7 @@ async fn btc_testnet_next_block_bits(
 
     let height = last_block_height + 1;
     let last_block_bits = last_block_header
-        .bits()
+        .bits(coin)
         .map_err(|_| NextBlockBitsError::ExpectedBlockBits)?
         .clone();
     let max_time_gap = last_block_header.time + 2 * TARGET_SPACING_SECONDS;
