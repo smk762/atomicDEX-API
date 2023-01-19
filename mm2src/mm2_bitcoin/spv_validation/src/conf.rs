@@ -150,7 +150,7 @@ pub(crate) fn parse_verification_header(
             .hash
             .as_ref()
             .ok_or("")
-            .map_err(|_| SPVError::BlockHeaderBitsError {
+            .map_err(|_| SPVError::BlockHeaderHashError {
                 coin: coin.to_string(),
                 height,
             })?,
