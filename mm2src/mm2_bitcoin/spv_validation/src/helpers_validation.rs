@@ -1,4 +1,4 @@
-use crate::conf::SPVConf;
+use crate::conf::{parse_verification_header, SPVConf};
 use crate::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
 use crate::work::{next_block_bits, NextBlockBitsError};
 use chain::{BlockHeader, RawHeaderError};
@@ -56,10 +56,10 @@ pub enum SPVError {
     HeaderStorageError(BlockHeaderStorageError),
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
-    #[display(fmt = "Empty or Invalid {_0} starting block header `bits` in spv config")]
-    BlockHeaderBitsError(String),
-    #[display(fmt = "Empty or Invalid {_0} starting block header `hash` in spv config")]
-    BlockHeaderHashError(String),
+    #[display(fmt = "Error parsing or empty starting block header `bits` in spv config for {coin} - height: {height}")]
+    BlockHeaderBitsError { coin: String, height: u64 },
+    #[display(fmt = "Error parsing or empty starting block header `hash` in spv config for {coin} - height: {height}")]
+    BlockHeaderHashError { coin: String, height: u64 },
     #[display(
         fmt = "Wrong retarget block header height in config for: {coin} expected block header height : 
         {expected_height}."
@@ -342,7 +342,7 @@ pub async fn validate_headers(
     conf: &SPVConf,
 ) -> Result<(), SPVError> {
     let mut previous_header = if previous_height == conf.starting_block_height() {
-        conf.starting_block_header()?
+        parse_verification_header(coin, &conf.starting_block_header()?)?
     } else {
         storage
             .get_block_header(previous_height)
@@ -372,6 +372,7 @@ pub async fn validate_headers(
             }
 
             if let Some(algorithm) = &params.difficulty_algorithm {
+                let retarget_header = parse_verification_header(coin, &conf.starting_block_header()?)?;
                 let next_block_bits = next_block_bits(
                     coin,
                     header.time,
@@ -379,7 +380,7 @@ pub async fn validate_headers(
                     previous_height as u32,
                     storage,
                     algorithm,
-                    &conf.starting_block_header()?,
+                    &retarget_header,
                 )
                 .await?;
 

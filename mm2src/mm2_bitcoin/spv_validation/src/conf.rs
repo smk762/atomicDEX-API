@@ -43,11 +43,17 @@ fn validate_btc_starting_header_height(coin: &str, height: u64) -> Result<(), SP
 fn validate_btc_starting_header_bits_hash(coin: &str, header: &Option<StartingBlockHeader>) -> Result<(), SPVError> {
     if let Some(header) = header {
         if header.bits.is_none() {
-            return Err(SPVError::BlockHeaderBitsError(coin.to_string()));
+            return Err(SPVError::BlockHeaderBitsError {
+                coin: coin.to_string(),
+                height: header.height,
+            });
         }
 
         if header.hash.clone().unwrap_or_default().is_empty() {
-            return Err(SPVError::BlockHeaderBitsError(coin.to_string()));
+            return Err(SPVError::BlockHeaderBitsError {
+                coin: coin.to_string(),
+                height: header.height,
+            });
         }
     }
 
@@ -74,9 +80,9 @@ pub struct SPVConf {
 }
 
 impl SPVConf {
-    pub fn starting_block_header(&self) -> Result<SPVVerificationHeader, SPVError> {
+    pub fn starting_block_header(&self) -> Result<StartingBlockHeader, SPVError> {
         if let Some(header) = &self.starting_block_header {
-            return Ok(header.clone().into());
+            return Ok(header.clone());
         };
 
         Err(SPVError::StartingBlockHeaderError(
@@ -109,7 +115,8 @@ impl SPVConf {
     }
 }
 
-/// `SPVVerificationHeader` is needed to use in place of `Blockheader` because of the limited data needed to perform validations.
+/// `SPVVerificationHeader` is needed to use in place of `Blockheader` because of the limited data needed to perform
+/// verifications.
 #[derive(Clone)]
 pub struct SPVVerificationHeader {
     // Starting block height
@@ -122,20 +129,6 @@ pub struct SPVVerificationHeader {
     pub bits: BlockHeaderBits,
 }
 
-impl From<StartingBlockHeader> for SPVVerificationHeader {
-    fn from(value: StartingBlockHeader) -> Self {
-        let hash = &value.hash.unwrap_or_default();
-        let bits = value.bits.unwrap_or(0);
-
-        Self {
-            height: value.height,
-            hash: H256::from_str(hash).unwrap_or_default(),
-            time: value.time,
-            bits: BlockHeaderBits::Compact(bits.into()),
-        }
-    }
-}
-
 impl From<BlockHeader> for SPVVerificationHeader {
     fn from(value: BlockHeader) -> Self {
         Self {
@@ -145,4 +138,36 @@ impl From<BlockHeader> for SPVVerificationHeader {
             bits: value.bits,
         }
     }
+}
+
+pub(crate) fn parse_verification_header(
+    coin: &str,
+    header: &StartingBlockHeader,
+) -> Result<SPVVerificationHeader, SPVError> {
+    let height = header.height;
+    let hash = H256::from_str(
+        header
+            .hash
+            .as_ref()
+            .ok_or("")
+            .map_err(|_| SPVError::BlockHeaderBitsError {
+                coin: coin.to_string(),
+                height,
+            })?,
+    )
+    .map_err(|_| SPVError::BlockHeaderHashError {
+        coin: coin.to_string(),
+        height,
+    })?;
+    let Some(bits) = header.bits else { return Err(SPVError::BlockHeaderBitsError {
+        coin: coin.to_string(),
+        height,
+    }) };
+
+    Ok(SPVVerificationHeader {
+        height,
+        hash: hash.reversed(),
+        time: header.time,
+        bits: BlockHeaderBits::Compact(bits.into()),
+    })
 }

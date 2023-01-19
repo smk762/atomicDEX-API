@@ -4329,12 +4329,11 @@ fn test_block_header_utxo_loop() {
     let spv_conf = json!({
         "starting_block_header": {
             "height": 1,
-            "hash":Some("f5cd86754336c59b0f9c81cc3be2567138a5214e8ca014c0d5f2d5f8a44b710c".to_string()),
+            "hash":Some("0c714ba4f8d5f2d5c014a08c4e21a5387156e23bcc819c0f9bc536437586cdf5".to_string()),
             "time": 1564482125,
             "bits": Some(537857807)
         }
     });
-    //f5cd86754336c59b0f9c81cc3be2567138a5214e8ca014c0d5f2d5f8a44b710c
     let loop_fut = async move {
         block_header_utxo_loop(
             arc.downgrade(),
