@@ -87,7 +87,7 @@ fn get_block_height_by_hash(for_coin: &str) -> Result<String, BlockHeaderStorage
     Ok(sql)
 }
 
-fn remove_block_headers_from_storage(for_coin: &str, keep_from_block: i64) -> Result<String, BlockHeaderStorageError> {
+fn remove_headers_to_height_sql(for_coin: &str, keep_from_block: u64) -> Result<String, BlockHeaderStorageError> {
     let table_name = get_table_name_and_validate(for_coin)?;
     let sql = format!("DELETE FROM {table_name} WHERE block_height < {keep_from_block};",);
 
@@ -303,21 +303,17 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         })
     }
 
-    async fn remove_block_headers_from_storage(&self, keep_from_block: i64) -> Result<(), BlockHeaderStorageError> {
-        if keep_from_block < 1 {
-            return Ok(());
-        }
-
+    async fn remove_headers_to_height(&self, height: u64) -> Result<(), BlockHeaderStorageError> {
         let coin = self.ticker.clone();
         let selfi = self.clone();
-        let sql = remove_block_headers_from_storage(&coin, keep_from_block)?;
+        let sql = remove_headers_to_height_sql(&coin, height)?;
 
         async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
             conn.execute(&sql, NO_PARAMS)
                 .map_err(|e| BlockHeaderStorageError::UnableToDeleteHeaders {
                     coin: coin.clone(),
-                    keep_from_block,
+                    height,
                     reason: e.to_string(),
                 })?;
             Ok(())
@@ -507,7 +503,7 @@ mod sql_block_headers_storage_tests {
         assert!(!storage.is_table_empty(&table));
 
         // Remove 2 headers from storage.
-        block_on(storage.remove_block_headers_from_storage(201593)).unwrap();
+        block_on(storage.remove_headers_to_height(201593)).unwrap();
 
         // Try to retrieve removed headers from db.
         let headers_count = block_on(storage.get_block_header(20159)).unwrap();

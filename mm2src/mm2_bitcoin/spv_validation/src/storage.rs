@@ -22,11 +22,11 @@ pub enum BlockHeaderStorageError {
         reason: String,
     },
     #[display(
-        fmt = "Unable to delete  block headers < ({keep_from_block} + 1) from storage for {coin} - reason: \
+        fmt = "Unable to delete  block headers <= ({height} + 1) from storage for {coin} - reason: \
     {reason}"
     )]
     UnableToDeleteHeaders {
-        keep_from_block: i64,
+        height: u64,
         coin: String,
         reason: String,
     },
@@ -78,5 +78,5 @@ pub trait BlockHeaderStorageOps: Send + Sync + 'static {
 
     async fn get_block_height_by_hash(&self, hash: H256) -> Result<Option<i64>, BlockHeaderStorageError>;
 
-    async fn remove_block_headers_from_storage(&self, keep_from_block: i64) -> Result<(), BlockHeaderStorageError>;
+    async fn remove_headers_to_height(&self, height: u64) -> Result<(), BlockHeaderStorageError>;
 }

@@ -553,7 +553,7 @@ pub struct UtxoCoinConf {
     /// The name of the coin with which Trezor wallet associates this asset.
     pub trezor_coin: Option<String>,
     /// Whether to verify swaps and lightning transactions using spv or not. When enabled, block headers will be retrieved, verified according
-    /// to block_headers_verification_params and stored in the DB. Can be false if the coin's RPC server is trusted.
+    /// to `SPVConf::validation_params` and stored in the DB. Can be false if the coin's RPC server is trusted.
     pub spv_conf: Option<SPVConf>,
     /// Derivation path of the coin.
     /// This derivation path consists of `purpose` and `coin_type` only

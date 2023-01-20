@@ -374,7 +374,7 @@ async fn calculate_and_remove_headers_from_db(
     let max_stored_block_headers = max_stored_block_headers.get();
     if to_block_height > max_stored_block_headers {
         return storage
-            .remove_block_headers_from_storage((to_block_height - max_stored_block_headers + 1) as i64)
+            .remove_headers_to_height(to_block_height - max_stored_block_headers + 1)
             .await;
     };
 
