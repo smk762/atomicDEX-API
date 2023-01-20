@@ -6,16 +6,17 @@ use serde::Deserialize;
 use std::num::NonZeroU64;
 use std::str::FromStr;
 
+/// Custom SPV starting block header configuration
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartingBlockHeader {
-    // Starting block height
+    /// Valid u32 representation of the block height.
     pub height: u64,
-    // Hash of the starting block header.
-    pub hash: Option<String>,
-    // Time of the starting block header.
+    /// Valid String representation of the block header hash.
+    pub hash: String,
+    /// Valid u32 representation of the date the block is mined in epoch.
     pub time: u32,
-    // Bits of the starting block header.
-    pub bits: Option<u32>,
+    /// Valid u32 representation of the bits of the block header.
+    pub bits: u32,
 }
 
 fn validate_btc_max_stored_headers_value(max_stored_block_headers: u64) -> Result<(), SPVError> {
@@ -40,22 +41,11 @@ fn validate_btc_starting_header_height(coin: &str, height: u64) -> Result<(), SP
     Ok(())
 }
 
-fn validate_btc_starting_header_bits_hash(coin: &str, header: &Option<StartingBlockHeader>) -> Result<(), SPVError> {
-    if let Some(header) = header {
-        if header.bits.is_none() {
-            return Err(SPVError::BlockHeaderBitsError {
-                coin: coin.to_string(),
-                height: header.height,
-            });
-        }
-
-        if header.hash.clone().unwrap_or_default().is_empty() {
-            return Err(SPVError::BlockHeaderBitsError {
-                coin: coin.to_string(),
-                height: header.height,
-            });
-        }
-    }
+fn validate_btc_starting_header_hash(coin: &str, header: &StartingBlockHeader) -> Result<(), SPVError> {
+    H256::from_str(&header.hash).map_err(|_| SPVError::BlockHeaderHashError {
+        coin: coin.to_string(),
+        height: header.height,
+    })?;
 
     Ok(())
 }
@@ -71,7 +61,7 @@ pub struct BlockHeaderValidationParams {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SPVConf {
     /// Where to start block headers sync from.
-    pub starting_block_header: Option<StartingBlockHeader>,
+    pub starting_block_header: StartingBlockHeader,
     /// Max number of block headers to be stored in db, when reached, old header will be deleted.
     pub max_stored_block_headers: Option<NonZeroU64>,
     /// The parameters that specify how the coin block headers should be validated. If None,
@@ -80,30 +70,13 @@ pub struct SPVConf {
 }
 
 impl SPVConf {
-    pub fn starting_block_header(&self) -> Result<StartingBlockHeader, SPVError> {
-        if let Some(header) = &self.starting_block_header {
-            return Ok(header.clone());
-        };
-
-        Err(SPVError::StartingBlockHeaderError(
-            "Starting block header is missing from coin conf".to_string(),
-        ))
-    }
-
-    pub fn starting_block_height(&self) -> u64 {
-        self.starting_block_header
-            .as_ref()
-            .map(|e| e.height)
-            .unwrap_or_default()
-    }
-
     pub fn validate_spv_conf(&self, coin: &str) -> Result<(), SPVError> {
+        validate_btc_starting_header_hash(coin, &self.starting_block_header)?;
+
         if let Some(params) = &self.validation_params {
             if let Some(DifficultyAlgorithm::BitcoinMainnet) = &params.difficulty_algorithm {
                 // Validate that starting block header is a retarget header.
-                validate_btc_starting_header_height(coin, self.starting_block_height())?;
-                // Validate that starting block header bits is not empty.
-                validate_btc_starting_header_bits_hash(coin, &self.starting_block_header)?;
+                validate_btc_starting_header_height(coin, self.starting_block_header.height)?;
                 // Validate that max_stored_headers_value is always greater than retarget interval.
                 if let Some(max) = self.max_stored_block_headers {
                     validate_btc_max_stored_headers_value(max.into())?;
@@ -119,13 +92,13 @@ impl SPVConf {
 /// verifications.
 #[derive(Clone)]
 pub struct SPVVerificationHeader {
-    // Starting block height
+    /// Starting block height
     pub height: u64,
-    // Hash of the starting block header.
+    /// Hash of the starting block header.
     pub hash: H256,
-    // Time of the starting block header.
+    /// Time of the starting block header.
     pub time: u32,
-    // Bits of the starting block header.
+    /// Bits of the starting block header.
     pub bits: BlockHeaderBits,
 }
 
@@ -145,29 +118,15 @@ pub(crate) fn parse_verification_header(
     header: &StartingBlockHeader,
 ) -> Result<SPVVerificationHeader, SPVError> {
     let height = header.height;
-    let hash = H256::from_str(
-        header
-            .hash
-            .as_ref()
-            .ok_or("")
-            .map_err(|_| SPVError::BlockHeaderHashError {
-                coin: coin.to_string(),
-                height,
-            })?,
-    )
-    .map_err(|_| SPVError::BlockHeaderHashError {
+    let hash = H256::from_str(&header.hash).map_err(|_| SPVError::BlockHeaderHashError {
         coin: coin.to_string(),
         height,
     })?;
-    let Some(bits) = header.bits else { return Err(SPVError::BlockHeaderBitsError {
-        coin: coin.to_string(),
-        height,
-    }) };
 
     Ok(SPVVerificationHeader {
         height,
         hash: hash.reversed(),
         time: header.time,
-        bits: BlockHeaderBits::Compact(bits.into()),
+        bits: BlockHeaderBits::Compact(header.bits.into()),
     })
 }

@@ -14,7 +14,6 @@ use futures::compat::Future01CompatExt;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
 #[cfg(test)] use mocktopus::macros::*;
-use protobuf::reflect::ProtobufValue;
 use script::Builder;
 use serde_json::Value as Json;
 use spv_validation::conf::SPVConf;
@@ -270,7 +269,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         let storage = client.block_headers_storage();
         let from_block_height = match storage.get_last_block_height().await {
             Ok(Some(height)) => height,
-            Ok(None) => spv_conf.starting_block_height(),
+            Ok(None) => spv_conf.starting_block_header.height,
             Err(e) => {
                 error!("Error {e:?} on getting the height of the last stored {ticker} header in DB!",);
                 sync_status_loop_handle.notify_on_temp_error(e.to_string());
@@ -304,6 +303,13 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
             sync_status_loop_handle.notify_sync_finished(to_block_height);
             Timer::sleep(args.success_sleep).await;
             continue;
+        }
+
+        // Check if we need to max the number of headers to be stored in storage.
+        if let Some(max_stored_block_headers) = spv_conf.max_stored_block_headers {
+            calculate_and_remove_headers_from_db(storage, to_block_height, max_stored_block_headers)
+                .await
+                .error_log();
         }
 
         sync_status_loop_handle.notify_blocks_headers_sync_status(from_block_height + 1, to_block_height);
@@ -355,11 +361,6 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
             break;
         };
 
-        // Check if we need to max the number of headers to be stored in storage.
-        calculate_and_remove_headers_from_db(storage, spv_conf.max_stored_block_headers, block_registry.len() as u64)
-            .await
-            .error_log();
-
         let sleep = args.success_sleep;
         ok_or_continue_after_sleep!(storage.add_block_headers_to_storage(block_registry).await, sleep);
     }
@@ -367,32 +368,14 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
 
 async fn calculate_and_remove_headers_from_db(
     storage: &BlockHeaderStorage,
-    max_stored_block_headers: Option<NonZeroU64>,
-    block_registry_len: u64,
+    to_block_height: u64,
+    max_stored_block_headers: NonZeroU64,
 ) -> Result<(), BlockHeaderStorageError> {
-    if let Some(max_stored_block_headers) = max_stored_block_headers {
-        let headers_in_storage_count = storage.get_total_block_headers_from_storage().await?;
-        let current_total = block_registry_len + headers_in_storage_count;
-        let max_stored_block_headers = max_stored_block_headers.get();
-
-        if current_total >= max_stored_block_headers {
-            let mut headers_to_remove = 0;
-
-            if current_total > max_stored_block_headers {
-                headers_to_remove = current_total - max_stored_block_headers
-            }
-
-            if current_total == max_stored_block_headers {
-                headers_to_remove = max_stored_block_headers - block_registry_len
-            };
-
-            drop_mutability!(headers_to_remove);
-            if headers_to_remove.is_non_zero() {
-                return storage
-                    .remove_block_headers_from_storage(headers_to_remove as i64)
-                    .await;
-            }
-        }
+    let max_stored_block_headers = max_stored_block_headers.get();
+    if to_block_height > max_stored_block_headers {
+        return storage
+            .remove_block_headers_from_storage((to_block_height - max_stored_block_headers + 1) as i64)
+            .await;
     };
 
     Ok(())

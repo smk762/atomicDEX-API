@@ -4329,10 +4329,10 @@ fn test_block_header_utxo_loop() {
     let spv_conf = json!({
         "starting_block_header": {
             "height": 1,
-            "hash":Some("0c714ba4f8d5f2d5c014a08c4e21a5387156e23bcc819c0f9bc536437586cdf5".to_string()),
+            "hash": "0c714ba4f8d5f2d5c014a08c4e21a5387156e23bcc819c0f9bc536437586cdf5".to_string(),
             "time": 1564482125,
-            "bits": Some(537857807)
-        }
+            "bits": 537857807
+        },
     });
     let loop_fut = async move {
         block_header_utxo_loop(
@@ -4406,12 +4406,12 @@ fn test_spv_conf_with_verification() {
     let hash = "00000000a141216a896c54f211301c436e557a8d55900637bbdce14c6c7bddef";
     // test for good retarget_block_header_height
     let mut spv_conf = SPVConf {
-        starting_block_header: Some(StartingBlockHeader {
+        starting_block_header: StartingBlockHeader {
             height: 4032,
-            hash: Some(hash.to_string()),
+            hash: hash.to_string(),
             time: 1234466190,
-            bits: Some(486604799),
-        }),
+            bits: 486604799,
+        },
         max_stored_block_headers: None,
         validation_params: Some(BlockHeaderValidationParams {
             difficulty_check: false,
@@ -4422,12 +4422,12 @@ fn test_spv_conf_with_verification() {
     assert!(spv_conf.validate_spv_conf("BTC").is_ok());
 
     // test for bad retarget_block_header_height
-    spv_conf.starting_block_header = Some(StartingBlockHeader {
+    spv_conf.starting_block_header = StartingBlockHeader {
         height: 4037,
-        hash: Some(hash.to_string()),
+        hash: hash.to_string(),
         time: 1234470475,
-        bits: Some(486604799),
-    });
+        bits: 486604799,
+    };
     let validate = spv_conf.validate_spv_conf("BTC").err().unwrap();
     if let SPVError::WrongRetargetHeight { coin, expected_height } = validate {
         assert_eq!(coin, "BTC");

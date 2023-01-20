@@ -56,9 +56,7 @@ pub enum SPVError {
     HeaderStorageError(BlockHeaderStorageError),
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
-    #[display(fmt = "Error parsing or empty starting block header `bits` in spv config for {coin} - height: {height}")]
-    BlockHeaderBitsError { coin: String, height: u64 },
-    #[display(fmt = "Error parsing or empty starting block header `hash` in spv config for {coin} - height: {height}")]
+    #[display(fmt = "Error parsing starting block header `hash` in spv config for {coin} - height: {height}")]
     BlockHeaderHashError { coin: String, height: u64 },
     #[display(
         fmt = "Wrong retarget block header height in config for: {coin} expected block header height : 
@@ -341,8 +339,8 @@ pub async fn validate_headers(
     storage: &dyn BlockHeaderStorageOps,
     conf: &SPVConf,
 ) -> Result<(), SPVError> {
-    let mut previous_header = if previous_height == conf.starting_block_height() {
-        parse_verification_header(coin, &conf.starting_block_header()?)?
+    let mut previous_header = if previous_height == conf.starting_block_header.height {
+        parse_verification_header(coin, &conf.starting_block_header)?
     } else {
         storage
             .get_block_header(previous_height)
@@ -372,7 +370,7 @@ pub async fn validate_headers(
             }
 
             if let Some(algorithm) = &params.difficulty_algorithm {
-                let retarget_header = parse_verification_header(coin, &conf.starting_block_header()?)?;
+                let retarget_header = parse_verification_header(coin, &conf.starting_block_header)?;
                 let next_block_bits = next_block_bits(
                     coin,
                     header.time,
@@ -602,12 +600,12 @@ mod tests {
             difficulty_algorithm: None,
         };
         let conf = SPVConf {
-            starting_block_header: Some(StartingBlockHeader {
+            starting_block_header: StartingBlockHeader {
                 height: 0,
-                hash: None,
-                time: 0,
-                bits: None,
-            }),
+                hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
+                time: 486604799,
+                bits: 1231006500,
+            },
             max_stored_block_headers: None,
             validation_params: Some(params),
         };
@@ -633,12 +631,12 @@ mod tests {
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinTestnet),
         };
         let conf = SPVConf {
-            starting_block_header: Some(StartingBlockHeader {
+            starting_block_header: StartingBlockHeader {
                 height: 0,
-                hash: Some("".to_string()),
-                time: 0,
-                bits: None,
-            }),
+                hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
+                time: 486604799,
+                bits: 1231006500,
+            },
             max_stored_block_headers: None,
             validation_params: Some(params),
         };

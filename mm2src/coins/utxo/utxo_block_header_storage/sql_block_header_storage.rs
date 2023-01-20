@@ -87,19 +87,9 @@ fn get_block_height_by_hash(for_coin: &str) -> Result<String, BlockHeaderStorage
     Ok(sql)
 }
 
-fn get_total_block_headers_from_storage(for_coin: &str) -> Result<String, BlockHeaderStorageError> {
+fn remove_block_headers_from_storage(for_coin: &str, keep_from_block: i64) -> Result<String, BlockHeaderStorageError> {
     let table_name = get_table_name_and_validate(for_coin)?;
-    let sql = format!("SELECT COUNT(*) as blocks_count FROM {};", table_name);
-
-    Ok(sql)
-}
-
-fn remove_block_headers_from_storage(for_coin: &str, limit: i64) -> Result<String, BlockHeaderStorageError> {
-    let table_name = get_table_name_and_validate(for_coin)?;
-    let sql = format!(
-        "DELETE FROM {table_name} WHERE block_height IN
-        (SELECT block_height FROM {table_name} limit {limit});",
-    );
+    let sql = format!("DELETE FROM {table_name} WHERE block_height < {keep_from_block};",);
 
     Ok(sql)
 }
@@ -313,43 +303,21 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         })
     }
 
-    async fn get_total_block_headers_from_storage(&self) -> Result<u64, BlockHeaderStorageError> {
-        let coin = self.ticker.clone();
-        let selfi = self.clone();
-        let sql = get_total_block_headers_from_storage(&coin)?;
-
-        async_blocking(move || {
-            let conn = selfi.conn.lock().unwrap();
-            let mut sql_statement = conn.prepare(&sql)?;
-            let mut count = sql_statement.query(NO_PARAMS).unwrap();
-            count
-                .next()?
-                .unwrap()
-                .get(0)
-                .map(|res: Option<i64>| res.unwrap_or_default() as u64)
-        })
-        .await
-        .map_err(|e| BlockHeaderStorageError::GetFromStorageError {
-            coin: coin.clone(),
-            reason: e.to_string(),
-        })
-    }
-
-    async fn remove_block_headers_from_storage(&self, limit: i64) -> Result<(), BlockHeaderStorageError> {
-        if limit < 1 {
+    async fn remove_block_headers_from_storage(&self, keep_from_block: i64) -> Result<(), BlockHeaderStorageError> {
+        if keep_from_block < 1 {
             return Ok(());
         }
 
         let coin = self.ticker.clone();
         let selfi = self.clone();
-        let sql = remove_block_headers_from_storage(&coin, limit)?;
+        let sql = remove_block_headers_from_storage(&coin, keep_from_block)?;
 
         async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
             conn.execute(&sql, NO_PARAMS)
                 .map_err(|e| BlockHeaderStorageError::UnableToDeleteHeaders {
                     coin: coin.clone(),
-                    limit,
+                    keep_from_block,
                     reason: e.to_string(),
                 })?;
             Ok(())
@@ -512,37 +480,6 @@ mod sql_block_headers_storage_tests {
     }
 
     #[test]
-    fn test_get_total_block_headers_from_storage() {
-        let for_coin = "get";
-        let storage = SqliteBlockHeadersStorage::in_memory(for_coin.into());
-        let table = block_headers_cache_table(for_coin);
-        block_on(storage.init()).unwrap();
-
-        let initialized = block_on(storage.is_initialized_for()).unwrap();
-        assert!(initialized);
-
-        let mut headers = HashMap::with_capacity(2);
-
-        // https://live.blockcypher.com/btc-testnet/block/00000000961a9d117feb57e516e17217207a849bf6cdfce529f31d9a96053530/
-        let block_header: BlockHeader = "02000000ea01a61a2d7420a1b23875e40eb5eb4ca18b378902c8e6384514ad0000000000c0c5a1ae80582b3fe319d8543307fa67befc2a734b8eddb84b1780dfdf11fa2b20e71353ffff001d00805fe0".into();
-        headers.insert(201595, block_header);
-
-        // https://live.blockcypher.com/btc-testnet/block/0000000000ad144538e6c80289378ba14cebb50ee47538b2a120742d1aa601ea/
-        let block_header: BlockHeader = "02000000cbed7fd98f1f06e85c47e13ff956533642056be45e7e6b532d4d768f00000000f2680982f333fcc9afa7f9a5e2a84dc54b7fe10605cd187362980b3aa882e9683be21353ab80011c813e1fc0".into();
-        headers.insert(201594, block_header);
-
-        // https://live.blockcypher.com/btc-testnet/block/0000000000ad144538e6c80289378ba14cebb50ee47538b2a120742d1aa601ea/
-        let block_header: BlockHeader = "020000001f38c8e30b30af912fbd4c3e781506713cfb43e73dff6250348e060000000000afa8f3eede276ccb4c4ee649ad9823fc181632f262848ca330733e7e7e541beb9be51353ffff001d00a63037".into();
-        headers.insert(201593, block_header);
-
-        block_on(storage.add_block_headers_to_storage(headers)).unwrap();
-        assert!(!storage.is_table_empty(&table));
-
-        let headers_count = block_on(storage.get_total_block_headers_from_storage()).unwrap();
-        assert_eq!(headers_count, 3);
-    }
-
-    #[test]
     fn test_remove_block_headers_from_storage() {
         let for_coin = "get";
         let storage = SqliteBlockHeadersStorage::in_memory(for_coin.into());
@@ -570,11 +507,11 @@ mod sql_block_headers_storage_tests {
         assert!(!storage.is_table_empty(&table));
 
         // Remove 2 headers from storage.
-        block_on(storage.remove_block_headers_from_storage(2)).unwrap();
+        block_on(storage.remove_block_headers_from_storage(201593)).unwrap();
 
-        // Get total block headers in storage..should be 1 after removing 2!
-        let headers_count = block_on(storage.get_total_block_headers_from_storage()).unwrap();
-        assert_eq!(headers_count, 1);
+        // Try to retrieve removed headers from db.
+        let headers_count = block_on(storage.get_block_header(20159)).unwrap();
+        assert!(headers_count.is_none());
 
         // Last height should be 201595
         let last_block_height = block_on(storage.get_last_block_height()).unwrap();

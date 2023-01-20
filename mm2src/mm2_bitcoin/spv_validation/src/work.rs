@@ -266,8 +266,6 @@ pub(crate) mod tests {
             Ok(None)
         }
 
-        async fn get_total_block_headers_from_storage(&self) -> Result<u64, BlockHeaderStorageError> { Ok(0) }
-
         async fn remove_block_headers_from_storage(&self, _limit: i64) -> Result<(), BlockHeaderStorageError> { Ok(()) }
     }
 
