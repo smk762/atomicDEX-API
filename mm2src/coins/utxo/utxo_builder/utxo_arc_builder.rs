@@ -9,7 +9,7 @@ use crate::{DerivationMethod, PrivKeyBuildPolicy, UtxoActivationParams};
 use async_trait::async_trait;
 use chain::TransactionOutput;
 use common::executor::{AbortSettings, SpawnAbortable, Timer};
-use common::log::{error, info, warn, LogOnError};
+use common::log::{error, info, warn};
 use futures::compat::Future01CompatExt;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
@@ -110,10 +110,7 @@ where
         let result_coin = (self.constructor)(utxo_arc.clone());
 
         if let (Some(spv_conf), Some(sync_handle)) = (spv_conf, sync_status_loop_handle) {
-            // Validate SPVConf starting_block_header if provided.
-            spv_conf
-                .validate_spv_conf(self.ticker)
-                .map_to_mm(UtxoCoinBuildError::SPVError)?;
+            spv_conf.validate(self.ticker).map_to_mm(UtxoCoinBuildError::SPVError)?;
 
             let block_count = result_coin
                 .as_ref()
@@ -307,9 +304,12 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
 
         // Check if we need to max the number of headers to be stored in storage.
         if let Some(max_stored_block_headers) = spv_conf.max_stored_block_headers {
-            calculate_and_remove_headers_from_db(storage, to_block_height, max_stored_block_headers)
-                .await
-                .error_log();
+            if let Err(err) =
+                calculate_and_remove_headers_from_db(storage, to_block_height, max_stored_block_headers).await
+            {
+                sync_status_loop_handle.notify_on_temp_error(err.to_string());
+                Timer::sleep(args.error_sleep).await;
+            };
         }
 
         sync_status_loop_handle.notify_blocks_headers_sync_status(from_block_height + 1, to_block_height);
@@ -368,15 +368,14 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
 
 async fn calculate_and_remove_headers_from_db(
     storage: &BlockHeaderStorage,
-    to_block_height: u64,
-    max_stored_block_headers: NonZeroU64,
+    last_height_to_be_added: u64,
+    max_allowed_headers: NonZeroU64,
 ) -> Result<(), BlockHeaderStorageError> {
-    let max_stored_block_headers = max_stored_block_headers.get();
-    if to_block_height > max_stored_block_headers {
-        return storage
-            .remove_headers_to_height(to_block_height - max_stored_block_headers + 1)
-            .await;
-    };
+    let max_allowed_headers = max_allowed_headers.get();
+    if last_height_to_be_added > max_allowed_headers {
+        let height = last_height_to_be_added - max_allowed_headers;
+        return storage.remove_headers_to_height(height).await;
+    }
 
     Ok(())
 }

@@ -11,7 +11,6 @@ use mm2_err_handle::prelude::*;
 use script::SignatureVersion;
 use serde_json::{self as json, Value as Json};
 use spv_validation::conf::SPVConf;
-use spv_validation::helpers_validation::SPVError;
 use std::num::NonZeroU64;
 use std::sync::atomic::AtomicBool;
 
@@ -19,8 +18,6 @@ pub type UtxoConfResult<T> = Result<T, MmError<UtxoConfError>>;
 
 #[derive(Debug, Display)]
 pub enum UtxoConfError {
-    #[display(fmt = "SPV params verificaiton failed. Error: {_0}")]
-    SPVVerificationFailed(SPVError),
     #[display(fmt = "'name' field is not found in config")]
     CurrencyNameIsNotSet,
     #[display(fmt = "'derivation_path' field is not found in config")]

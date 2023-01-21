@@ -5,7 +5,6 @@ use crate::utxo::rpc_clients::{ElectrumClient, ElectrumClientImpl, ElectrumRpcRe
 use crate::utxo::tx_cache::{UtxoVerboseCacheOps, UtxoVerboseCacheShared};
 use crate::utxo::utxo_block_header_storage::BlockHeaderStorage;
 use crate::utxo::utxo_builder::utxo_conf_builder::{UtxoConfBuilder, UtxoConfError};
-use crate::utxo::utxo_builder::UtxoConfResult;
 use crate::utxo::{output_script, utxo_common, ElectrumBuilderArgs, ElectrumProtoVerifier, ElectrumProtoVerifierEvent,
                   RecentlySpentOutPoints, TxFee, UtxoCoinConf, UtxoCoinFields, UtxoHDAccount, UtxoHDWallet,
                   UtxoRpcMode, UtxoSyncStatus, UtxoSyncStatusLoopHandle, DEFAULT_GAP_LIMIT, UTXO_DUST_AMOUNT};
@@ -668,22 +667,17 @@ pub trait UtxoCoinBuilderCommonOps {
         Option<UtxoSyncStatusLoopHandle>,
         Option<AsyncMutex<AsyncReceiver<UtxoSyncStatus>>>,
     ) {
-        if let Ok(Some(_)) = self.spv_conf() {
-            if !self.activation_params().mode.is_native() {
-                let (sync_status_notifier, sync_watcher) = channel(1);
-                return (
-                    Some(UtxoSyncStatusLoopHandle::new(sync_status_notifier)),
-                    Some(AsyncMutex::new(sync_watcher)),
-                );
-            }
-        }
+        if json::from_value::<SPVConf>(self.conf()["spv_conf"].clone()).is_ok()
+            && !self.activation_params().mode.is_native()
+        {
+            let (sync_status_notifier, sync_watcher) = channel(1);
+            return (
+                Some(UtxoSyncStatusLoopHandle::new(sync_status_notifier)),
+                Some(AsyncMutex::new(sync_watcher)),
+            );
+        };
 
         (None, None)
-    }
-
-    fn spv_conf(&self) -> UtxoConfResult<Option<SPVConf>> {
-        json::from_value(self.conf()["spv_conf"].clone())
-            .map_to_mm(|e| UtxoConfError::ErrorDeserializingSPVConf(e.to_string()))
     }
 }
 

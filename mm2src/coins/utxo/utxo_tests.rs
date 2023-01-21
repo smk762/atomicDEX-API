@@ -4419,7 +4419,7 @@ fn test_spv_conf_with_verification() {
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
         }),
     };
-    assert!(spv_conf.validate_spv_conf("BTC").is_ok());
+    assert!(spv_conf.validate("BTC").is_ok());
 
     // test for bad retarget_block_header_height
     spv_conf.starting_block_header = StartingBlockHeader {
@@ -4428,7 +4428,7 @@ fn test_spv_conf_with_verification() {
         time: 1234470475,
         bits: 486604799,
     };
-    let validate = spv_conf.validate_spv_conf("BTC").err().unwrap();
+    let validate = spv_conf.validate("BTC").err().unwrap();
     if let SPVError::WrongRetargetHeight { coin, expected_height } = validate {
         assert_eq!(coin, "BTC");
         assert_eq!(expected_height, 4032);
