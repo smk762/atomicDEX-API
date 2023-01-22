@@ -378,7 +378,7 @@ pub async fn validate_headers(
                     previous_height as u32,
                     storage,
                     algorithm,
-                    &retarget_header,
+                    (&retarget_header, conf.starting_block_header.height),
                 )
                 .await?;
 

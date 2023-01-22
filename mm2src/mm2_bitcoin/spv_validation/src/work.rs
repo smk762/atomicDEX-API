@@ -52,7 +52,7 @@ pub async fn next_block_bits(
     last_block_height: u32,
     storage: &dyn BlockHeaderStorageOps,
     algorithm: &DifficultyAlgorithm,
-    retarget_header: &SPVVerificationHeader,
+    retarget_header: (&SPVVerificationHeader, u64),
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     match algorithm {
         DifficultyAlgorithm::BitcoinMainnet => {
@@ -87,7 +87,7 @@ async fn btc_retarget_bits(
     height: u32,
     last_block_header: SPVVerificationHeader,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_header: &SPVVerificationHeader,
+    retarget_header: (&SPVVerificationHeader, u64),
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits_compact: Compact = MAX_BITS_BTC.into();
 
@@ -96,8 +96,8 @@ async fn btc_retarget_bits(
         return Ok(BlockHeaderBits::Compact(max_bits_compact));
     }
 
-    let retarget_header = if retarget_ref == retarget_header.height {
-        retarget_header.clone()
+    let retarget_header = if retarget_ref == retarget_header.1 {
+        retarget_header.0.clone()
     } else {
         storage
             .get_block_header(retarget_ref)
@@ -134,7 +134,7 @@ async fn btc_mainnet_next_block_bits(
     last_block_header: SPVVerificationHeader,
     last_block_height: u32,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_header: &SPVVerificationHeader,
+    retarget_header: (&SPVVerificationHeader, u64),
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     if last_block_height == 0 {
         return Ok(BlockHeaderBits::Compact(MAX_BITS_BTC.into()));
@@ -156,7 +156,7 @@ async fn btc_testnet_next_block_bits(
     last_block_header: SPVVerificationHeader,
     last_block_height: u32,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_header: &SPVVerificationHeader,
+    retarget_header: (&SPVVerificationHeader, u64),
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits = BlockHeaderBits::Compact(MAX_BITS_BTC.into());
     if last_block_height == 0 {
@@ -275,8 +275,8 @@ pub(crate) mod tests {
 
         let last_header: BlockHeader = "000000201d758432ecd495a2177b44d3fe6c22af183461a0b9ea0d0000000000000000008283a1dfa795d9b68bd8c18601e443368265072cbf8c76bfe58de46edd303798035de95d3eb2151756fdb0e8".into();
 
+        // genesis block header data.
         let verification_header = SPVVerificationHeader {
-            height: 0,
             hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
             time: 1231006500,
             bits: BlockHeaderBits::Compact(486604799.into()),
@@ -287,7 +287,7 @@ pub(crate) mod tests {
             last_header.into(),
             606815,
             &storage,
-            &verification_header,
+            (&verification_header, 0),
         ))
         .unwrap();
 
@@ -301,7 +301,7 @@ pub(crate) mod tests {
             last_header.into(),
             4031,
             &storage,
-            &verification_header,
+            (&verification_header, 0),
         ))
         .unwrap();
 
@@ -316,7 +316,7 @@ pub(crate) mod tests {
             last_header.into(),
             744014,
             &storage,
-            &verification_header,
+            (&verification_header, 0),
         ))
         .unwrap();
 
@@ -328,7 +328,6 @@ pub(crate) mod tests {
         let storage = TestBlockHeadersStorage { ticker: "tBTC".into() };
 
         let verification_header = SPVVerificationHeader {
-            height: 0,
             hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
             time: 1231006500,
             bits: BlockHeaderBits::Compact(486604799.into()),
@@ -345,7 +344,7 @@ pub(crate) mod tests {
             last_header.into(),
             201595,
             &storage,
-            &verification_header,
+            (&verification_header, 0),
         ))
         .unwrap();
 
@@ -362,7 +361,7 @@ pub(crate) mod tests {
             last_header.into(),
             201594,
             &storage,
-            &verification_header,
+            (&verification_header, 0),
         ))
         .unwrap();
 
@@ -381,7 +380,7 @@ pub(crate) mod tests {
             last_header.into(),
             201599,
             &storage,
-            &verification_header,
+            (&verification_header, 0),
         ))
         .unwrap();
 

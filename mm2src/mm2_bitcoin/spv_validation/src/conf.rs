@@ -9,16 +9,17 @@ use std::str::FromStr;
 /// Custom SPV starting block header configuration
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartingBlockHeader {
-    /// Valid u32 representation of the block height.
+    /// Valid `u32` representation of the block `heigh`t.
     pub height: u64,
-    /// Valid String representation of the block header hash.
+    /// Valid `String` representation of the block header `hash`.
     pub hash: String,
-    /// Valid u32 representation of the date the block is mined in epoch.
+    /// Valid `u32` representation of the `date` the block is mined in epoch.
     pub time: u32,
-    /// Valid u32 representation of the bits of the block header.
+    /// Valid `u32` representation of `bits` for the block header.
     pub bits: u32,
 }
 
+/// Validate that `max_stored_headers_value` is always greater than `retarget interval`.
 fn validate_btc_max_stored_headers_value(max_stored_block_headers: u64) -> Result<(), SPVError> {
     if RETARGETING_INTERVAL > max_stored_block_headers as u32 {
         return Err(SPVError::StartingBlockHeaderError(format!(
@@ -29,6 +30,7 @@ fn validate_btc_max_stored_headers_value(max_stored_block_headers: u64) -> Resul
     Ok(())
 }
 
+/// Validate that starting block header is a retarget header.
 fn validate_btc_starting_header_height(coin: &str, height: u64) -> Result<(), SPVError> {
     let is_retarget = height % RETARGETING_INTERVAL as u64;
     if is_retarget != 0 {
@@ -41,7 +43,8 @@ fn validate_btc_starting_header_height(coin: &str, height: u64) -> Result<(), SP
     Ok(())
 }
 
-fn validate_btc_starting_header_hash(coin: &str, header: &StartingBlockHeader) -> Result<(), SPVError> {
+/// Validate that starting_header_hash is a valid `H256`.
+fn validate_starting_header_hash(coin: &str, header: &StartingBlockHeader) -> Result<(), SPVError> {
     H256::from_str(&header.hash).map_err(|_| SPVError::BlockHeaderHashError {
         coin: coin.to_string(),
         height: header.height,
@@ -70,14 +73,12 @@ pub struct SPVConf {
 }
 
 impl SPVConf {
-    pub fn validate_spv_conf(&self, coin: &str) -> Result<(), SPVError> {
-        validate_btc_starting_header_hash(coin, &self.starting_block_header)?;
+    pub fn validate(&self, coin: &str) -> Result<(), SPVError> {
+        validate_starting_header_hash(coin, &self.starting_block_header)?;
 
         if let Some(params) = &self.validation_params {
             if let Some(DifficultyAlgorithm::BitcoinMainnet) = &params.difficulty_algorithm {
-                // Validate that starting block header is a retarget header.
                 validate_btc_starting_header_height(coin, self.starting_block_header.height)?;
-                // Validate that max_stored_headers_value is always greater than retarget interval.
                 if let Some(max) = self.max_stored_block_headers {
                     validate_btc_max_stored_headers_value(max.into())?;
                 }
@@ -92,8 +93,6 @@ impl SPVConf {
 /// verifications.
 #[derive(Clone)]
 pub struct SPVVerificationHeader {
-    /// Starting block height
-    pub height: u64,
     /// Hash of the starting block header.
     pub hash: H256,
     /// Time of the starting block header.
@@ -105,7 +104,6 @@ pub struct SPVVerificationHeader {
 impl From<BlockHeader> for SPVVerificationHeader {
     fn from(value: BlockHeader) -> Self {
         Self {
-            height: 0,
             hash: value.hash(),
             time: value.time,
             bits: value.bits,
@@ -124,7 +122,6 @@ pub(crate) fn parse_verification_header(
     })?;
 
     Ok(SPVVerificationHeader {
-        height,
         hash: hash.reversed(),
         time: header.time,
         bits: BlockHeaderBits::Compact(header.bits.into()),
