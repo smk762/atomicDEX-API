@@ -282,10 +282,18 @@ pub type SendMakerSpendsTakerPaymentArgs<'a> = SendSpendPaymentArgs<'a>;
 pub type SendTakerSpendsMakerPaymentArgs<'a> = SendSpendPaymentArgs<'a>;
 pub type SendTakerRefundsPaymentArgs<'a> = SendRefundPaymentArgs<'a>;
 pub type SendMakerRefundsPaymentArgs<'a> = SendRefundPaymentArgs<'a>;
+pub type SendWatcherRefundsPaymentArgs<'a> = SendRefundPaymentArgs<'a>;
 
 pub type IguanaPrivKey = Secp256k1Secret;
 
-#[derive(Debug, Display, Serialize, SerializeErrorType)]
+// Constants for logs used in tests
+pub const INVALID_SENDER_ERR_LOG: &str = "Invalid sender";
+pub const EARLY_CONFIRMATION_ERR_LOG: &str = "Early confirmation";
+pub const OLD_TRANSACTION_ERR_LOG: &str = "Old transaction";
+pub const INVALID_RECEIVER_ERR_LOG: &str = "Invalid receiver";
+pub const INVALID_CONTRACT_ADDRESS_ERR_LOG: &str = "Invalid contract address";
+
+#[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum RawTransactionError {
     #[display(fmt = "No such coin {}", coin)]
@@ -534,6 +542,14 @@ pub struct WatcherSearchForSwapTxSpendInput<'a> {
     pub search_from_block: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct SendMakerPaymentSpendPreimageInput<'a> {
+    pub preimage: &'a [u8],
+    pub secret_hash: &'a [u8],
+    pub secret: &'a [u8],
+    pub taker_pub: &'a [u8],
+}
+
 pub struct SearchForSwapTxSpendInput<'a> {
     pub time_lock: u32,
     pub other_pub: &'a [u8],
@@ -762,7 +778,7 @@ pub trait SwapOps {
         amount: BigDecimal,
     ) -> Result<PaymentInstructions, MmError<ValidateInstructionsErr>>;
 
-    fn is_supported_by_watchers(&self) -> bool;
+    fn is_supported_by_watchers(&self) -> bool { false }
 
     fn maker_locktime_multiplier(&self) -> f64 { 2.0 }
 }
@@ -787,9 +803,12 @@ pub trait MakerSwapTakerCoin {
 
 #[async_trait]
 pub trait WatcherOps {
-    fn send_maker_payment_spend_preimage(&self, preimage: &[u8], secret: &[u8]) -> TransactionFut;
+    fn send_maker_payment_spend_preimage(&self, input: SendMakerPaymentSpendPreimageInput) -> TransactionFut;
 
-    fn send_taker_payment_refund_preimage(&self, preimage: &[u8]) -> TransactionFut;
+    fn send_taker_payment_refund_preimage(
+        &self,
+        watcher_refunds_payment_args: SendWatcherRefundsPaymentArgs,
+    ) -> TransactionFut;
 
     fn create_taker_payment_refund_preimage(
         &self,
@@ -2507,6 +2526,8 @@ pub trait RpcTransportEventHandler {
     fn on_incoming_response(&self, data: &[u8]);
 
     fn on_connected(&self, address: String) -> Result<(), String>;
+
+    fn on_disconnected(&self, address: String) -> Result<(), String>;
 }
 
 impl fmt::Debug for dyn RpcTransportEventHandler + Send + Sync {
@@ -2521,6 +2542,8 @@ impl RpcTransportEventHandler for RpcTransportEventHandlerShared {
     fn on_incoming_response(&self, data: &[u8]) { self.as_ref().on_incoming_response(data) }
 
     fn on_connected(&self, address: String) -> Result<(), String> { self.as_ref().on_connected(address) }
+
+    fn on_disconnected(&self, address: String) -> Result<(), String> { self.as_ref().on_disconnected(address) }
 }
 
 impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
@@ -2544,6 +2567,13 @@ impl<T: RpcTransportEventHandler> RpcTransportEventHandler for Vec<T> {
     fn on_connected(&self, address: String) -> Result<(), String> {
         for handler in self {
             try_s!(handler.on_connected(address.clone()))
+        }
+        Ok(())
+    }
+
+    fn on_disconnected(&self, address: String) -> Result<(), String> {
+        for handler in self {
+            try_s!(handler.on_disconnected(address.clone()))
         }
         Ok(())
     }
@@ -2606,6 +2636,12 @@ impl RpcTransportEventHandler for CoinTransportMetrics {
 
     fn on_connected(&self, _address: String) -> Result<(), String> {
         // Handle a new connected endpoint if necessary.
+        // Now just return the Ok
+        Ok(())
+    }
+
+    fn on_disconnected(&self, _address: String) -> Result<(), String> {
+        // Handle disconnected endpoint if necessary.
         // Now just return the Ok
         Ok(())
     }

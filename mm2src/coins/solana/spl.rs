@@ -5,8 +5,9 @@ use crate::solana::{solana_common, AccountError, SolanaCommonOps, SolanaFeeDetai
 use crate::{BalanceFut, CheckIfMyPaymentSentArgs, CoinFutSpawner, FeeApproxStage, FoundSwapTxSpend,
             MakerSwapTakerCoin, NegotiateSwapContractAddrErr, PaymentInstructions, PaymentInstructionsErr,
             RawTransactionFut, RawTransactionRequest, RefundError, RefundResult, SearchForSwapTxSpendInput,
-            SendMakerPaymentArgs, SendMakerRefundsPaymentArgs, SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs,
-            SendTakerRefundsPaymentArgs, SendTakerSpendsMakerPaymentArgs, SignatureResult, SolanaCoin,
+            SendMakerPaymentArgs, SendMakerPaymentSpendPreimageInput, SendMakerRefundsPaymentArgs,
+            SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs, SendTakerRefundsPaymentArgs,
+            SendTakerSpendsMakerPaymentArgs, SendWatcherRefundsPaymentArgs, SignatureResult, SolanaCoin,
             TakerSwapMakerCoin, TradePreimageFut, TradePreimageResult, TradePreimageValue, TransactionDetails,
             TransactionFut, TransactionType, TxMarshalingErr, UnexpectedDerivationMethod, ValidateAddressResult,
             ValidateFeeArgs, ValidateInstructionsErr, ValidateOtherPubKeyErr, ValidatePaymentError,
@@ -431,8 +432,6 @@ impl SwapOps for SplToken {
     ) -> Result<PaymentInstructions, MmError<ValidateInstructionsErr>> {
         unimplemented!()
     }
-
-    fn is_supported_by_watchers(&self) -> bool { unimplemented!() }
 }
 
 #[async_trait]
@@ -451,7 +450,7 @@ impl MakerSwapTakerCoin for SplToken {
 
 #[async_trait]
 impl WatcherOps for SplToken {
-    fn send_maker_payment_spend_preimage(&self, preimage: &[u8], secret: &[u8]) -> TransactionFut {
+    fn send_maker_payment_spend_preimage(&self, _input: SendMakerPaymentSpendPreimageInput) -> TransactionFut {
         unimplemented!();
     }
 
@@ -478,7 +477,10 @@ impl WatcherOps for SplToken {
         unimplemented!();
     }
 
-    fn send_taker_payment_refund_preimage(&self, _taker_refunds_payment: &[u8]) -> TransactionFut {
+    fn send_taker_payment_refund_preimage(
+        &self,
+        _watcher_refunds_payment_args: SendWatcherRefundsPaymentArgs,
+    ) -> TransactionFut {
         unimplemented!();
     }
 
