@@ -1,4 +1,4 @@
-use crate::conf::{parse_verification_header, SPVConf};
+use crate::conf::SPVConf;
 use crate::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
 use crate::work::{next_block_bits, NextBlockBitsError};
 use chain::{BlockHeader, RawHeaderError};
@@ -340,7 +340,7 @@ pub async fn validate_headers(
     conf: &SPVConf,
 ) -> Result<(), SPVError> {
     let mut previous_header = if previous_height == conf.starting_block_header.height {
-        parse_verification_header(coin, &conf.starting_block_header)?
+        conf.get_verification_header(coin)?
     } else {
         storage
             .get_block_header(previous_height)
@@ -370,7 +370,7 @@ pub async fn validate_headers(
             }
 
             if let Some(algorithm) = &params.difficulty_algorithm {
-                let retarget_header = parse_verification_header(coin, &conf.starting_block_header)?;
+                let retarget_header = conf.get_verification_header(coin)?;
                 let next_block_bits = next_block_bits(
                     coin,
                     header.time,

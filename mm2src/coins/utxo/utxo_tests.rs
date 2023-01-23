@@ -4303,7 +4303,7 @@ fn test_block_header_utxo_loop() {
         MockResult::Return(BlockHeaderUtxoLoopExtraArgs {
             chunk_size: 4,
             error_sleep: 1.,
-            success_sleep: 1.,
+            success_sleep: 0.5,
         })
     });
 
@@ -4348,7 +4348,7 @@ fn test_block_header_utxo_loop() {
     let test_fut = async move {
         *expected_steps.lock().unwrap() = vec![(2, 5), (6, 9), (10, 13), (14, 14)];
         unsafe { CURRENT_BLOCK_COUNT = 14 }
-        Timer::sleep(2.).await;
+        Timer::sleep(3.).await;
         let get_headers_count = client
             .block_headers_storage()
             .get_last_block_height()
@@ -4384,7 +4384,7 @@ fn test_block_header_utxo_loop() {
 
         *expected_steps.lock().unwrap() = vec![(20, 23), (24, 26)];
         unsafe { CURRENT_BLOCK_COUNT = 26 }
-        Timer::sleep(3.).await;
+        Timer::sleep(4.).await;
         let get_headers_count = client
             .block_headers_storage()
             .get_last_block_height()
