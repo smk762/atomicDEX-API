@@ -1,4 +1,4 @@
-use crate::conf::SPVVerificationHeader;
+use crate::conf::SPVBlockHeader;
 use crate::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
 use chain::BlockHeaderBits;
 use derive_more::Display;
@@ -21,7 +21,7 @@ const MAX_TIMESPAN: u32 = TARGET_TIMESPAN_SECONDS * RETARGETING_FACTOR;
 /// The maximum value for bits corresponding to lowest difficulty of 1
 pub const MAX_BITS_BTC: u32 = 486604799;
 
-fn is_retarget_height(height: u32) -> bool { height % RETARGETING_INTERVAL == 0 }
+fn is_retarget_height(height: u64) -> bool { height % RETARGETING_INTERVAL as u64 == 0 }
 
 #[derive(Clone, Debug, Display, Eq, PartialEq)]
 pub enum NextBlockBitsError {
@@ -48,22 +48,20 @@ pub enum DifficultyAlgorithm {
 pub async fn next_block_bits(
     coin: &str,
     current_block_timestamp: u32,
-    last_block_header: SPVVerificationHeader,
-    last_block_height: u32,
+    last_block_header: SPVBlockHeader,
     storage: &dyn BlockHeaderStorageOps,
     algorithm: &DifficultyAlgorithm,
-    retarget_header: (&SPVVerificationHeader, u64),
+    retarget_header: &SPVBlockHeader,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     match algorithm {
         DifficultyAlgorithm::BitcoinMainnet => {
-            btc_mainnet_next_block_bits(coin, last_block_header, last_block_height, storage, retarget_header).await
+            btc_mainnet_next_block_bits(coin, last_block_header, storage, retarget_header).await
         },
         DifficultyAlgorithm::BitcoinTestnet => {
             btc_testnet_next_block_bits(
                 coin,
                 current_block_timestamp,
                 last_block_header,
-                last_block_height,
                 storage,
                 retarget_header,
             )
@@ -84,29 +82,28 @@ fn retarget_timespan(retarget_timestamp: u32, last_timestamp: u32) -> u32 {
 
 async fn btc_retarget_bits(
     coin: &str,
-    height: u32,
-    last_block_header: SPVVerificationHeader,
+    last_block_header: SPVBlockHeader,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_header: (&SPVVerificationHeader, u64),
+    retarget_header: &SPVBlockHeader,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits_compact: Compact = MAX_BITS_BTC.into();
 
-    let retarget_ref = (height - RETARGETING_INTERVAL).into();
+    let retarget_ref = last_block_header.height - RETARGETING_INTERVAL as u64;
     if retarget_ref == 0 {
         return Ok(BlockHeaderBits::Compact(max_bits_compact));
     }
 
-    let retarget_header = if retarget_ref == retarget_header.1 {
-        retarget_header.0.clone()
+    let retarget_header = if retarget_ref == retarget_header.height {
+        retarget_header.clone()
     } else {
-        storage
+        let header = storage
             .get_block_header(retarget_ref)
             .await?
             .ok_or(NextBlockBitsError::NoSuchBlockHeader {
                 coin: coin.into(),
                 height: retarget_ref,
-            })?
-            .into()
+            })?;
+        SPVBlockHeader::from_block_header(retarget_ref, header)
     };
 
     // timestamp of block(height - RETARGETING_INTERVAL)
@@ -131,20 +128,20 @@ async fn btc_retarget_bits(
 
 async fn btc_mainnet_next_block_bits(
     coin: &str,
-    last_block_header: SPVVerificationHeader,
-    last_block_height: u32,
+    mut last_block_header: SPVBlockHeader,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_header: (&SPVVerificationHeader, u64),
+    retarget_header: &SPVBlockHeader,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
-    if last_block_height == 0 {
+    if last_block_header.height == 0 {
         return Ok(BlockHeaderBits::Compact(MAX_BITS_BTC.into()));
     }
 
-    let height = last_block_height + 1;
+    let height = last_block_header.height + 1;
     let last_block_bits = last_block_header.bits.clone();
 
     if is_retarget_height(height) {
-        btc_retarget_bits(coin, height, last_block_header, storage, retarget_header).await
+        last_block_header.height = height;
+        btc_retarget_bits(coin, last_block_header, storage, retarget_header).await
     } else {
         Ok(last_block_bits)
     }
@@ -153,22 +150,22 @@ async fn btc_mainnet_next_block_bits(
 async fn btc_testnet_next_block_bits(
     coin: &str,
     current_block_timestamp: u32,
-    last_block_header: SPVVerificationHeader,
-    last_block_height: u32,
+    mut last_block_header: SPVBlockHeader,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_header: (&SPVVerificationHeader, u64),
+    retarget_header: &SPVBlockHeader,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits = BlockHeaderBits::Compact(MAX_BITS_BTC.into());
-    if last_block_height == 0 {
+    if last_block_header.height == 0 {
         return Ok(max_bits);
     }
 
-    let height = last_block_height + 1;
+    let height = last_block_header.height + 1;
     let last_block_bits = last_block_header.bits.clone();
     let max_time_gap = last_block_header.time + 2 * TARGET_SPACING_SECONDS;
 
     if is_retarget_height(height) {
-        btc_retarget_bits(coin, height, last_block_header, storage, retarget_header).await
+        last_block_header.height = height;
+        btc_retarget_bits(coin, last_block_header, storage, retarget_header).await
     } else if current_block_timestamp > max_time_gap {
         Ok(max_bits)
     } else if last_block_bits != max_bits {
@@ -276,7 +273,8 @@ pub(crate) mod tests {
         let last_header: BlockHeader = "000000201d758432ecd495a2177b44d3fe6c22af183461a0b9ea0d0000000000000000008283a1dfa795d9b68bd8c18601e443368265072cbf8c76bfe58de46edd303798035de95d3eb2151756fdb0e8".into();
 
         // genesis block header data.
-        let verification_header = SPVVerificationHeader {
+        let verification_header = SPVBlockHeader {
+            height: 0,
             hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
             time: 1231006500,
             bits: BlockHeaderBits::Compact(486604799.into()),
@@ -284,10 +282,9 @@ pub(crate) mod tests {
 
         let next_block_bits = block_on(btc_mainnet_next_block_bits(
             "BTC",
-            last_header.into(),
-            606815,
+            SPVBlockHeader::from_block_header(606815, last_header),
             &storage,
-            (&verification_header, 0),
+            &verification_header,
         ))
         .unwrap();
 
@@ -298,10 +295,9 @@ pub(crate) mod tests {
 
         let next_block_bits = block_on(btc_mainnet_next_block_bits(
             "BTC",
-            last_header.into(),
-            4031,
+            SPVBlockHeader::from_block_header(4031, last_header),
             &storage,
-            (&verification_header, 0),
+            &verification_header,
         ))
         .unwrap();
 
@@ -313,10 +309,9 @@ pub(crate) mod tests {
 
         let next_block_bits = block_on(btc_mainnet_next_block_bits(
             "BTC",
-            last_header.into(),
-            744014,
+            SPVBlockHeader::from_block_header(744014, last_header),
             &storage,
-            (&verification_header, 0),
+            &verification_header,
         ))
         .unwrap();
 
@@ -327,7 +322,8 @@ pub(crate) mod tests {
     fn test_btc_testnet_next_block_bits() {
         let storage = TestBlockHeadersStorage { ticker: "tBTC".into() };
 
-        let verification_header = SPVVerificationHeader {
+        let verification_header = SPVBlockHeader {
+            height: 0,
             hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
             time: 1231006500,
             bits: BlockHeaderBits::Compact(486604799.into()),
@@ -341,10 +337,9 @@ pub(crate) mod tests {
         let next_block_bits = block_on(btc_testnet_next_block_bits(
             "tBTC",
             current_header.time,
-            last_header.into(),
-            201595,
+            SPVBlockHeader::from_block_header(201595, last_header),
             &storage,
-            (&verification_header, 0),
+            &verification_header,
         ))
         .unwrap();
 
@@ -358,10 +353,9 @@ pub(crate) mod tests {
         let next_block_bits = block_on(btc_testnet_next_block_bits(
             "tBTC",
             current_header.time,
-            last_header.into(),
-            201594,
+            SPVBlockHeader::from_block_header(201594, last_header),
             &storage,
-            (&verification_header, 0),
+            &verification_header,
         ))
         .unwrap();
 
@@ -377,10 +371,9 @@ pub(crate) mod tests {
         let next_block_bits = block_on(btc_testnet_next_block_bits(
             "tBTC",
             current_header.time,
-            last_header.into(),
-            201599,
+            SPVBlockHeader::from_block_header(201599, last_header),
             &storage,
-            (&verification_header, 0),
+            &verification_header,
         ))
         .unwrap();
 

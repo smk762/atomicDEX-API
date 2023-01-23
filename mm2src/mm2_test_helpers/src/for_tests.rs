@@ -482,7 +482,7 @@ pub fn btc_segwit_conf() -> Json {
         "estimate_fee_mode": "ECONOMICAL",
         "mm2": 1,
         "spv_conf": {
-            "starting_block_header": {
+            "block_header": {
                 "height": 0,
                 "hash": "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
                 "bits": 486604799,
@@ -519,7 +519,7 @@ pub fn btc_with_spv_conf() -> Json {
             "type": "UTXO"
         },
         "spv_conf": {
-            "starting_block_header": {
+            "block_header": {
                 "height": 0,
                 "hash": "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
                 "bits": 486604799,
@@ -591,7 +591,7 @@ pub fn tbtc_with_spv_conf() -> Json {
             "type": "UTXO"
         },
         "spv_conf": {
-            "starting_block_header": {
+            "block_header": {
                 "height": 0,
                 "hash": "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
                 "bits": 486604799,

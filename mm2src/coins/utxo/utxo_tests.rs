@@ -24,7 +24,7 @@ use crate::utxo::utxo_tx_history_v2::{UtxoTxDetailsParams, UtxoTxHistoryOps};
 use crate::{BlockHeightAndTime, CoinBalance, IguanaPrivKey, PrivKeyBuildPolicy, SearchForSwapTxSpendInput,
             SendMakerSpendsTakerPaymentArgs, StakingInfosDetails, SwapOps, TradePreimageValue, TxFeeDetails,
             TxMarshalingErr, ValidateFeeArgs};
-use chain::{BlockHeader, OutPoint};
+use chain::{BlockHeader, BlockHeaderBits, OutPoint};
 use common::executor::Timer;
 use common::{block_on, now_ms, OrdRange, PagingOptionsEnum, DEX_FEE_ADDR_RAW_PUBKEY};
 use crypto::{privkey::key_pair_from_seed, Bip44Chain, RpcDerivationPath, Secp256k1Secret};
@@ -38,7 +38,7 @@ use mm2_test_helpers::for_tests::{mm_ctx_with_custom_db, MORTY_ELECTRUM_ADDRS, R
 use mocktopus::mocking::*;
 use rpc::v1::types::H256 as H256Json;
 use serialization::{deserialize, CoinVariant};
-use spv_validation::conf::{BlockHeaderValidationParams, StartingBlockHeader};
+use spv_validation::conf::{BlockHeaderValidationParams, SPVBlockHeader};
 use spv_validation::storage::BlockHeaderStorageOps;
 use spv_validation::work::DifficultyAlgorithm;
 use std::convert::TryFrom;
@@ -4303,7 +4303,7 @@ fn test_block_header_utxo_loop() {
         MockResult::Return(BlockHeaderUtxoLoopExtraArgs {
             chunk_size: 4,
             error_sleep: 1.,
-            success_sleep: 0.5,
+            success_sleep: 0.8,
         })
     });
 
@@ -4326,21 +4326,22 @@ fn test_block_header_utxo_loop() {
     let (sync_status_notifier, _) = channel::<UtxoSyncStatus>(1);
     let loop_handle = UtxoSyncStatusLoopHandle::new(sync_status_notifier);
 
-    let spv_conf = json!({
-        "starting_block_header": {
+    let spv_conf = json::from_value(json!({
+        "block_header": {
             "height": 1,
-            "hash": "0c714ba4f8d5f2d5c014a08c4e21a5387156e23bcc819c0f9bc536437586cdf5".to_string(),
+            "hash": "0c714ba4f8d5f2d5c014a08c4e21a5387156e23bcc819c0f9bc536437586cdf5",
             "time": 1564482125,
             "bits": 537857807
         },
-    });
+    }));
+
     let loop_fut = async move {
         block_header_utxo_loop(
             arc.downgrade(),
             UtxoStandardCoin::from,
             loop_handle,
             unsafe { CURRENT_BLOCK_COUNT },
-            json::from_value(spv_conf).ok().unwrap(),
+            spv_conf.unwrap(),
         )
         .await
     };
@@ -4403,14 +4404,14 @@ fn test_block_header_utxo_loop() {
 #[test]
 fn test_spv_conf_with_verification() {
     // Block header hash for BLOCK HEIGHT 2016
-    let hash = "00000000a141216a896c54f211301c436e557a8d55900637bbdce14c6c7bddef";
+    let hash = "00000000a141216a896c54f211301c436e557a8d55900637bbdce14c6c7bddef".into();
     // test for good retarget_block_header_height
     let mut spv_conf = SPVConf {
-        starting_block_header: StartingBlockHeader {
+        block_header: SPVBlockHeader {
             height: 4032,
-            hash: hash.to_string(),
+            hash,
             time: 1234466190,
-            bits: 486604799,
+            bits: BlockHeaderBits::Compact(486604799.into()),
         },
         max_stored_block_headers: None,
         validation_params: Some(BlockHeaderValidationParams {
@@ -4422,11 +4423,11 @@ fn test_spv_conf_with_verification() {
     assert!(spv_conf.validate("BTC").is_ok());
 
     // test for bad retarget_block_header_height
-    spv_conf.starting_block_header = StartingBlockHeader {
+    spv_conf.block_header = SPVBlockHeader {
         height: 4037,
-        hash: hash.to_string(),
+        hash,
         time: 1234470475,
-        bits: 486604799,
+        bits: BlockHeaderBits::Compact(486604799.into()),
     };
     let validate = spv_conf.validate("BTC").err().unwrap();
     if let SPVError::WrongRetargetHeight { coin, expected_height } = validate {

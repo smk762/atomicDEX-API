@@ -1,4 +1,4 @@
-use crate::conf::SPVConf;
+use crate::conf::{SPVBlockHeader, SPVConf};
 use crate::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
 use crate::work::{next_block_bits, NextBlockBitsError};
 use chain::{BlockHeader, RawHeaderError};
@@ -11,7 +11,7 @@ use sha2::Sha256;
 #[derive(Clone, Debug, Display, Eq, PartialEq)]
 pub enum SPVError {
     #[display(fmt = "Starting block header error: {_0}")]
-    StartingBlockHeaderError(String),
+    SPVBlockHeaderError(String),
     #[display(fmt = "Overran a checked read on a slice")]
     ReadOverrun,
     #[display(fmt = "Attempted to parse a CompactInt without enough bytes")]
@@ -339,18 +339,18 @@ pub async fn validate_headers(
     storage: &dyn BlockHeaderStorageOps,
     conf: &SPVConf,
 ) -> Result<(), SPVError> {
-    let mut previous_header = if previous_height == conf.starting_block_header.height {
-        conf.get_verification_header(coin)?
-    } else {
-        storage
-            .get_block_header(previous_height)
-            .await?
-            .ok_or(BlockHeaderStorageError::GetFromStorageError {
-                coin: coin.to_string(),
-                reason: format!("Header with height {} is not found in storage", previous_height),
-            })?
-            .into()
-    };
+    let mut previous_header =
+        if previous_height == conf.block_header.height {
+            conf.block_header.clone()
+        } else {
+            let header = storage.get_block_header(previous_height).await?.ok_or(
+                BlockHeaderStorageError::GetFromStorageError {
+                    coin: coin.to_string(),
+                    reason: format!("Header with height {} is not found in storage", previous_height),
+                },
+            )?;
+            SPVBlockHeader::from_block_header(previous_height, header)
+        };
     let mut previous_height = previous_height;
     let mut previous_hash = previous_header.hash;
     let mut prev_bits = previous_header.bits.clone();
@@ -370,15 +370,14 @@ pub async fn validate_headers(
             }
 
             if let Some(algorithm) = &params.difficulty_algorithm {
-                let retarget_header = conf.get_verification_header(coin)?;
+                let retarget_header = &conf.block_header;
                 let next_block_bits = next_block_bits(
                     coin,
                     header.time,
                     previous_header.clone(),
-                    previous_height as u32,
                     storage,
                     algorithm,
-                    (&retarget_header, conf.starting_block_header.height),
+                    retarget_header,
                 )
                 .await?;
 
@@ -389,7 +388,7 @@ pub async fn validate_headers(
         }
 
         prev_bits = current_block_bits;
-        previous_header = header.into();
+        previous_header = SPVBlockHeader::from_block_header(previous_height + 1, header);
         previous_hash = previous_header.hash;
         previous_height += 1;
     }
@@ -401,10 +400,11 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use crate::conf::{BlockHeaderValidationParams, StartingBlockHeader};
+    use crate::conf::{BlockHeaderValidationParams, SPVBlockHeader};
     use crate::test_utils::{self};
     use crate::work::tests::TestBlockHeadersStorage;
     use crate::work::DifficultyAlgorithm;
+    use chain::BlockHeaderBits;
     use common::block_on;
     use std::{println, vec};
     use test_helpers::hex::force_deserialize_hex;
@@ -600,11 +600,11 @@ mod tests {
             difficulty_algorithm: None,
         };
         let conf = SPVConf {
-            starting_block_header: StartingBlockHeader {
+            block_header: SPVBlockHeader {
                 height: 0,
                 hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
                 time: 486604799,
-                bits: 1231006500,
+                bits: BlockHeaderBits::Compact(1231006500.into()),
             },
             max_stored_block_headers: None,
             validation_params: Some(params),
@@ -631,11 +631,11 @@ mod tests {
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinTestnet),
         };
         let conf = SPVConf {
-            starting_block_header: StartingBlockHeader {
+            block_header: SPVBlockHeader {
                 height: 0,
                 hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
                 time: 486604799,
-                bits: 1231006500,
+                bits: BlockHeaderBits::Compact(1231006500.into()),
             },
             max_stored_block_headers: None,
             validation_params: Some(params),
