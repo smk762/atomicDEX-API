@@ -207,7 +207,8 @@ where
     let tx_hash_algo = builder.tx_hash_algo();
     let check_utxo_maturity = builder.check_utxo_maturity();
     let tx_cache = builder.tx_cache();
-    let (block_headers_status_notifier, block_headers_status_watcher) = builder.block_header_status_channel();
+    let (block_headers_status_notifier, block_headers_status_watcher) =
+        builder.block_header_status_channel(&conf.spv_conf);
 
     let coin = UtxoCoinFields {
         conf,
@@ -279,7 +280,8 @@ pub trait UtxoFieldsWithHardwareWalletBuilder: UtxoCoinBuilderCommonOps {
         let tx_hash_algo = self.tx_hash_algo();
         let check_utxo_maturity = self.check_utxo_maturity();
         let tx_cache = self.tx_cache();
-        let (block_headers_status_notifier, block_headers_status_watcher) = self.block_header_status_channel();
+        let (block_headers_status_notifier, block_headers_status_watcher) =
+            self.block_header_status_channel(&conf.spv_conf);
 
         let coin = UtxoCoinFields {
             conf,
@@ -653,6 +655,7 @@ pub trait UtxoCoinBuilderCommonOps {
     #[cfg(target_arch = "wasm32")]
     fn block_header_status_channel(
         &self,
+        spv_conf: &Option<SPVConf>,
     ) -> (
         Option<UtxoSyncStatusLoopHandle>,
         Option<AsyncMutex<AsyncReceiver<UtxoSyncStatus>>>,
@@ -663,13 +666,12 @@ pub trait UtxoCoinBuilderCommonOps {
     #[cfg(not(target_arch = "wasm32"))]
     fn block_header_status_channel(
         &self,
+        spv_conf: &Option<SPVConf>,
     ) -> (
         Option<UtxoSyncStatusLoopHandle>,
         Option<AsyncMutex<AsyncReceiver<UtxoSyncStatus>>>,
     ) {
-        if json::from_value::<SPVConf>(self.conf()["spv_conf"].clone()).is_ok()
-            && !self.activation_params().mode.is_native()
-        {
+        if spv_conf.is_some() && !self.activation_params().mode.is_native() {
             let (sync_status_notifier, sync_watcher) = channel(1);
             return (
                 Some(UtxoSyncStatusLoopHandle::new(sync_status_notifier)),
