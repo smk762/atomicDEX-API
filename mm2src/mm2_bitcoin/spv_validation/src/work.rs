@@ -85,7 +85,7 @@ async fn btc_retarget_bits(
     let retarget_header = storage
         .get_block_header(retarget_ref)
         .await?
-        .map(|h| SPVBlockHeader::from_height_and_block_header(retarget_ref, h))
+        .map(|h| SPVBlockHeader::from_height_and_block_header(retarget_ref, &h))
         .ok_or(NextBlockBitsError::NoSuchBlockHeader {
             coin: coin.into(),
             height: retarget_ref,
@@ -257,7 +257,7 @@ pub(crate) mod tests {
 
         let next_block_bits = block_on(btc_mainnet_next_block_bits(
             "BTC",
-            SPVBlockHeader::from_height_and_block_header(606815, last_header),
+            SPVBlockHeader::from_height_and_block_header(606815, &last_header),
             &storage,
         ))
         .unwrap();
@@ -268,7 +268,7 @@ pub(crate) mod tests {
 
         let next_block_bits = block_on(btc_mainnet_next_block_bits(
             "BTC",
-            SPVBlockHeader::from_height_and_block_header(4031, last_header),
+            SPVBlockHeader::from_height_and_block_header(4031, &last_header),
             &storage,
         ))
         .unwrap();
@@ -280,7 +280,7 @@ pub(crate) mod tests {
 
         let next_block_bits = block_on(btc_mainnet_next_block_bits(
             "BTC",
-            SPVBlockHeader::from_height_and_block_header(744014, last_header),
+            SPVBlockHeader::from_height_and_block_header(744014, &last_header),
             &storage,
         ))
         .unwrap();
@@ -299,7 +299,7 @@ pub(crate) mod tests {
         let next_block_bits = block_on(btc_testnet_next_block_bits(
             "tBTC",
             current_header.time,
-            SPVBlockHeader::from_height_and_block_header(201595, last_header),
+            SPVBlockHeader::from_height_and_block_header(201595, &last_header),
             &storage,
         ))
         .unwrap();
@@ -313,7 +313,7 @@ pub(crate) mod tests {
         let next_block_bits = block_on(btc_testnet_next_block_bits(
             "tBTC",
             current_header.time,
-            SPVBlockHeader::from_height_and_block_header(201594, last_header),
+            SPVBlockHeader::from_height_and_block_header(201594, &last_header),
             &storage,
         ))
         .unwrap();
@@ -329,7 +329,7 @@ pub(crate) mod tests {
         let next_block_bits = block_on(btc_testnet_next_block_bits(
             "tBTC",
             current_header.time,
-            SPVBlockHeader::from_height_and_block_header(201599, last_header),
+            SPVBlockHeader::from_height_and_block_header(201599, &last_header),
             &storage,
         ))
         .unwrap();

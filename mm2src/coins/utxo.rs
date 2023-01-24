@@ -465,15 +465,15 @@ impl UtxoSyncStatusLoopHandle {
             .debug_log_with_msg("No one seems interested in UtxoSyncStatus");
     }
 
-    pub fn notify_on_temp_error(&mut self, error: String) {
+    pub fn notify_on_temp_error(&mut self, error: impl ToString) {
         self.0
-            .try_send(UtxoSyncStatus::TemporaryError(error))
+            .try_send(UtxoSyncStatus::TemporaryError(error.to_string()))
             .debug_log_with_msg("No one seems interested in UtxoSyncStatus");
     }
 
-    pub fn notify_on_permanent_error(&mut self, error: String) {
+    pub fn notify_on_permanent_error(&mut self, error: impl ToString) {
         self.0
-            .try_send(UtxoSyncStatus::PermanentError(error))
+            .try_send(UtxoSyncStatus::PermanentError(error.to_string()))
             .debug_log_with_msg("No one seems interested in UtxoSyncStatus");
     }
 

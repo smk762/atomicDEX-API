@@ -40,12 +40,12 @@ pub struct SPVBlockHeader {
 }
 
 impl SPVBlockHeader {
-    pub(crate) fn from_height_and_block_header(height: u64, header: BlockHeader) -> Self {
+    pub(crate) fn from_height_and_block_header(height: u64, header: &BlockHeader) -> Self {
         Self {
             height,
             hash: header.hash(),
             time: header.time,
-            bits: header.bits,
+            bits: header.bits.clone(),
         }
     }
 }
@@ -108,6 +108,34 @@ impl SPVConf {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    /// Validate Starting block header from `RPC` against [`SPVConf::SPVBlockHeader`]
+    pub fn validate_rpc_starting_block_header(&self, height: u64, rpc_header: &BlockHeader) -> Result<(), SPVError> {
+        let rpc_header = SPVBlockHeader::from_height_and_block_header(height, rpc_header);
+        let spv_header = &self.block_header;
+
+        let rpc_header_bits: u32 = rpc_header.bits.into();
+        let spv_header_bits: u32 = spv_header.bits.clone().into();
+        if rpc_header_bits != spv_header_bits {
+            return Err(SPVError::SPVBlockHeaderError(
+                "Block header not acceptable - bad header bits".to_string(),
+            ));
+        };
+
+        if rpc_header.hash != spv_header.hash {
+            return Err(SPVError::SPVBlockHeaderError(
+                "Block header not acceptable - bad header hash".to_string(),
+            ));
+        };
+
+        if rpc_header.time != spv_header.time {
+            return Err(SPVError::SPVBlockHeaderError(
+                "Block header not acceptable - bad header time".to_string(),
+            ));
+        };
 
         Ok(())
     }

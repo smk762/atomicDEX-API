@@ -1,4 +1,4 @@
-use crate::utxo::rpc_clients::UtxoRpcClientEnum;
+use crate::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcError};
 use crate::utxo::utxo_block_header_storage::BlockHeaderStorage;
 use crate::utxo::utxo_builder::{UtxoCoinBuildError, UtxoCoinBuilder, UtxoCoinBuilderCommonOps,
                                 UtxoFieldsWithGlobalHDBuilder, UtxoFieldsWithHardwareWalletBuilder,
@@ -16,9 +16,11 @@ use mm2_err_handle::prelude::*;
 #[cfg(test)] use mocktopus::macros::*;
 use script::Builder;
 use serde_json::Value as Json;
+use serialization::Reader;
 use spv_validation::conf::SPVConf;
 use spv_validation::helpers_validation::validate_headers;
 use spv_validation::storage::{BlockHeaderStorageError, BlockHeaderStorageOps};
+use std::collections::HashMap;
 use std::num::NonZeroU64;
 
 const FETCH_BLOCK_HEADERS_ATTEMPTS: u64 = 3;
@@ -266,10 +268,50 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         let storage = client.block_headers_storage();
         let from_block_height = match storage.get_last_block_height().await {
             Ok(Some(height)) => height,
-            Ok(None) => spv_conf.block_header.height,
-            Err(e) => {
-                error!("Error {e:?} on getting the height of the last stored {ticker} header in DB!",);
-                sync_status_loop_handle.notify_on_temp_error(e.to_string());
+            Ok(None) => {
+                let height = spv_conf.block_header.height;
+                match client
+                    .blockchain_block_header(height)
+                    .map_to_mm_fut(UtxoRpcError::from)
+                    .compat()
+                    .await
+                {
+                    Ok(header_bytes) => {
+                        let mut reader = Reader::new(&header_bytes);
+                        let Ok(header) = reader.read() else {
+                            let err = format!("Error deserializing starting block header from rpc - coin: {ticker} height: \
+                            {height}");
+                            error!("{err}");
+                            sync_status_loop_handle.notify_on_temp_error(err);
+                            continue;
+                        };
+
+                        if let Err(err) = spv_conf.validate_rpc_starting_block_header(height, &header) {
+                            sync_status_loop_handle.notify_on_permanent_error(err);
+                            break;
+                        };
+
+                        if let Err(err) = storage
+                            .add_block_headers_to_storage(HashMap::from([(height, header)]))
+                            .await
+                        {
+                            error!("{err:?}");
+                            sync_status_loop_handle.notify_on_temp_error(err);
+                            continue;
+                        };
+                    },
+                    Err(err) => {
+                        error!("Error {err:?} on getting {ticker} block header for height {height} from rpc!");
+                        sync_status_loop_handle.notify_on_temp_error(err);
+                        continue;
+                    },
+                };
+
+                height
+            },
+            Err(err) => {
+                error!("Error {err:?} on getting the height of the last stored {ticker} header in DB!",);
+                sync_status_loop_handle.notify_on_temp_error(err);
                 Timer::sleep(args.error_sleep).await;
                 continue;
             },
@@ -279,9 +321,9 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         if to_block_height > block_count {
             block_count = match coin.as_ref().rpc_client.get_block_count().compat().await {
                 Ok(h) => h,
-                Err(e) => {
-                    error!("Error {e:} on getting the height of the latest {ticker} block from rpc!");
-                    sync_status_loop_handle.notify_on_temp_error(e.to_string());
+                Err(err) => {
+                    error!("Error {err:} on getting the height of the latest {ticker} block from rpc!");
+                    sync_status_loop_handle.notify_on_temp_error(err);
                     Timer::sleep(args.error_sleep).await;
                     continue;
                 },
@@ -306,7 +348,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         if let Some(max_stored_block_headers) = spv_conf.max_stored_block_headers {
             if let Err(err) = remove_excessive_headers_from_db(storage, to_block_height, max_stored_block_headers).await
             {
-                sync_status_loop_handle.notify_on_temp_error(err.to_string());
+                sync_status_loop_handle.notify_on_temp_error(err);
                 Timer::sleep(args.error_sleep).await;
             };
         }
@@ -323,7 +365,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
             Err(error) => {
                 if error.get_inner().is_network_error() {
                     log!("Network Error: Will try fetching {ticker} block headers again after 10 secs");
-                    sync_status_loop_handle.notify_on_temp_error(error.to_string());
+                    sync_status_loop_handle.notify_on_temp_error(error);
                     Timer::sleep(args.error_sleep).await;
                     continue;
                 };
@@ -338,7 +380,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
                     fetch_blocker_headers_attempts -= 1;
                     error!("Error {error:?} on retrieving latest {ticker} headers from rpc! {fetch_blocker_headers_attempts} attempts left");
                     // Todo: remove this electrum server and use another in this case since the headers from this server can't be retrieved
-                    sync_status_loop_handle.notify_on_temp_error(error.to_string());
+                    sync_status_loop_handle.notify_on_temp_error(error);
                     Timer::sleep(args.error_sleep).await;
                     continue;
                 };
@@ -347,16 +389,16 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
                     "Error {error:?} on retrieving latest {ticker} headers from rpc after {FETCH_BLOCK_HEADERS_ATTEMPTS} attempts"
                 );
                 // Todo: remove this electrum server and use another in this case since the headers from this server can't be retrieved
-                sync_status_loop_handle.notify_on_permanent_error(error.to_string());
+                sync_status_loop_handle.notify_on_permanent_error(error);
                 break;
             },
         };
 
         // Validate retrieved block headers.
-        if let Err(e) = validate_headers(ticker, from_block_height, block_headers, storage, &spv_conf).await {
-            error!("Error {e:?} on validating the latest headers for {ticker}!");
+        if let Err(err) = validate_headers(ticker, from_block_height, block_headers, storage, &spv_conf).await {
+            error!("Error {err:?} on validating the latest headers for {ticker}!");
             // Todo: remove this electrum server and use another in this case since the headers from this server are invalid
-            sync_status_loop_handle.notify_on_permanent_error(e.to_string());
+            sync_status_loop_handle.notify_on_permanent_error(err);
             break;
         };
 

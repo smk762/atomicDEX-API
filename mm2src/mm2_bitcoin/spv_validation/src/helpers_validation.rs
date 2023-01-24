@@ -347,7 +347,7 @@ pub async fn validate_headers(
                     reason: format!("Header with height {} is not found in storage", previous_height),
                 },
             )?;
-            SPVBlockHeader::from_height_and_block_header(previous_height, header)
+            SPVBlockHeader::from_height_and_block_header(previous_height, &header)
         };
     let mut previous_height = previous_height;
     let mut previous_hash = previous_header.hash;
@@ -378,7 +378,7 @@ pub async fn validate_headers(
         }
 
         prev_bits = current_block_bits;
-        previous_header = SPVBlockHeader::from_height_and_block_header(previous_height + 1, header);
+        previous_header = SPVBlockHeader::from_height_and_block_header(previous_height + 1, &header);
         previous_hash = previous_header.hash;
         previous_height += 1;
     }

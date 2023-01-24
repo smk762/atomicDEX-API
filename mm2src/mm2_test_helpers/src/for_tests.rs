@@ -521,6 +521,38 @@ pub fn btc_with_spv_conf() -> Json {
     })
 }
 
+pub fn btc_with_spv_conf_optimization() -> Json {
+    json!({
+        "coin": "BTC",
+        "asset":"BTC",
+        "pubtype": 0,
+        "p2shtype": 5,
+        "wiftype": 128,
+        "segwit": true,
+        "bech32_hrp": "bc",
+        "txfee": 0,
+        "estimate_fee_mode": "ECONOMICAL",
+        "required_confirmations": 0,
+        "protocol": {
+            "type": "UTXO"
+        },
+        "spv_conf": {
+            "block_header": {
+                "height": 764064,
+                "hash": "00000000000000000006da48b920343944908861fa05b28824922d9e60aaa94d",
+                "bits": 386375189,
+                "time": 1668986059,
+            },
+            "max_stored_block_headers": 3000,
+            "validation_params": {
+                "difficulty_check": true,
+                "constant_difficulty": false,
+                "difficulty_algorithm": "Bitcoin Mainnet"
+            }
+        }
+    })
+}
+
 pub fn tbtc_conf() -> Json {
     json!({
         "coin": "tBTC",
