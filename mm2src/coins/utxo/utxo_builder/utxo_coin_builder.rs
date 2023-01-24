@@ -655,7 +655,7 @@ pub trait UtxoCoinBuilderCommonOps {
     #[cfg(target_arch = "wasm32")]
     fn block_header_status_channel(
         &self,
-        spv_conf: &Option<SPVConf>,
+        _spv_conf: &Option<SPVConf>,
     ) -> (
         Option<UtxoSyncStatusLoopHandle>,
         Option<AsyncMutex<AsyncReceiver<UtxoSyncStatus>>>,

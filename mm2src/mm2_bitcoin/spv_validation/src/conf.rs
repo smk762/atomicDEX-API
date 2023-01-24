@@ -27,7 +27,7 @@ where
 /// Custom SPV starting block header configuration
 #[derive(Debug, Clone, Deserialize)]
 pub struct SPVBlockHeader {
-    /// Valid `u32` representation of the block `heigh`t.
+    /// Valid `u32` representation of the block `height`.
     pub height: u64,
     /// Valid block header `hash`.
     #[serde(deserialize_with = "from_hash_str")]

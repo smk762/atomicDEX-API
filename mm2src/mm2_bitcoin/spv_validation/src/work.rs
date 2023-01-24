@@ -266,28 +266,29 @@ pub(crate) mod tests {
         async fn remove_headers_to_height(&self, _height: u64) -> Result<(), BlockHeaderStorageError> { Ok(()) }
     }
 
+    // genesis block header data.
+    fn genesis_verification_header() -> SPVBlockHeader {
+        SPVBlockHeader {
+            height: 0,
+            hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
+            time: 1231006500,
+            bits: BlockHeaderBits::Compact(486604799.into()),
+        }
+    }
+
     #[test]
     fn test_btc_mainnet_next_block_bits() {
         let storage = TestBlockHeadersStorage { ticker: "BTC".into() };
 
         let last_header: BlockHeader = "000000201d758432ecd495a2177b44d3fe6c22af183461a0b9ea0d0000000000000000008283a1dfa795d9b68bd8c18601e443368265072cbf8c76bfe58de46edd303798035de95d3eb2151756fdb0e8".into();
 
-        // genesis block header data.
-        let verification_header = SPVBlockHeader {
-            height: 0,
-            hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
-            time: 1231006500,
-            bits: BlockHeaderBits::Compact(486604799.into()),
-        };
-
         let next_block_bits = block_on(btc_mainnet_next_block_bits(
             "BTC",
             SPVBlockHeader::from_block_header(606815, last_header),
             &storage,
-            &verification_header,
+            &genesis_verification_header(),
         ))
         .unwrap();
-
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(387308498.into()));
 
         // check that bits for very early blocks that didn't change difficulty because of low hashrate is calculated correctly.
@@ -297,10 +298,9 @@ pub(crate) mod tests {
             "BTC",
             SPVBlockHeader::from_block_header(4031, last_header),
             &storage,
-            &verification_header,
+            &genesis_verification_header(),
         ))
         .unwrap();
-
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(486604799.into()));
 
         // check that bits stay the same when the next block is not a retarget block
@@ -311,23 +311,15 @@ pub(crate) mod tests {
             "BTC",
             SPVBlockHeader::from_block_header(744014, last_header),
             &storage,
-            &verification_header,
+            &genesis_verification_header(),
         ))
         .unwrap();
-
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(386508719.into()));
     }
 
     #[test]
     fn test_btc_testnet_next_block_bits() {
         let storage = TestBlockHeadersStorage { ticker: "tBTC".into() };
-
-        let verification_header = SPVBlockHeader {
-            height: 0,
-            hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
-            time: 1231006500,
-            bits: BlockHeaderBits::Compact(486604799.into()),
-        };
 
         // https://live.blockcypher.com/btc-testnet/block/000000000057db3806384e2ec1b02b2c86bd928206ff8dff98f54d616b7fa5f2/
         let current_header: BlockHeader = "02000000303505969a1df329e5fccdf69b847a201772e116e557eb7f119d1a9600000000469267f52f43b8799e72f0726ba2e56432059a8ad02b84d4fff84b9476e95f7716e41353ab80011c168cb471".into();
@@ -339,10 +331,9 @@ pub(crate) mod tests {
             current_header.time,
             SPVBlockHeader::from_block_header(201595, last_header),
             &storage,
-            &verification_header,
+            &genesis_verification_header(),
         ))
         .unwrap();
-
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(469860523.into()));
 
         // https://live.blockcypher.com/btc-testnet/block/00000000961a9d117feb57e516e17217207a849bf6cdfce529f31d9a96053530/
@@ -355,10 +346,9 @@ pub(crate) mod tests {
             current_header.time,
             SPVBlockHeader::from_block_header(201594, last_header),
             &storage,
-            &verification_header,
+            &genesis_verification_header(),
         ))
         .unwrap();
-
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(486604799.into()));
 
         // test testnet retarget bits
@@ -373,10 +363,9 @@ pub(crate) mod tests {
             current_header.time,
             SPVBlockHeader::from_block_header(201599, last_header),
             &storage,
-            &verification_header,
+            &genesis_verification_header(),
         ))
         .unwrap();
-
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(459287232.into()));
     }
 }
