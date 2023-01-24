@@ -418,7 +418,7 @@ mod sql_block_headers_storage_tests {
         let initialized = block_on(storage.is_initialized_for()).unwrap();
         assert!(initialized);
 
-        let mut headers = HashMap::with_capacity(2);
+        let mut headers = HashMap::with_capacity(3);
 
         // This block has max difficulty
         // https://live.blockcypher.com/btc-testnet/block/00000000961a9d117feb57e516e17217207a849bf6cdfce529f31d9a96053530/

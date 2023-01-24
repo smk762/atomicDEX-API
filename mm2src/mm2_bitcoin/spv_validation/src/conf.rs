@@ -40,7 +40,7 @@ pub struct SPVBlockHeader {
 }
 
 impl SPVBlockHeader {
-    pub(crate) fn from_block_header(height: u64, header: BlockHeader) -> Self {
+    pub(crate) fn from_height_and_block_header(height: u64, header: BlockHeader) -> Self {
         Self {
             height,
             hash: header.hash(),
@@ -96,10 +96,15 @@ pub struct SPVConf {
 impl SPVConf {
     pub fn validate(&self, coin: &str) -> Result<(), SPVError> {
         if let Some(params) = &self.validation_params {
-            if let Some(DifficultyAlgorithm::BitcoinMainnet) = &params.difficulty_algorithm {
-                validate_btc_spv_header_height(coin, self.block_header.height)?;
-                if let Some(max) = self.max_stored_block_headers {
-                    validate_btc_max_stored_headers_value(max.into())?;
+            if let Some(algo) = &params.difficulty_algorithm {
+                match algo {
+                    DifficultyAlgorithm::BitcoinMainnet => {
+                        validate_btc_spv_header_height(coin, self.block_header.height)?;
+                        if let Some(max) = self.max_stored_block_headers {
+                            validate_btc_max_stored_headers_value(max.into())?;
+                        }
+                    },
+                    DifficultyAlgorithm::BitcoinTestnet => (),
                 }
             }
         }

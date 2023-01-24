@@ -21,10 +21,7 @@ pub enum BlockHeaderStorageError {
         coin: String,
         reason: String,
     },
-    #[display(
-        fmt = "Unable to delete  block headers <= ({height} + 1) from storage for {coin} - reason: \
-    {reason}"
-    )]
+    #[display(fmt = "Unable to delete  block headers <= {height} from storage for {coin} - reason: {reason}")]
     UnableToDeleteHeaders {
         height: u64,
         coin: String,

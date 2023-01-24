@@ -56,8 +56,6 @@ pub enum SPVError {
     HeaderStorageError(BlockHeaderStorageError),
     #[display(fmt = "Internal error: {}", _0)]
     Internal(String),
-    #[display(fmt = "Error parsing starting block header `hash` in spv config for {coin} - height: {height}")]
-    BlockHeaderHashError { coin: String, height: u64 },
     #[display(
         fmt = "Wrong retarget block header height in config for: {coin} expected block header height : 
         {expected_height}."
@@ -349,7 +347,7 @@ pub async fn validate_headers(
                     reason: format!("Header with height {} is not found in storage", previous_height),
                 },
             )?;
-            SPVBlockHeader::from_block_header(previous_height, header)
+            SPVBlockHeader::from_height_and_block_header(previous_height, header)
         };
     let mut previous_height = previous_height;
     let mut previous_hash = previous_header.hash;
@@ -380,7 +378,7 @@ pub async fn validate_headers(
         }
 
         prev_bits = current_block_bits;
-        previous_header = SPVBlockHeader::from_block_header(previous_height + 1, header);
+        previous_header = SPVBlockHeader::from_height_and_block_header(previous_height + 1, header);
         previous_hash = previous_header.hash;
         previous_height += 1;
     }

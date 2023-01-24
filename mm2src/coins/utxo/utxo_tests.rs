@@ -4287,7 +4287,7 @@ fn test_block_header_utxo_loop() {
 
     ElectrumClient::get_block_count
         .mock_safe(move |_| MockResult::Return(Box::new(futures01::future::ok(unsafe { CURRENT_BLOCK_COUNT }))));
-    let expected_steps: Arc<Mutex<Vec<(u64, u64)>>> = Arc::new(Mutex::new(vec![]));
+    let expected_steps: Arc<Mutex<Vec<(u64, u64)>>> = Arc::new(Mutex::new(Vec::with_capacity(14)));
 
     ElectrumClient::retrieve_headers.mock_safe({
         let expected_steps = expected_steps.clone();
@@ -4403,8 +4403,14 @@ fn test_block_header_utxo_loop() {
 
 #[test]
 fn test_spv_conf_with_verification() {
-    // Block header hash for BLOCK HEIGHT 2016
-    let hash = "00000000a141216a896c54f211301c436e557a8d55900637bbdce14c6c7bddef".into();
+    let algo = BlockHeaderValidationParams {
+        difficulty_check: false,
+        constant_difficulty: false,
+        difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
+    };
+
+    // Block header hash for BLOCK HEIGHT 4032
+    let hash = "00000000ca4b69045a03d7b20624def97a5366418648d5005e82fd3b345d20d0".into();
     // test for good retarget_block_header_height
     let mut spv_conf = SPVConf {
         block_header: SPVBlockHeader {
@@ -4414,15 +4420,13 @@ fn test_spv_conf_with_verification() {
             bits: BlockHeaderBits::Compact(486604799.into()),
         },
         max_stored_block_headers: None,
-        validation_params: Some(BlockHeaderValidationParams {
-            difficulty_check: false,
-            constant_difficulty: false,
-            difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
-        }),
+        validation_params: Some(algo.clone()),
     };
     assert!(spv_conf.validate("BTC").is_ok());
 
     // test for bad retarget_block_header_height
+    // Block header hash for BLOCK HEIGHT 4032
+    let hash = "0000000045c689dc49dee778a9fbca7b5bc48fceca9f05cde5fc8d667f00e7d2".into();
     spv_conf.block_header = SPVBlockHeader {
         height: 4037,
         hash,
@@ -4434,4 +4438,22 @@ fn test_spv_conf_with_verification() {
         assert_eq!(coin, "BTC");
         assert_eq!(expected_height, 4032);
     }
+
+    // test for bad max_stored_block_headers
+    // Block header hash for BLOCK HEIGHT 4032
+    let hash = "00000000ca4b69045a03d7b20624def97a5366418648d5005e82fd3b345d20d0".into();
+    spv_conf = SPVConf {
+        block_header: SPVBlockHeader {
+            height: 4032,
+            hash,
+            time: 1234466190,
+            bits: BlockHeaderBits::Compact(486604799.into()),
+        },
+        max_stored_block_headers: NonZeroU64::new(2000),
+        validation_params: Some(algo),
+    };
+    let validate = spv_conf.validate("BTC").err().unwrap();
+    assert!(validate
+        .to_string()
+        .contains("max_stored_block_headers 2000 must be greater than retargeting interval"));
 }

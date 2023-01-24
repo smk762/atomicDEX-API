@@ -481,19 +481,6 @@ pub fn btc_segwit_conf() -> Json {
         "txfee": 0,
         "estimate_fee_mode": "ECONOMICAL",
         "mm2": 1,
-        "spv_conf": {
-            "block_header": {
-                "height": 0,
-                "hash": "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
-                "bits": 486604799,
-                "time": 1231006500,
-            },
-            "validation_params": {
-                "difficulty_check": true,
-                "constant_difficulty": false,
-                "difficulty_algorithm": "Bitcoin Mainnet"
-            }
-        },
         "required_confirmations": 1,
         "avg_blocktime": 10,
         "derivation_path": "m/84'/0'",
