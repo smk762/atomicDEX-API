@@ -370,16 +370,8 @@ pub async fn validate_headers(
             }
 
             if let Some(algorithm) = &params.difficulty_algorithm {
-                let retarget_header = &conf.block_header;
-                let next_block_bits = next_block_bits(
-                    coin,
-                    header.time,
-                    previous_header.clone(),
-                    storage,
-                    algorithm,
-                    retarget_header,
-                )
-                .await?;
+                let next_block_bits =
+                    next_block_bits(coin, header.time, previous_header.clone(), storage, algorithm).await?;
 
                 if !params.constant_difficulty && params.difficulty_check && current_block_bits != next_block_bits {
                     return Err(SPVError::InsufficientWork);

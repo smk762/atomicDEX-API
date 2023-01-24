@@ -51,21 +51,11 @@ pub async fn next_block_bits(
     last_block_header: SPVBlockHeader,
     storage: &dyn BlockHeaderStorageOps,
     algorithm: &DifficultyAlgorithm,
-    retarget_header: &SPVBlockHeader,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     match algorithm {
-        DifficultyAlgorithm::BitcoinMainnet => {
-            btc_mainnet_next_block_bits(coin, last_block_header, storage, retarget_header).await
-        },
+        DifficultyAlgorithm::BitcoinMainnet => btc_mainnet_next_block_bits(coin, last_block_header, storage).await,
         DifficultyAlgorithm::BitcoinTestnet => {
-            btc_testnet_next_block_bits(
-                coin,
-                current_block_timestamp,
-                last_block_header,
-                storage,
-                retarget_header,
-            )
-            .await
+            btc_testnet_next_block_bits(coin, current_block_timestamp, last_block_header, storage).await
         },
     }
 }
@@ -84,7 +74,6 @@ async fn btc_retarget_bits(
     coin: &str,
     last_block_header: SPVBlockHeader,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_header: &SPVBlockHeader,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits_compact: Compact = MAX_BITS_BTC.into();
 
@@ -93,18 +82,14 @@ async fn btc_retarget_bits(
         return Ok(BlockHeaderBits::Compact(max_bits_compact));
     }
 
-    let retarget_header = if retarget_ref == retarget_header.height {
-        retarget_header.clone()
-    } else {
-        let header = storage
-            .get_block_header(retarget_ref)
-            .await?
-            .ok_or(NextBlockBitsError::NoSuchBlockHeader {
-                coin: coin.into(),
-                height: retarget_ref,
-            })?;
-        SPVBlockHeader::from_block_header(retarget_ref, header)
-    };
+    let retarget_header = storage
+        .get_block_header(retarget_ref)
+        .await?
+        .map(|h| SPVBlockHeader::from_block_header(retarget_ref, h))
+        .ok_or(NextBlockBitsError::NoSuchBlockHeader {
+            coin: coin.into(),
+            height: retarget_ref,
+        })?;
 
     // timestamp of block(height - RETARGETING_INTERVAL)
     let retarget_timestamp = retarget_header.time;
@@ -130,7 +115,6 @@ async fn btc_mainnet_next_block_bits(
     coin: &str,
     mut last_block_header: SPVBlockHeader,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_header: &SPVBlockHeader,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     if last_block_header.height == 0 {
         return Ok(BlockHeaderBits::Compact(MAX_BITS_BTC.into()));
@@ -141,7 +125,7 @@ async fn btc_mainnet_next_block_bits(
 
     if is_retarget_height(height) {
         last_block_header.height = height;
-        btc_retarget_bits(coin, last_block_header, storage, retarget_header).await
+        btc_retarget_bits(coin, last_block_header, storage).await
     } else {
         Ok(last_block_bits)
     }
@@ -152,7 +136,6 @@ async fn btc_testnet_next_block_bits(
     current_block_timestamp: u32,
     mut last_block_header: SPVBlockHeader,
     storage: &dyn BlockHeaderStorageOps,
-    retarget_header: &SPVBlockHeader,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits = BlockHeaderBits::Compact(MAX_BITS_BTC.into());
     if last_block_header.height == 0 {
@@ -165,7 +148,7 @@ async fn btc_testnet_next_block_bits(
 
     if is_retarget_height(height) {
         last_block_header.height = height;
-        btc_retarget_bits(coin, last_block_header, storage, retarget_header).await
+        btc_retarget_bits(coin, last_block_header, storage).await
     } else if current_block_timestamp > max_time_gap {
         Ok(max_bits)
     } else if last_block_bits != max_bits {
@@ -266,16 +249,6 @@ pub(crate) mod tests {
         async fn remove_headers_to_height(&self, _height: u64) -> Result<(), BlockHeaderStorageError> { Ok(()) }
     }
 
-    // genesis block header data.
-    fn genesis_verification_header() -> SPVBlockHeader {
-        SPVBlockHeader {
-            height: 0,
-            hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
-            time: 1231006500,
-            bits: BlockHeaderBits::Compact(486604799.into()),
-        }
-    }
-
     #[test]
     fn test_btc_mainnet_next_block_bits() {
         let storage = TestBlockHeadersStorage { ticker: "BTC".into() };
@@ -286,7 +259,6 @@ pub(crate) mod tests {
             "BTC",
             SPVBlockHeader::from_block_header(606815, last_header),
             &storage,
-            &genesis_verification_header(),
         ))
         .unwrap();
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(387308498.into()));
@@ -298,7 +270,6 @@ pub(crate) mod tests {
             "BTC",
             SPVBlockHeader::from_block_header(4031, last_header),
             &storage,
-            &genesis_verification_header(),
         ))
         .unwrap();
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(486604799.into()));
@@ -311,7 +282,6 @@ pub(crate) mod tests {
             "BTC",
             SPVBlockHeader::from_block_header(744014, last_header),
             &storage,
-            &genesis_verification_header(),
         ))
         .unwrap();
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(386508719.into()));
@@ -331,7 +301,6 @@ pub(crate) mod tests {
             current_header.time,
             SPVBlockHeader::from_block_header(201595, last_header),
             &storage,
-            &genesis_verification_header(),
         ))
         .unwrap();
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(469860523.into()));
@@ -346,7 +315,6 @@ pub(crate) mod tests {
             current_header.time,
             SPVBlockHeader::from_block_header(201594, last_header),
             &storage,
-            &genesis_verification_header(),
         ))
         .unwrap();
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(486604799.into()));
@@ -363,7 +331,6 @@ pub(crate) mod tests {
             current_header.time,
             SPVBlockHeader::from_block_header(201599, last_header),
             &storage,
-            &genesis_verification_header(),
         ))
         .unwrap();
         assert_eq!(next_block_bits, BlockHeaderBits::Compact(459287232.into()));
