@@ -1,6 +1,7 @@
 //! Helpers used in the unit and integration tests.
 
 use crate::electrums::qtum_electrums;
+use crate::structs::{GetSharedDbIdResult, RpcSuccessResponse};
 use common::custom_futures::repeatable::{Ready, Retry};
 use common::executor::Timer;
 use common::log::debug;
@@ -2308,6 +2309,20 @@ pub async fn my_balance(mm: &MarketMakerIt, coin: &str) -> Json {
         .unwrap();
     assert_eq!(request.0, StatusCode::OK, "'my_balance' failed: {}", request.1);
     json::from_str(&request.1).unwrap()
+}
+
+pub async fn get_shared_db_id(mm: &MarketMakerIt) -> GetSharedDbIdResult {
+    let request = mm
+        .rpc(&json!({
+            "userpass": mm.userpass,
+            "method": "get_shared_db_id",
+            "mmrpc": "2.0",
+        }))
+        .await
+        .unwrap();
+    assert_eq!(request.0, StatusCode::OK, "'get_shared_db_id' failed: {}", request.1);
+    let res: RpcSuccessResponse<_> = json::from_str(&request.1).unwrap();
+    res.result
 }
 
 pub async fn enable_tendermint(

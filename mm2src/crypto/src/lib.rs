@@ -8,6 +8,7 @@ mod hw_ctx;
 mod hw_error;
 pub mod hw_rpc_task;
 pub mod privkey;
+mod shared_db_id;
 mod standard_hd_path;
 mod xpub;
 

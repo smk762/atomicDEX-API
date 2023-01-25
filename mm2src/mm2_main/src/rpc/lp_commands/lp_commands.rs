@@ -8,6 +8,8 @@ use rpc::v1::types::H160 as H160Json;
 use serde_json::Value as Json;
 
 pub type GetPublicKeyRpcResult<T> = Result<T, MmError<GetPublicKeyError>>;
+pub type GetSharedDbIdResult<T> = Result<T, MmError<GetSharedDbIdError>>;
+pub type GetSharedDbIdError = GetPublicKeyError;
 
 #[derive(Serialize, Display, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
@@ -45,4 +47,14 @@ pub struct GetPublicKeyHashResponse {
 pub async fn get_public_key_hash(ctx: MmArc, _req: Json) -> GetPublicKeyRpcResult<GetPublicKeyHashResponse> {
     let public_key_hash = ctx.rmd160().to_owned().into();
     Ok(GetPublicKeyHashResponse { public_key_hash })
+}
+
+#[derive(Serialize)]
+pub struct GetSharedDbIdResponse {
+    shared_db_id: H160Json,
+}
+
+pub async fn get_shared_db_id(ctx: MmArc, _req: Json) -> GetSharedDbIdResult<GetSharedDbIdResponse> {
+    let shared_db_id = ctx.shared_db_id().to_owned().into();
+    Ok(GetSharedDbIdResponse { shared_db_id })
 }

@@ -8,7 +8,7 @@ use crate::mm2::rpc::rate_limiter::{process_rate_limit, RateLimitContext};
 use crate::{mm2::lp_stats::{add_node_to_version_stat, remove_node_from_version_stat, start_version_stat_collection,
                             stop_version_stat_collection, update_version_stat_collection},
             mm2::lp_swap::{recreate_swap_data, trade_preimage_rpc},
-            mm2::rpc::lp_commands::{get_public_key, get_public_key_hash}};
+            mm2::rpc::lp_commands::{get_public_key, get_public_key_hash, get_shared_db_id}};
 use coins::eth::EthCoin;
 use coins::my_tx_history_v2::my_tx_history_v2_rpc;
 use coins::rpc_command::{account_balance::account_balance,
@@ -161,6 +161,7 @@ async fn dispatcher_v2(request: MmRpcRequest, ctx: MmArc) -> DispatcherResult<Re
         "get_public_key" => handle_mmrpc(ctx, request, get_public_key).await,
         "get_public_key_hash" => handle_mmrpc(ctx, request, get_public_key_hash).await,
         "get_raw_transaction" => handle_mmrpc(ctx, request, get_raw_transaction).await,
+        "get_shared_db_id" => handle_mmrpc(ctx, request, get_shared_db_id).await,
         "get_staking_infos" => handle_mmrpc(ctx, request, get_staking_infos).await,
         "my_tx_history" => handle_mmrpc(ctx, request, my_tx_history_v2_rpc).await,
         "orderbook" => handle_mmrpc(ctx, request, orderbook_rpc_v2).await,

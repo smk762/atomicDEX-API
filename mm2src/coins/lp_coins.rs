@@ -2234,9 +2234,9 @@ impl CoinsContext {
                 create_account_manager: CreateAccountTaskManager::new_shared(),
                 scan_addresses_manager: ScanAddressesTaskManager::new_shared(),
                 #[cfg(target_arch = "wasm32")]
-                tx_history_db: ConstructibleDb::new_shared(ctx),
+                tx_history_db: ConstructibleDb::new(ctx).into_shared(),
                 #[cfg(target_arch = "wasm32")]
-                hd_wallet_db: ConstructibleDb::new_shared(ctx),
+                hd_wallet_db: ConstructibleDb::new_shared_db(ctx).into_shared(),
             })
         })))
     }

@@ -89,7 +89,11 @@ pub struct MmCtx {
     pub coins_activation_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
     pub crypto_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
     /// RIPEMD160(SHA256(x)) where x is secp256k1 pubkey derived from passphrase.
+    /// This hash is **unique** among Iguana and each HD accounts derived from the same passphrase.
     pub rmd160: Constructible<H160>,
+    /// A shared DB identifier - RIPEMD160(SHA256(x)) where x is secp256k1 pubkey derived from (passphrase + magic salt).
+    /// This hash is **the same** for Iguana and all HD accounts derived from the same passphrase.
+    pub shared_db_id: Constructible<H160>,
     /// Coins that should be enabled to kick start the interrupted swaps and orders.
     pub coins_needed_for_kick_start: Mutex<HashSet<String>>,
     /// The context belonging to the `lp_swap` mod: `SwapsContext`.
@@ -137,6 +141,7 @@ impl MmCtx {
             coins_activation_ctx: Mutex::new(None),
             crypto_ctx: Mutex::new(None),
             rmd160: Constructible::default(),
+            shared_db_id: Constructible::default(),
             coins_needed_for_kick_start: Mutex::new(HashSet::new()),
             swaps_ctx: Mutex::new(None),
             stats_ctx: Mutex::new(None),
@@ -159,6 +164,13 @@ impl MmCtx {
             static ref DEFAULT: H160 = [0; 20].into();
         }
         self.rmd160.or(&|| &*DEFAULT)
+    }
+
+    pub fn shared_db_id(&self) -> &H160 {
+        lazy_static! {
+            static ref DEFAULT: H160 = [0; 20].into();
+        }
+        self.shared_db_id.or(&|| &*DEFAULT)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
