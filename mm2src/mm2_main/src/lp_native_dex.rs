@@ -281,8 +281,10 @@ fn default_seednodes(netid: u16) -> Vec<RelayAddress> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn fix_directories(ctx: &MmCtx) -> MmInitResult<()> {
+    fix_shared_dbdir(ctx)?;
+
     let dbdir = ctx.dbdir();
-    std::fs::create_dir_all(&dbdir).map_to_mm(|e| MmInitError::ErrorCreatingDbDir {
+    fs::create_dir_all(&dbdir).map_to_mm(|e| MmInitError::ErrorCreatingDbDir {
         path: dbdir.clone(),
         error: e.to_string(),
     })?;
@@ -339,6 +341,17 @@ pub fn fix_directories(ctx: &MmCtx) -> MmInitResult<()> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn fix_shared_dbdir(ctx: &MmCtx) -> MmInitResult<()> {
+    let shared_db = ctx.shared_dbdir();
+    fs::create_dir_all(&shared_db).map_to_mm(|e| MmInitError::ErrorCreatingDbDir {
+        path: shared_db.clone(),
+        error: e.to_string(),
+    })?;
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn migrate_db(ctx: &MmArc) -> MmInitResult<()> {
     let migration_num_path = ctx.dbdir().join(".migration");
     let mut current_migration = match std::fs::read(&migration_num_path) {
@@ -378,6 +391,8 @@ pub async fn lp_init_continue(ctx: MmArc) -> MmInitResult<()> {
     {
         fix_directories(&ctx)?;
         ctx.init_sqlite_connection()
+            .map_to_mm(MmInitError::ErrorSqliteInitializing)?;
+        ctx.init_shared_sqlite_conn()
             .map_to_mm(MmInitError::ErrorSqliteInitializing)?;
         init_and_migrate_db(&ctx).await?;
         migrate_db(&ctx)?;

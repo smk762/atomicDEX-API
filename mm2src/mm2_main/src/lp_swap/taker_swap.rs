@@ -90,8 +90,10 @@ pub const TAKER_ERROR_EVENTS: [&str; 15] = [
 
 pub const WATCHER_MESSAGE_SENT_LOG: &str = "Watcher message sent...";
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn stats_taker_swap_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("STATS").join("TAKER") }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn stats_taker_swap_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
     stats_taker_swap_dir(ctx).join(format!("{}.json", uuid))
 }

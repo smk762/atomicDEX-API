@@ -17,7 +17,6 @@ use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 cfg_wasm32! {
@@ -30,6 +29,7 @@ cfg_native! {
     use mm2_metrics::prometheus;
     use mm2_metrics::MmMetricsError;
     use std::net::{IpAddr, SocketAddr, AddrParseError};
+    use std::path::{Path, PathBuf};
     use std::sync::MutexGuard;
 }
 
@@ -105,6 +105,8 @@ pub struct MmCtx {
     pub wasm_rpc: Constructible<WasmRpcSender>,
     #[cfg(not(target_arch = "wasm32"))]
     pub sqlite_connection: Constructible<Arc<Mutex<Connection>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub shared_sqlite_conn: Constructible<Arc<Mutex<Connection>>>,
     pub mm_version: String,
     pub datetime: String,
     pub mm_init_ctx: Mutex<Option<Arc<dyn Any + 'static + Send + Sync>>>,
@@ -149,6 +151,8 @@ impl MmCtx {
             wasm_rpc: Constructible::default(),
             #[cfg(not(target_arch = "wasm32"))]
             sqlite_connection: Constructible::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            shared_sqlite_conn: Constructible::default(),
             mm_version: "".into(),
             datetime: "".into(),
             mm_init_ctx: Mutex::new(None),
@@ -201,19 +205,19 @@ impl MmCtx {
     ///     "dbdir": "c:/Users/mm2user/.mm2-db"
     ///
     /// No checks in this method, the paths should be checked in the `fn fix_directories` instead.
-    pub fn dbdir(&self) -> PathBuf {
-        let path = if let Some(dbdir) = self.conf["dbdir"].as_str() {
-            let dbdir = dbdir.trim();
-            if !dbdir.is_empty() {
-                Path::new(dbdir)
-            } else {
-                Path::new("DB")
-            }
-        } else {
-            Path::new("DB")
-        };
-        path.join(hex::encode(self.rmd160().as_slice()))
-    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn dbdir(&self) -> PathBuf { path_to_dbdir(self.conf["dbdir"].as_str(), self.rmd160()) }
+
+    /// MM shared database path.
+    /// Defaults to a relative "DB".
+    ///
+    /// Can be changed via the "dbdir" configuration field, for example:
+    ///
+    ///     "dbdir": "c:/Users/mm2user/.mm2-db"
+    ///
+    /// No checks in this method, the paths should be checked in the `fn fix_directories` instead.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn shared_dbdir(&self) -> PathBuf { path_to_dbdir(self.conf["dbdir"].as_str(), self.shared_db_id()) }
 
     pub fn is_watcher(&self) -> bool { self.conf["is_watcher"].as_bool().unwrap_or_default() }
 
@@ -251,6 +255,15 @@ impl MmCtx {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub fn init_shared_sqlite_conn(&self) -> Result<(), String> {
+        let sqlite_file_path = self.shared_dbdir().join("MM2-shared.db");
+        log::debug!("Trying to open SQLite database file {}", sqlite_file_path.display());
+        let connection = try_s!(Connection::open(sqlite_file_path));
+        try_s!(self.shared_sqlite_conn.pin(Arc::new(Mutex::new(connection))));
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn sqlite_conn_opt(&self) -> Option<MutexGuard<Connection>> {
         self.sqlite_connection.as_option().map(|conn| conn.lock().unwrap())
     }
@@ -259,6 +272,14 @@ impl MmCtx {
     pub fn sqlite_connection(&self) -> MutexGuard<Connection> {
         self.sqlite_connection
             .or(&|| panic!("sqlite_connection is not initialized"))
+            .lock()
+            .unwrap()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn shared_sqlite_conn(&self) -> MutexGuard<Connection> {
+        self.shared_sqlite_conn
+            .or(&|| panic!("shared_sqlite_conn is not initialized"))
             .lock()
             .unwrap()
     }
@@ -277,6 +298,19 @@ impl Drop for MmCtx {
             .unwrap_or_else(|| "UNKNOWN".to_owned());
         log::info!("MmCtx ({}) has been dropped", ffi_handle)
     }
+}
+
+/// This function can be used later by an FFI function to open a GUI storage.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn path_to_dbdir(db_root: Option<&str>, db_id: &H160) -> PathBuf {
+    const DEFAULT_ROOT: &str = "DB";
+
+    let path = match db_root {
+        Some(dbdir) if !dbdir.is_empty() => Path::new(dbdir),
+        _ => Path::new(DEFAULT_ROOT),
+    };
+
+    path.join(hex::encode(db_id.as_slice()))
 }
 
 // We don't want to send `MmCtx` across threads, it will only obstruct the normal use case

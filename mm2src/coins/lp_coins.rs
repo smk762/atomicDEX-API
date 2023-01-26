@@ -66,7 +66,6 @@ use std::fmt;
 use std::future::Future as Future03;
 use std::num::NonZeroUsize;
 use std::ops::{Add, Deref};
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -80,6 +79,7 @@ cfg_native! {
     use futures::AsyncWriteExt;
     use lightning_invoice::{Invoice, ParseOrSemanticError};
     use std::io;
+    use std::path::PathBuf;
     use zcash_primitives::transaction::Transaction as ZTransaction;
     use z_coin::ZcoinProtocolInfo;
 }
@@ -1962,6 +1962,7 @@ pub trait MmCoin:
     fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send>;
 
     /// Path to tx history file
+    #[cfg(not(target_arch = "wasm32"))]
     fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
         let my_address = self.my_address().unwrap_or_default();
         // BCH cash address format has colon after prefix, e.g. bitcoincash:
@@ -1973,6 +1974,7 @@ pub trait MmCoin:
     }
 
     /// Path to tx history migration file
+    #[cfg(not(target_arch = "wasm32"))]
     fn tx_migration_path(&self, ctx: &MmArc) -> PathBuf {
         let my_address = self.my_address().unwrap_or_default();
         // BCH cash address format has colon after prefix, e.g. bitcoincash:

@@ -753,8 +753,13 @@ pub fn mm_ctx_with_custom_db() -> MmArc {
     use std::sync::Arc;
 
     let ctx = MmCtxBuilder::new().into_mm_arc();
+
     let connection = Connection::open_in_memory().unwrap();
     let _ = ctx.sqlite_connection.pin(Arc::new(Mutex::new(connection)));
+
+    let connection = Connection::open_in_memory().unwrap();
+    let _ = ctx.shared_sqlite_conn.pin(Arc::new(Mutex::new(connection)));
+
     ctx
 }
 
