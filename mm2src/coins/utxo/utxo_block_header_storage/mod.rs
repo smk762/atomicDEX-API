@@ -98,7 +98,7 @@ impl BlockHeaderStorageOps for BlockHeaderStorage {
         self.inner.get_block_height_by_hash(hash).await
     }
 
-    async fn remove_headers_to_height(&self, height: u64) -> Result<(), BlockHeaderStorageError> {
-        self.inner.remove_headers_to_height(height).await
+    async fn remove_headers_to_height(&self, to_height: u64) -> Result<(), BlockHeaderStorageError> {
+        self.inner.remove_headers_to_height(to_height).await
     }
 }

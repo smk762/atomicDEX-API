@@ -28,7 +28,6 @@ use std::env::{self, var};
 use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
-use tokio::time::Instant;
 use uuid::Uuid;
 
 cfg_native! {

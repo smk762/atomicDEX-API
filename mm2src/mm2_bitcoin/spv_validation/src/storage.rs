@@ -21,9 +21,9 @@ pub enum BlockHeaderStorageError {
         coin: String,
         reason: String,
     },
-    #[display(fmt = "Unable to delete  block headers <= {height} from storage for {coin} - reason: {reason}")]
+    #[display(fmt = "Unable to delete  block headers < {to_height} from storage for {coin} - reason: {reason}")]
     UnableToDeleteHeaders {
-        height: u64,
+        to_height: u64,
         coin: String,
         reason: String,
     },
@@ -37,12 +37,18 @@ pub enum BlockHeaderStorageError {
         coin: String,
         reason: String,
     },
+    #[display(fmt = "Bad Block Header  - coin: {} - reason: {}", coin, reason)]
+    BadBlockHeader {
+        coin: String,
+        reason: String,
+    },
     #[display(fmt = "Can't decode/deserialize from storage for {} - reason: {}", coin, reason)]
     DecodeError {
         coin: String,
         reason: String,
     },
     Internal(String),
+    JsonRpcError(String),
 }
 
 #[async_trait]
@@ -75,5 +81,5 @@ pub trait BlockHeaderStorageOps: Send + Sync + 'static {
 
     async fn get_block_height_by_hash(&self, hash: H256) -> Result<Option<i64>, BlockHeaderStorageError>;
 
-    async fn remove_headers_to_height(&self, height: u64) -> Result<(), BlockHeaderStorageError>;
+    async fn remove_headers_to_height(&self, to_height: u64) -> Result<(), BlockHeaderStorageError>;
 }

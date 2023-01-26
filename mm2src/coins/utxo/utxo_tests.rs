@@ -4327,12 +4327,13 @@ fn test_block_header_utxo_loop() {
     let loop_handle = UtxoSyncStatusLoopHandle::new(sync_status_notifier);
 
     let spv_conf = json::from_value(json!({
-        "block_header": {
+        "starting_block_header": {
             "height": 1,
             "hash": "0c714ba4f8d5f2d5c014a08c4e21a5387156e23bcc819c0f9bc536437586cdf5",
             "time": 1564482125,
             "bits": 537857807
         },
+        "max_stored_block_headers": 15
     }));
 
     let loop_fut = async move {
@@ -4383,17 +4384,19 @@ fn test_block_header_utxo_loop() {
         assert_eq!(get_headers_count, 19);
         assert!(expected_steps.lock().unwrap().is_empty());
 
-        *expected_steps.lock().unwrap() = vec![(20, 23), (24, 26)];
-        unsafe { CURRENT_BLOCK_COUNT = 26 }
-        Timer::sleep(4.).await;
-        let get_headers_count = client
-            .block_headers_storage()
-            .get_last_block_height()
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(get_headers_count, 26);
-        assert!(expected_steps.lock().unwrap().is_empty());
+        // Vlaidate max_stored_block_headers
+        // Since max_stored_block_headers == 1(used as previous height) + 15, headers from 2 - 3 shouldn't be in
+        // storage anymore.
+        for i in 2..=19 {
+            let header = client.block_headers_storage().get_block_header(i).await.unwrap();
+            if i >= 4 {
+                assert!(header.is_some());
+                break;
+            }
+
+            assert_eq!(header, None);
+        }
+        Timer::sleep(2.).await;
     };
 
     if let Either::Left(_) = block_on(futures::future::select(loop_fut.boxed(), test_fut.boxed())) {
@@ -4403,7 +4406,7 @@ fn test_block_header_utxo_loop() {
 
 #[test]
 fn test_spv_conf_with_verification() {
-    let algo = BlockHeaderValidationParams {
+    let verification_params = BlockHeaderValidationParams {
         difficulty_check: false,
         constant_difficulty: false,
         difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinMainnet),
@@ -4413,21 +4416,21 @@ fn test_spv_conf_with_verification() {
     let hash = "00000000ca4b69045a03d7b20624def97a5366418648d5005e82fd3b345d20d0".into();
     // test for good retarget_block_header_height
     let mut spv_conf = SPVConf {
-        block_header: SPVBlockHeader {
+        starting_block_header: SPVBlockHeader {
             height: 4032,
             hash,
             time: 1234466190,
             bits: BlockHeaderBits::Compact(486604799.into()),
         },
         max_stored_block_headers: None,
-        validation_params: Some(algo.clone()),
+        validation_params: Some(verification_params.clone()),
     };
     assert!(spv_conf.validate("BTC").is_ok());
 
     // test for bad retarget_block_header_height
     // Block header hash for BLOCK HEIGHT 4032
     let hash = "0000000045c689dc49dee778a9fbca7b5bc48fceca9f05cde5fc8d667f00e7d2".into();
-    spv_conf.block_header = SPVBlockHeader {
+    spv_conf.starting_block_header = SPVBlockHeader {
         height: 4037,
         hash,
         time: 1234470475,
@@ -4443,14 +4446,14 @@ fn test_spv_conf_with_verification() {
     // Block header hash for BLOCK HEIGHT 4032
     let hash = "00000000ca4b69045a03d7b20624def97a5366418648d5005e82fd3b345d20d0".into();
     spv_conf = SPVConf {
-        block_header: SPVBlockHeader {
+        starting_block_header: SPVBlockHeader {
             height: 4032,
             hash,
             time: 1234466190,
             bits: BlockHeaderBits::Compact(486604799.into()),
         },
         max_stored_block_headers: NonZeroU64::new(2000),
-        validation_params: Some(algo),
+        validation_params: Some(verification_params),
     };
     let validate = spv_conf.validate("BTC").err().unwrap();
     assert!(validate

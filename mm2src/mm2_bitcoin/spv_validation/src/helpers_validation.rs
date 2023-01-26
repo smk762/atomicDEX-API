@@ -338,8 +338,8 @@ pub async fn validate_headers(
     conf: &SPVConf,
 ) -> Result<(), SPVError> {
     let mut previous_header =
-        if previous_height == conf.block_header.height {
-            conf.block_header.clone()
+        if previous_height == conf.starting_block_header.height {
+            conf.starting_block_header.clone()
         } else {
             let header = storage.get_block_header(previous_height).await?.ok_or(
                 BlockHeaderStorageError::GetFromStorageError {
@@ -347,7 +347,7 @@ pub async fn validate_headers(
                     reason: format!("Header with height {} is not found in storage", previous_height),
                 },
             )?;
-            SPVBlockHeader::from_height_and_block_header(previous_height, &header)
+            SPVBlockHeader::from_block_header_and_height(&header, previous_height)
         };
     let mut previous_height = previous_height;
     let mut previous_hash = previous_header.hash;
@@ -378,7 +378,7 @@ pub async fn validate_headers(
         }
 
         prev_bits = current_block_bits;
-        previous_header = SPVBlockHeader::from_height_and_block_header(previous_height + 1, &header);
+        previous_header = SPVBlockHeader::from_block_header_and_height(&header, previous_height + 1);
         previous_hash = previous_header.hash;
         previous_height += 1;
     }
@@ -590,7 +590,7 @@ mod tests {
             difficulty_algorithm: None,
         };
         let conf = SPVConf {
-            block_header: SPVBlockHeader {
+            starting_block_header: SPVBlockHeader {
                 height: 0,
                 hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
                 time: 486604799,
@@ -621,7 +621,7 @@ mod tests {
             difficulty_algorithm: Some(DifficultyAlgorithm::BitcoinTestnet),
         };
         let conf = SPVConf {
-            block_header: SPVBlockHeader {
+            starting_block_header: SPVBlockHeader {
                 height: 0,
                 hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
                 time: 486604799,

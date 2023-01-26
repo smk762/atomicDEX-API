@@ -537,7 +537,7 @@ pub fn btc_with_spv_conf_optimization() -> Json {
             "type": "UTXO"
         },
         "spv_conf": {
-            "block_header": {
+            "starting_block_header": {
                 "height": 764064,
                 "hash": "00000000000000000006da48b920343944908861fa05b28824922d9e60aaa94d",
                 "bits": 386375189,
@@ -610,11 +610,11 @@ pub fn tbtc_with_spv_conf() -> Json {
             "type": "UTXO"
         },
         "spv_conf": {
-            "block_header": {
+            "starting_block_header": {
                 "height": 0,
-                "hash": "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
-                "bits": 486604799,
-                "time": 1231006500,
+                "hash": "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943",
+                "bits": 487063544,
+                "time": 1296688602,
             },
             "validation_params": {
                 "difficulty_check": true,

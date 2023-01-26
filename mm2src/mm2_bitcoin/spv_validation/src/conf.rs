@@ -40,7 +40,7 @@ pub struct SPVBlockHeader {
 }
 
 impl SPVBlockHeader {
-    pub(crate) fn from_height_and_block_header(height: u64, header: &BlockHeader) -> Self {
+    pub(crate) fn from_block_header_and_height(header: &BlockHeader, height: u64) -> Self {
         Self {
             height,
             hash: header.hash(),
@@ -85,7 +85,7 @@ pub struct BlockHeaderValidationParams {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SPVConf {
     /// Where to start block headers sync from.
-    pub block_header: SPVBlockHeader,
+    pub starting_block_header: SPVBlockHeader,
     /// Max number of block headers to be stored in db, when reached, old header will be deleted.
     pub max_stored_block_headers: Option<NonZeroU64>,
     /// The parameters that specify how the coin block headers should be validated. If None,
@@ -99,12 +99,15 @@ impl SPVConf {
             if let Some(algo) = &params.difficulty_algorithm {
                 match algo {
                     DifficultyAlgorithm::BitcoinMainnet => {
-                        validate_btc_spv_header_height(coin, self.block_header.height)?;
+                        validate_btc_spv_header_height(coin, self.starting_block_header.height)?;
                         if let Some(max) = self.max_stored_block_headers {
                             validate_btc_max_stored_headers_value(max.into())?;
                         }
                     },
-                    DifficultyAlgorithm::BitcoinTestnet => (),
+                    DifficultyAlgorithm::BitcoinTestnet => {
+                        // Impl bitcoin testnet diffulty calculation.
+                        todo!()
+                    },
                 }
             }
         }
@@ -114,9 +117,11 @@ impl SPVConf {
 
     /// Validate Starting block header from `RPC` against [`SPVConf::SPVBlockHeader`]
     pub fn validate_rpc_starting_block_header(&self, height: u64, rpc_header: &BlockHeader) -> Result<(), SPVError> {
-        let rpc_header = SPVBlockHeader::from_height_and_block_header(height, rpc_header);
-        let spv_header = &self.block_header;
+        let rpc_header = SPVBlockHeader::from_block_header_and_height(rpc_header, height);
+        let spv_header = &self.starting_block_header;
 
+        // Currently, BlockHeader::Compact is used in spv block header validation but some coins from rpc will return
+        // BlockHeader::U32, therefore, we need only the inner value in this case to validate the header bits.
         let rpc_header_bits: u32 = rpc_header.bits.into();
         let spv_header_bits: u32 = spv_header.bits.clone().into();
         if rpc_header_bits != spv_header_bits {
