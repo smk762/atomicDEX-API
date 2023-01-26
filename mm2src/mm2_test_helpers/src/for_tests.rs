@@ -613,7 +613,7 @@ pub fn tbtc_with_spv_conf() -> Json {
             "starting_block_header": {
                 "height": 0,
                 "hash": "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943",
-                "bits": 487063544,
+                "bits": 486604799,
                 "time": 1296688602,
             },
             "validation_params": {

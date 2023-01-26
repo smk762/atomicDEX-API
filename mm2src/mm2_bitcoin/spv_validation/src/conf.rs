@@ -120,26 +120,28 @@ impl SPVConf {
         let rpc_header = SPVBlockHeader::from_block_header_and_height(rpc_header, height);
         let spv_header = &self.starting_block_header;
 
-        // Currently, BlockHeader::Compact is used in spv block header validation but some coins from rpc will return
+        // Currently, BlockHeader::Compact is used in spv block heazder validation but some coins from rpc will return
         // BlockHeader::U32, therefore, we need only the inner value in this case to validate the header bits.
         let rpc_header_bits: u32 = rpc_header.bits.into();
         let spv_header_bits: u32 = spv_header.bits.clone().into();
         if rpc_header_bits != spv_header_bits {
-            return Err(SPVError::SPVBlockHeaderError(
-                "Block header not acceptable - bad header bits".to_string(),
-            ));
+            return Err(SPVError::SPVBlockHeaderError(format!(
+                "Block header bits not acceptable - expected: {spv_header_bits} - found: {rpc_header_bits}"
+            )));
         };
 
         if rpc_header.hash != spv_header.hash {
-            return Err(SPVError::SPVBlockHeaderError(
-                "Block header not acceptable - bad header hash".to_string(),
-            ));
+            return Err(SPVError::SPVBlockHeaderError(format!(
+                "Block header hash not acceptable - expected: {} - found: {}",
+                spv_header.hash, rpc_header.hash,
+            )));
         };
 
         if rpc_header.time != spv_header.time {
-            return Err(SPVError::SPVBlockHeaderError(
-                "Block header not acceptable - bad header time".to_string(),
-            ));
+            return Err(SPVError::SPVBlockHeaderError(format!(
+                "Block header time not acceptable - expected: {} - found: {}",
+                spv_header.time, rpc_header.time,
+            )));
         };
 
         Ok(())
