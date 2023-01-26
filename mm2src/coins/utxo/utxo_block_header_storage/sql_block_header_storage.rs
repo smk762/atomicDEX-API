@@ -87,9 +87,9 @@ fn get_block_height_by_hash(for_coin: &str) -> Result<String, BlockHeaderStorage
     Ok(sql)
 }
 
-fn remove_headers_to_height_sql(for_coin: &str, to_height: u64) -> Result<String, BlockHeaderStorageError> {
+fn remove_headers_up_to_height_sql(for_coin: &str, to_height: u64) -> Result<String, BlockHeaderStorageError> {
     let table_name = get_table_name_and_validate(for_coin)?;
-    let sql = format!("DELETE FROM {table_name} WHERE block_height < {to_height};");
+    let sql = format!("DELETE FROM {table_name} WHERE block_height <= {to_height};");
 
     Ok(sql)
 }
@@ -303,10 +303,10 @@ impl BlockHeaderStorageOps for SqliteBlockHeadersStorage {
         })
     }
 
-    async fn remove_headers_to_height(&self, to_height: u64) -> Result<(), BlockHeaderStorageError> {
+    async fn remove_headers_up_to_height(&self, to_height: u64) -> Result<(), BlockHeaderStorageError> {
         let coin = self.ticker.clone();
         let selfi = self.clone();
-        let sql = remove_headers_to_height_sql(&coin, to_height)?;
+        let sql = remove_headers_up_to_height_sql(&coin, to_height)?;
 
         async_blocking(move || {
             let conn = selfi.conn.lock().unwrap();
@@ -476,7 +476,7 @@ mod sql_block_headers_storage_tests {
     }
 
     #[test]
-    fn test_remove_headers_to_height() {
+    fn test_remove_headers_up_to_height() {
         let for_coin = "get";
         let storage = SqliteBlockHeadersStorage::in_memory(for_coin.into());
         let table = block_headers_cache_table(for_coin);
@@ -503,7 +503,7 @@ mod sql_block_headers_storage_tests {
         assert!(!storage.is_table_empty(&table));
 
         // Remove 2 headers from storage.
-        block_on(storage.remove_headers_to_height(201594)).unwrap();
+        block_on(storage.remove_headers_up_to_height(201594)).unwrap();
 
         // Validate that blockers 201593..201594 are removed from storage.
         for h in 201593..201594 {

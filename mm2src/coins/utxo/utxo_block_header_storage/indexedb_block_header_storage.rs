@@ -37,5 +37,5 @@ impl BlockHeaderStorageOps for IndexedDBBlockHeadersStorage {
 
     async fn get_block_height_by_hash(&self, _hash: H256) -> Result<Option<i64>, BlockHeaderStorageError> { Ok(None) }
 
-    async fn remove_headers_to_height(&self, _to_height: u64) -> Result<(), BlockHeaderStorageError> { Ok(()) }
+    async fn remove_headers_up_to_height(&self, _to_height: u64) -> Result<(), BlockHeaderStorageError> { Ok(()) }
 }

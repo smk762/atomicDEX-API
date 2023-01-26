@@ -246,7 +246,7 @@ pub(crate) mod tests {
             Ok(None)
         }
 
-        async fn remove_headers_to_height(&self, _height: u64) -> Result<(), BlockHeaderStorageError> { Ok(()) }
+        async fn remove_headers_up_to_height(&self, _height: u64) -> Result<(), BlockHeaderStorageError> { Ok(()) }
     }
 
     #[test]

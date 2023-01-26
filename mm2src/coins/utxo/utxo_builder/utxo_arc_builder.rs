@@ -319,7 +319,6 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
 
         // Check if we need to max the number of headers to be stored in storage.
         if let Some(max_stored_block_headers) = spv_conf.max_stored_block_headers {
-            // to_block_height - 1(needed to keep previous header) headers will be removed from storage.
             if let Err(err) =
                 remove_excessive_headers_from_storage(storage, to_block_height, max_stored_block_headers).await
             {
@@ -428,7 +427,7 @@ async fn remove_excessive_headers_from_storage(
     let max_allowed_headers = max_allowed_headers.get();
     if last_height_to_be_added > max_allowed_headers {
         let height = last_height_to_be_added - max_allowed_headers;
-        return storage.remove_headers_to_height(height).await;
+        return storage.remove_headers_up_to_height(height).await;
     }
 
     Ok(())
