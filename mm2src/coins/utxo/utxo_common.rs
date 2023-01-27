@@ -1,9 +1,10 @@
 use super::*;
 use crate::coin_balance::{AddressBalanceStatus, HDAddressBalance, HDWalletBalanceOps};
 use crate::coin_errors::{MyAddressError, ValidatePaymentError};
+use crate::hd_confirm_address::HDConfirmAddress;
 use crate::hd_pubkey::{ExtractExtendedPubkey, HDExtractPubkeyError, HDXPubExtractor};
 use crate::hd_wallet::{AccountUpdatingError, AddressDerivingResult, HDAccountMut, HDAccountsMap,
-                       NewAccountCreatingError};
+                       NewAccountCreatingError, NewAddressDeriveConfirmError, NewAddressDerivingError};
 use crate::hd_wallet_storage::{HDWalletCoinWithStorageOps, HDWalletStorageResult};
 use crate::rpc_command::init_withdraw::WithdrawTaskHandle;
 use crate::utxo::rpc_clients::{electrum_script_hash, BlockHashOrHeight, UnspentInfo, UnspentMap, UtxoRpcClientEnum,
@@ -197,6 +198,44 @@ where
     Ok(result)
 }
 
+pub async fn generate_and_confirm_new_address<Coin, ConfirmAddress>(
+    coin: &Coin,
+    hd_wallet: &Coin::HDWallet,
+    hd_account: &mut Coin::HDAccount,
+    chain: Bip44Chain,
+    confirm_address: &ConfirmAddress,
+) -> MmResult<HDAddress<Coin::Address, Coin::Pubkey>, NewAddressDeriveConfirmError>
+where
+    Coin: HDWalletCoinWithStorageOps<Address = Address, HDWallet = UtxoHDWallet, HDAccount = UtxoHDAccount>
+        + AsRef<UtxoCoinFields>
+        + Sync,
+    ConfirmAddress: HDConfirmAddress,
+{
+    use crate::hd_wallet::inner_impl;
+
+    let inner_impl::NewAddress {
+        address,
+        new_known_addresses_number,
+    } = inner_impl::generate_new_address_immutable(coin, hd_wallet, hd_account, chain).await?;
+
+    let trezor_coin = coin.as_ref().conf.trezor_coin.clone().or_mm_err(|| {
+        let ticker = &coin.as_ref().conf.ticker;
+        let error = format!("'{ticker}' coin must contain the 'trezor_coin' field in the coins config");
+        NewAddressDeriveConfirmError::DeriveError(NewAddressDerivingError::Internal(error))
+    })?;
+    let expected_address = address.address.to_string();
+    // Ask the user to confirm if the given `expected_address` is the same as on the HW display.
+    confirm_address
+        .confirm_utxo_address(trezor_coin, address.derivation_path.clone(), expected_address)
+        .await?;
+
+    // We can update the corresponding number of used `hd_account` addresses
+    // since the user confirmed the new address.
+    coin.set_known_addresses_number(hd_wallet, hd_account, chain, new_known_addresses_number)
+        .await?;
+    Ok(address)
+}
+
 pub async fn create_new_account<'a, Coin, XPubExtractor>(
     coin: &Coin,
     hd_wallet: &'a UtxoHDWallet,
@@ -206,7 +245,7 @@ where
     Coin: ExtractExtendedPubkey<ExtendedPublicKey = Secp256k1ExtendedPublicKey>
         + HDWalletCoinWithStorageOps<HDWallet = UtxoHDWallet, HDAccount = UtxoHDAccount>
         + Sync,
-    XPubExtractor: HDXPubExtractor + Sync,
+    XPubExtractor: HDXPubExtractor,
 {
     const INIT_ACCOUNT_ID: u32 = 0;
     let new_account_id = hd_wallet

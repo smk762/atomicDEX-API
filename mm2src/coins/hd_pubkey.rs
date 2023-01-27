@@ -81,11 +81,11 @@ pub trait ExtractExtendedPubkey {
         derivation_path: DerivationPath,
     ) -> MmResult<Self::ExtendedPublicKey, HDExtractPubkeyError>
     where
-        XPubExtractor: HDXPubExtractor + Sync;
+        XPubExtractor: HDXPubExtractor;
 }
 
 #[async_trait]
-pub trait HDXPubExtractor {
+pub trait HDXPubExtractor: Sync {
     async fn extract_utxo_xpub(
         &self,
         trezor_utxo_coin: String,
