@@ -1,4 +1,4 @@
-use crate::utxo::rpc_clients::{ElectrumClient, UtxoRpcClientEnum, UtxoRpcError};
+use crate::utxo::rpc_clients::{ElectrumClient, UtxoRpcClientEnum};
 use crate::utxo::utxo_block_header_storage::BlockHeaderStorage;
 use crate::utxo::utxo_builder::{UtxoCoinBuildError, UtxoCoinBuilder, UtxoCoinBuilderCommonOps,
                                 UtxoFieldsWithGlobalHDBuilder, UtxoFieldsWithHardwareWalletBuilder,
@@ -268,19 +268,12 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         let storage = client.block_headers_storage();
         let from_block_height = match storage.get_last_block_height().await {
             Ok(Some(height)) => height,
-            Ok(None) => match save_starting_block_header_to_storage(client, ticker, storage, &spv_conf).await {
-                Ok(height) => height,
-                Err(err) => {
-                    if let BlockHeaderStorageError::BadBlockHeader { .. } = &err {
-                        error!("{err:?}");
-                        sync_status_loop_handle.notify_on_permanent_error(err);
-                        continue;
-                    };
-
-                    error!("{err:?}");
-                    sync_status_loop_handle.notify_on_temp_error(err);
-                    continue;
-                },
+            Ok(None) => {
+                if let Err(e) = validate_and_store_starting_header(client, ticker, storage, &spv_conf).await {
+                    sync_status_loop_handle.notify_on_permanent_error(e);
+                    break;
+                }
+                spv_conf.starting_block_header.height
             },
             Err(err) => {
                 error!("Error {err:?} on getting the height of the last stored {ticker} header in DB!",);
@@ -337,7 +330,8 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         {
             Ok(res) => res,
             Err(error) => {
-                if error.get_inner().is_network_error() {
+                let err_inner = error.get_inner();
+                if err_inner.is_network_error() {
                     log!("Network Error: Will try fetching {ticker} block headers again after 10 secs");
                     sync_status_loop_handle.notify_on_temp_error(error);
                     Timer::sleep(args.error_sleep).await;
@@ -345,7 +339,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
                 };
 
                 // If electrum returns response too large error, we will reduce the requested headers by CHUNK_SIZE_REDUCER_VALUE in every loop until we arrive at a reasonable value.
-                if error.get_inner().is_response_too_large() && chunk_size > CHUNK_SIZE_REDUCER_VALUE {
+                if err_inner.is_response_too_large() && chunk_size > CHUNK_SIZE_REDUCER_VALUE {
                     chunk_size -= CHUNK_SIZE_REDUCER_VALUE;
                     continue;
                 }
@@ -381,42 +375,52 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
     }
 }
 
-async fn save_starting_block_header_to_storage(
+#[derive(Display)]
+enum StartingHeaderValidationError {
+    #[display(fmt = "Can't decode/deserialize from storage for {} - reason: {}", coin, reason)]
+    DecodeErr {
+        coin: String,
+        reason: String,
+    },
+    RpcError(String),
+    StorageError(String),
+    #[display(fmt = "Error validating starting header for {} - reason: {}", coin, reason)]
+    ValidationError {
+        coin: String,
+        reason: String,
+    },
+}
+
+async fn validate_and_store_starting_header(
     client: &ElectrumClient,
     ticker: &str,
     storage: &BlockHeaderStorage,
     spv_conf: &SPVConf,
-) -> Result<u64, BlockHeaderStorageError> {
+) -> Result<(), StartingHeaderValidationError> {
     let height = spv_conf.starting_block_header.height;
-
-    match client
+    let header_bytes = client
         .blockchain_block_header(height)
-        .map_to_mm_fut(UtxoRpcError::from)
         .compat()
         .await
-    {
-        Ok(header_bytes) => {
-            let mut reader = Reader::new(&header_bytes);
-            let header = reader.read().map_err(|err| BlockHeaderStorageError::DecodeError {
-                coin: ticker.to_string(),
-                reason: err.to_string(),
-            })?;
+        .map_err(|e| StartingHeaderValidationError::RpcError(e.to_string()))?;
 
-            spv_conf
-                .validate_rpc_starting_block_header(height, &header)
-                .map_err(|err| BlockHeaderStorageError::BadBlockHeader {
-                    coin: ticker.to_string(),
-                    reason: err.to_string(),
-                })?;
+    let mut reader = Reader::new_with_coin_variant(&header_bytes, ticker.into());
+    let header = reader.read().map_err(|err| StartingHeaderValidationError::DecodeErr {
+        coin: ticker.to_string(),
+        reason: err.to_string(),
+    })?;
 
-            storage
-                .add_block_headers_to_storage(HashMap::from([(height, header)]))
-                .await?;
+    spv_conf.validate_rpc_starting_header(height, &header).map_err(|err| {
+        StartingHeaderValidationError::ValidationError {
+            coin: ticker.to_string(),
+            reason: err.to_string(),
+        }
+    })?;
 
-            Ok(height)
-        },
-        Err(err) => Err(BlockHeaderStorageError::JsonRpcError(err.to_string())),
-    }
+    storage
+        .add_block_headers_to_storage(HashMap::from([(height, header)]))
+        .await
+        .map_err(|e| StartingHeaderValidationError::StorageError(e.to_string()))
 }
 
 async fn remove_excessive_headers_from_storage(
@@ -426,8 +430,9 @@ async fn remove_excessive_headers_from_storage(
 ) -> Result<(), BlockHeaderStorageError> {
     let max_allowed_headers = max_allowed_headers.get();
     if last_height_to_be_added > max_allowed_headers {
-        let height = last_height_to_be_added - max_allowed_headers;
-        return storage.remove_headers_up_to_height(height).await;
+        return storage
+            .remove_headers_up_to_height(last_height_to_be_added - max_allowed_headers)
+            .await;
     }
 
     Ok(())

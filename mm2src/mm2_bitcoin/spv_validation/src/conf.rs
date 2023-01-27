@@ -53,7 +53,7 @@ impl SPVBlockHeader {
 /// Validate that `max_stored_headers_value` is always greater than `retarget interval`.
 fn validate_btc_max_stored_headers_value(max_stored_block_headers: u64) -> Result<(), SPVError> {
     if RETARGETING_INTERVAL > max_stored_block_headers as u32 {
-        return Err(SPVError::SPVBlockHeaderError(format!(
+        return Err(SPVError::InitialValidationError(format!(
             "max_stored_block_headers {max_stored_block_headers} must be greater than retargeting interval {RETARGETING_INTERVAL}",
         )));
     }
@@ -116,30 +116,30 @@ impl SPVConf {
     }
 
     /// Validate Starting block header from `RPC` against [`SPVConf::SPVBlockHeader`]
-    pub fn validate_rpc_starting_block_header(&self, height: u64, rpc_header: &BlockHeader) -> Result<(), SPVError> {
+    pub fn validate_rpc_starting_header(&self, height: u64, rpc_header: &BlockHeader) -> Result<(), SPVError> {
         let rpc_header = SPVBlockHeader::from_block_header_and_height(rpc_header, height);
         let spv_header = &self.starting_block_header;
 
-        // Currently, BlockHeader::Compact is used in spv block heazder validation but some coins from rpc will return
+        // Currently, BlockHeader::Compact is used in spv block header validation but some coins from rpc will return
         // BlockHeader::U32, therefore, we need only the inner value in this case to validate the header bits.
         let rpc_header_bits: u32 = rpc_header.bits.into();
         let spv_header_bits: u32 = spv_header.bits.clone().into();
         if rpc_header_bits != spv_header_bits {
-            return Err(SPVError::SPVBlockHeaderError(format!(
-                "Block header bits not acceptable - expected: {spv_header_bits} - found: {rpc_header_bits}"
+            return Err(SPVError::InitialValidationError(format!(
+                "Starting block header bits not acceptable - expected: {spv_header_bits} - found: {rpc_header_bits}"
             )));
         };
 
         if rpc_header.hash != spv_header.hash {
-            return Err(SPVError::SPVBlockHeaderError(format!(
-                "Block header hash not acceptable - expected: {} - found: {}",
+            return Err(SPVError::InitialValidationError(format!(
+                "Starting block header hash not acceptable - expected: {} - found: {}",
                 spv_header.hash, rpc_header.hash,
             )));
         };
 
         if rpc_header.time != spv_header.time {
-            return Err(SPVError::SPVBlockHeaderError(format!(
-                "Block header time not acceptable - expected: {} - found: {}",
+            return Err(SPVError::InitialValidationError(format!(
+                "Starting block header time not acceptable - expected: {} - found: {}",
                 spv_header.time, rpc_header.time,
             )));
         };

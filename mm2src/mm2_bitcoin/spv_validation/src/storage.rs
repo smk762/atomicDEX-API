@@ -37,18 +37,12 @@ pub enum BlockHeaderStorageError {
         coin: String,
         reason: String,
     },
-    #[display(fmt = "Bad Block Header  - coin: {} - reason: {}", coin, reason)]
-    BadBlockHeader {
-        coin: String,
-        reason: String,
-    },
     #[display(fmt = "Can't decode/deserialize from storage for {} - reason: {}", coin, reason)]
     DecodeError {
         coin: String,
         reason: String,
     },
     Internal(String),
-    JsonRpcError(String),
 }
 
 #[async_trait]

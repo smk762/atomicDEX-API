@@ -4384,8 +4384,8 @@ fn test_block_header_utxo_loop() {
         assert_eq!(get_headers_count, 19);
         assert!(expected_steps.lock().unwrap().is_empty());
 
-        // Vlaidate max_stored_block_headers
-        // Since max_stored_block_headers15, headers from 2 - 5 shouldn't be in
+        // Validate max_stored_block_headers
+        // Since max_stored_block_headers = 15, headers from 2 - 4 shouldn't be in
         // storage anymore.
         for i in 2..=19 {
             let header = client.block_headers_storage().get_block_header(i).await.unwrap();

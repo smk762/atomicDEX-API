@@ -10,8 +10,8 @@ use sha2::Sha256;
 
 #[derive(Clone, Debug, Display, Eq, PartialEq)]
 pub enum SPVError {
-    #[display(fmt = "Starting block header error: {_0}")]
-    SPVBlockHeaderError(String),
+    #[display(fmt = "Error validating initial spv parameters: {_0}")]
+    InitialValidationError(String),
     #[display(fmt = "Overran a checked read on a slice")]
     ReadOverrun,
     #[display(fmt = "Attempted to parse a CompactInt without enough bytes")]
@@ -54,13 +54,13 @@ pub enum SPVError {
     Timeout,
     #[display(fmt = "Block headers storage error: {}", _0)]
     HeaderStorageError(BlockHeaderStorageError),
-    #[display(fmt = "Internal error: {}", _0)]
-    Internal(String),
     #[display(
-        fmt = "Wrong retarget block header height in config for: {coin} expected block header height : 
+        fmt = "Wrong retarget block header height in config for: {coin} expected block header height :
         {expected_height}."
     )]
     WrongRetargetHeight { coin: String, expected_height: u64 },
+    #[display(fmt = "Internal error: {}", _0)]
+    Internal(String),
 }
 
 impl From<RawHeaderError> for SPVError {
