@@ -310,7 +310,7 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
             continue;
         }
 
-        // Check if we need to max the number of headers to be stored in storage.
+        // Check if there should be a limit on the number of headers stored in storage.
         if let Some(max_stored_block_headers) = spv_conf.max_stored_block_headers {
             if let Err(err) =
                 remove_excessive_headers_from_storage(storage, to_block_height, max_stored_block_headers).await

@@ -77,7 +77,7 @@ async fn btc_retarget_bits(
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits_compact: Compact = MAX_BITS_BTC.into();
 
-    let retarget_ref = last_block_header.height - RETARGETING_INTERVAL as u64;
+    let retarget_ref = last_block_header.height + 1 - RETARGETING_INTERVAL as u64;
     if retarget_ref == 0 {
         return Ok(BlockHeaderBits::Compact(max_bits_compact));
     }
@@ -113,18 +113,17 @@ async fn btc_retarget_bits(
 
 async fn btc_mainnet_next_block_bits(
     coin: &str,
-    mut last_block_header: SPVBlockHeader,
+    last_block_header: SPVBlockHeader,
     storage: &dyn BlockHeaderStorageOps,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     if last_block_header.height == 0 {
         return Ok(BlockHeaderBits::Compact(MAX_BITS_BTC.into()));
     }
 
-    let height = last_block_header.height + 1;
+    let next_height = last_block_header.height + 1;
     let last_block_bits = last_block_header.bits.clone();
 
-    if is_retarget_height(height) {
-        last_block_header.height = height;
+    if is_retarget_height(next_height) {
         btc_retarget_bits(coin, last_block_header, storage).await
     } else {
         Ok(last_block_bits)
@@ -134,7 +133,7 @@ async fn btc_mainnet_next_block_bits(
 async fn btc_testnet_next_block_bits(
     coin: &str,
     current_block_timestamp: u32,
-    mut last_block_header: SPVBlockHeader,
+    last_block_header: SPVBlockHeader,
     storage: &dyn BlockHeaderStorageOps,
 ) -> Result<BlockHeaderBits, NextBlockBitsError> {
     let max_bits = BlockHeaderBits::Compact(MAX_BITS_BTC.into());
@@ -142,12 +141,11 @@ async fn btc_testnet_next_block_bits(
         return Ok(max_bits);
     }
 
-    let height = last_block_header.height + 1;
+    let next_height = last_block_header.height + 1;
     let last_block_bits = last_block_header.bits.clone();
     let max_time_gap = last_block_header.time + 2 * TARGET_SPACING_SECONDS;
 
-    if is_retarget_height(height) {
-        last_block_header.height = height;
+    if is_retarget_height(next_height) {
         btc_retarget_bits(coin, last_block_header, storage).await
     } else if current_block_timestamp > max_time_gap {
         Ok(max_bits)

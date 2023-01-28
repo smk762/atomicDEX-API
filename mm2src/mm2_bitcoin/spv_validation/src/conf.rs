@@ -74,7 +74,7 @@ fn validate_btc_spv_header_height(coin: &str, height: u64) -> Result<(), SPVErro
     Ok(())
 }
 
-/// SPV headers verification parameters
+/// Custom SPV block header configuration
 #[derive(Clone, Debug, Deserialize)]
 pub struct BlockHeaderValidationParams {
     pub difficulty_check: bool,
@@ -86,7 +86,7 @@ pub struct BlockHeaderValidationParams {
 pub struct SPVConf {
     /// Where to start block headers sync from.
     pub starting_block_header: SPVBlockHeader,
-    /// Max number of block headers to be stored in db, when reached, old header will be deleted.
+    /// Max number of block headers to be stored in db, when reached, excessive headers will be deleted.
     pub max_stored_block_headers: Option<NonZeroU64>,
     /// The parameters that specify how the coin block headers should be validated. If None,
     /// headers will be saved in DB without validation, can be none if the coin's RPC server is trusted.
