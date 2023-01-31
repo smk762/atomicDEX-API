@@ -271,7 +271,8 @@ impl RpcTaskTypes for InitGetNewAddressTask {
 impl RpcTask for InitGetNewAddressTask {
     fn initial_status(&self) -> Self::InProgressStatus { GetNewAddressInProgressStatus::Preparing }
 
-    async fn cancel(self) { todo!() }
+    // Do nothing if the task has been cancelled.
+    async fn cancel(self) {}
 
     async fn run(&mut self, task_handle: &RpcTaskHandle<Self>) -> Result<Self::Item, MmError<Self::Error>> {
         async fn get_new_address_helper<Coin>(
