@@ -269,8 +269,8 @@ pub(crate) async fn block_header_utxo_loop<T: UtxoCommonOps>(
         let from_block_height = match storage.get_last_block_height().await {
             Ok(Some(height)) => height,
             Ok(None) => {
-                if let Err(e) = validate_and_store_starting_header(client, ticker, storage, &spv_conf).await {
-                    sync_status_loop_handle.notify_on_permanent_error(e);
+                if let Err(err) = validate_and_store_starting_header(client, ticker, storage, &spv_conf).await {
+                    sync_status_loop_handle.notify_on_permanent_error(err);
                     break;
                 }
                 spv_conf.starting_block_header.height
@@ -396,31 +396,33 @@ async fn validate_and_store_starting_header(
     ticker: &str,
     storage: &BlockHeaderStorage,
     spv_conf: &SPVConf,
-) -> Result<(), StartingHeaderValidationError> {
+) -> MmResult<(), StartingHeaderValidationError> {
     let height = spv_conf.starting_block_header.height;
     let header_bytes = client
         .blockchain_block_header(height)
         .compat()
         .await
-        .map_err(|e| StartingHeaderValidationError::RpcError(e.to_string()))?;
+        .map_err(|err| MmError::new(StartingHeaderValidationError::RpcError(err.to_string())))?;
 
     let mut reader = Reader::new_with_coin_variant(&header_bytes, ticker.into());
-    let header = reader.read().map_err(|err| StartingHeaderValidationError::DecodeErr {
-        coin: ticker.to_string(),
-        reason: err.to_string(),
+    let header = reader.read().map_err(|err| {
+        MmError::new(StartingHeaderValidationError::DecodeErr {
+            coin: ticker.to_string(),
+            reason: err.to_string(),
+        })
     })?;
 
     spv_conf.validate_rpc_starting_header(height, &header).map_err(|err| {
-        StartingHeaderValidationError::ValidationError {
+        MmError::new(StartingHeaderValidationError::ValidationError {
             coin: ticker.to_string(),
             reason: err.to_string(),
-        }
+        })
     })?;
 
     storage
         .add_block_headers_to_storage(HashMap::from([(height, header)]))
         .await
-        .map_err(|e| StartingHeaderValidationError::StorageError(e.to_string()))
+        .map_err(|err| MmError::new(StartingHeaderValidationError::StorageError(err.to_string())))
 }
 
 async fn remove_excessive_headers_from_storage(

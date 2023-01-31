@@ -105,8 +105,7 @@ impl SPVConf {
                         }
                     },
                     DifficultyAlgorithm::BitcoinTestnet => {
-                        // Impl bitcoin testnet diffulty calculation.
-                        todo!()
+                        return Err(SPVError::Internal("Bitcoin Testnet is not supported yet.".to_string()))
                     },
                 }
             }

@@ -521,7 +521,7 @@ pub fn btc_with_spv_conf() -> Json {
     })
 }
 
-pub fn btc_with_spv_conf_optimization() -> Json {
+pub fn btc_with_sync_starting_header() -> Json {
     json!({
         "coin": "BTC",
         "asset":"BTC",

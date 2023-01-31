@@ -9,7 +9,7 @@ use mm2_number::{BigDecimal, BigRational, Fraction, MmNumber};
 use mm2_test_helpers::electrums::*;
 #[cfg(all(feature = "zhtlc-native-tests", not(target_arch = "wasm32")))]
 use mm2_test_helpers::for_tests::init_z_coin_native;
-use mm2_test_helpers::for_tests::{btc_segwit_conf, btc_with_spv_conf, btc_with_spv_conf_optimization,
+use mm2_test_helpers::for_tests::{btc_segwit_conf, btc_with_spv_conf, btc_with_sync_starting_header,
                                   check_recent_swaps, check_stats_swap_status, enable_eth_coin, enable_qrc20,
                                   eth_jst_testnet_conf, eth_testnet_conf, find_metrics_in_json, from_env_file,
                                   mm_spat, morty_conf, rick_conf, sign_message, start_swaps, tbtc_with_spv_conf,
@@ -7239,8 +7239,8 @@ fn test_gui_storage_coins_functionality() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn test_btc_block_header_sync_with_optimzation() {
-    let coins = json!([btc_with_spv_conf_optimization()]);
+fn test_enable_btc_with_sync_starting_header() {
+    let coins = json!([btc_with_sync_starting_header()]);
 
     let mm_bob = MarketMakerIt::start(
         json! ({
