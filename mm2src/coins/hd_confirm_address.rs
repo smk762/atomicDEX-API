@@ -12,7 +12,6 @@ const SHOW_ADDRESS_ON_DISPLAY: bool = true;
 
 pub enum HDConfirmAddressError {
     HwContextNotInitialized,
-    CoinDoesntSupportTrezor,
     RpcTaskError(RpcTaskError),
     HardwareWalletError(HwError),
     InvalidAddress { expected: String, found: String },
@@ -162,5 +161,27 @@ where
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod for_tests {
+    use super::*;
+    use mocktopus::macros::mockable;
+
+    #[derive(Default)]
+    pub struct MockableConfirmAddress;
+
+    #[async_trait]
+    #[mockable]
+    impl HDConfirmAddress for MockableConfirmAddress {
+        async fn confirm_utxo_address(
+            &self,
+            _trezor_utxo_coin: String,
+            _derivation_path: DerivationPath,
+            _expected_address: String,
+        ) -> MmResult<(), HDConfirmAddressError> {
+            unimplemented!()
+        }
     }
 }

@@ -1202,11 +1202,22 @@ impl HDWalletCoinWithStorageOps for QtumCoin {
 
 #[async_trait]
 impl GetNewAddressRpcOps for QtumCoin {
-    async fn get_new_address_rpc(
+    async fn get_new_address_rpc_without_conf(
         &self,
         params: GetNewAddressParams,
     ) -> MmResult<GetNewAddressResponse, GetNewAddressRpcError> {
-        get_new_address::common_impl::get_new_address_rpc(self, params).await
+        get_new_address::common_impl::get_new_address_rpc_without_conf(self, params).await
+    }
+
+    async fn get_new_address_rpc<ConfirmAddress>(
+        &self,
+        params: GetNewAddressParams,
+        confirm_address: &ConfirmAddress,
+    ) -> MmResult<GetNewAddressResponse, GetNewAddressRpcError>
+    where
+        ConfirmAddress: HDConfirmAddress,
+    {
+        get_new_address::common_impl::get_new_address_rpc(self, params, confirm_address).await
     }
 }
 

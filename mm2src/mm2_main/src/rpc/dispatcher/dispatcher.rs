@@ -14,7 +14,8 @@ use coins::my_tx_history_v2::my_tx_history_v2_rpc;
 use coins::rpc_command::{account_balance::account_balance,
                          get_current_mtp::get_current_mtp_rpc,
                          get_enabled_coins::get_enabled_coins,
-                         get_new_address::get_new_address,
+                         get_new_address::{cancel_get_new_address, get_new_address, init_get_new_address,
+                                           init_get_new_address_status, init_get_new_address_user_action},
                          init_account_balance::{cancel_account_balance, init_account_balance,
                                                 init_account_balance_status},
                          init_create_account::{cancel_create_new_account, init_create_new_account,
@@ -225,6 +226,10 @@ async fn rpc_task_dispatcher(
         "enable_utxo::user_action" => {
             handle_mmrpc(ctx, request, init_standalone_coin_user_action::<UtxoStandardCoin>).await
         },
+        "get_new_address::cancel" => handle_mmrpc(ctx, request, cancel_get_new_address).await,
+        "get_new_address::init" => handle_mmrpc(ctx, request, init_get_new_address).await,
+        "get_new_address::status" => handle_mmrpc(ctx, request, init_get_new_address_status).await,
+        "get_new_address::user_action" => handle_mmrpc(ctx, request, init_get_new_address_user_action).await,
         "scan_for_new_addresses::cancel" => handle_mmrpc(ctx, request, cancel_scan_for_new_addresses).await,
         "scan_for_new_addresses::init" => handle_mmrpc(ctx, request, init_scan_for_new_addresses).await,
         "scan_for_new_addresses::status" => handle_mmrpc(ctx, request, init_scan_for_new_addresses_status).await,
