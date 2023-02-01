@@ -122,6 +122,12 @@ impl From<AccountUpdatingError> for NewAddressDeriveConfirmError {
     }
 }
 
+impl From<InvalidBip44ChainError> for NewAddressDeriveConfirmError {
+    fn from(e: InvalidBip44ChainError) -> Self {
+        NewAddressDeriveConfirmError::DeriveError(NewAddressDerivingError::from(e))
+    }
+}
+
 #[derive(Display)]
 pub enum NewAccountCreatingError {
     #[display(fmt = "Hardware Wallet context is not initialized")]

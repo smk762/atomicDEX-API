@@ -255,8 +255,6 @@ pub struct InitGetNewAddressTask {
     ctx: MmArc,
     coin: MmCoinEnum,
     req: GetNewAddressRequest,
-    // The state of the account creation. It's used to revert changes if the task has been cancelled.
-    // task_state: CreateAccountState,
 }
 
 impl RpcTaskTypes for InitGetNewAddressTask {
@@ -279,7 +277,6 @@ impl RpcTask for InitGetNewAddressTask {
             ctx: &MmArc,
             coin: &Coin,
             params: GetNewAddressParams,
-            // state: CreateAccountState,
             task_handle: &GetNewAddressTaskHandle,
         ) -> MmResult<GetNewAddressResponse, GetNewAddressRpcError>
         where
@@ -301,24 +298,10 @@ impl RpcTask for InitGetNewAddressTask {
 
         match self.coin {
             MmCoinEnum::UtxoCoin(ref utxo) => {
-                get_new_address_helper(
-                    &self.ctx,
-                    utxo,
-                    self.req.params.clone(),
-                    // self.task_state.clone(),
-                    task_handle,
-                )
-                .await
+                get_new_address_helper(&self.ctx, utxo, self.req.params.clone(), task_handle).await
             },
             MmCoinEnum::QtumCoin(ref qtum) => {
-                get_new_address_helper(
-                    &self.ctx,
-                    qtum,
-                    self.req.params.clone(),
-                    // self.task_state.clone(),
-                    task_handle,
-                )
-                .await
+                get_new_address_helper(&self.ctx, qtum, self.req.params.clone(), task_handle).await
             },
             _ => MmError::err(GetNewAddressRpcError::CoinIsActivatedNotWithHDWallet),
         }
@@ -348,12 +331,7 @@ pub async fn init_get_new_address(
     let coin = lp_coinfind_or_err(&ctx, &req.coin).await?;
     let coins_ctx = CoinsContext::from_ctx(&ctx).map_to_mm(GetNewAddressRpcError::Internal)?;
     let spawner = coin.spawner();
-    let task = InitGetNewAddressTask {
-        ctx,
-        coin,
-        req,
-        // task_state: CreateAccountState::default(),
-    };
+    let task = InitGetNewAddressTask { ctx, coin, req };
     let task_id = GetNewAddressTaskManager::spawn_rpc_task(&coins_ctx.get_new_address_manager, &spawner, task)?;
     Ok(InitRpcTaskResponse { task_id })
 }

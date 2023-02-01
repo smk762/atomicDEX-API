@@ -4062,7 +4062,7 @@ fn test_get_new_address() {
     block_on(coin.get_new_address_rpc(params, &confirm_address)).unwrap();
     unsafe { assert_eq!(CHECKED_ADDRESSES, EXPECTED_CHECKED_ADDRESSES) };
 
-    // Check if `get_new_address_rpc` fails if `HDAddressConfirm::confirm_utxo_address` fails.
+    // Check if `get_new_address_rpc` fails on the `HDAddressConfirm::confirm_utxo_address` error.
 
     MockableConfirmAddress::confirm_utxo_address.mock_safe(move |_, _, _, _| {
         MockResult::Return(Box::pin(futures::future::ready(MmError::err(

@@ -229,10 +229,14 @@ where
         .confirm_utxo_address(trezor_coin, address.derivation_path.clone(), expected_address)
         .await?;
 
-    // We can update the corresponding number of used `hd_account` addresses
-    // since the user confirmed the new address.
-    coin.set_known_addresses_number(hd_wallet, hd_account, chain, new_known_addresses_number)
-        .await?;
+    let actual_known_addresses_number = hd_account.known_addresses_number(chain)?;
+    // Check if the actual `known_addresses_number` hasn't been changed while we waited for the user confirmation.
+    // If the actual value is greater than the new one, we don't need to update.
+    if actual_known_addresses_number < new_known_addresses_number {
+        coin.set_known_addresses_number(hd_wallet, hd_account, chain, new_known_addresses_number)
+            .await?;
+    }
+
     Ok(address)
 }
 

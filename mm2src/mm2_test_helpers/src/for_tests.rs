@@ -2347,7 +2347,6 @@ pub async fn max_maker_vol(mm: &MarketMakerIt, coin: &str) -> RpcResponse {
         }))
         .await
         .unwrap();
-    println!("{}", rc.1);
     RpcResponse::new("max_maker_vol", rc)
 }
 
