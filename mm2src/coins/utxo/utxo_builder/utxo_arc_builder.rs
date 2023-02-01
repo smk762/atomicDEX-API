@@ -402,27 +402,27 @@ async fn validate_and_store_starting_header(
         .blockchain_block_header(height)
         .compat()
         .await
-        .map_err(|err| MmError::new(StartingHeaderValidationError::RpcError(err.to_string())))?;
+        .map_to_mm(|err| StartingHeaderValidationError::RpcError(err.to_string()))?;
 
     let mut reader = Reader::new_with_coin_variant(&header_bytes, ticker.into());
-    let header = reader.read().map_err(|err| {
-        MmError::new(StartingHeaderValidationError::DecodeErr {
+    let header = reader
+        .read()
+        .map_to_mm(|err| StartingHeaderValidationError::DecodeErr {
             coin: ticker.to_string(),
             reason: err.to_string(),
-        })
-    })?;
+        })?;
 
-    spv_conf.validate_rpc_starting_header(height, &header).map_err(|err| {
-        MmError::new(StartingHeaderValidationError::ValidationError {
+    spv_conf
+        .validate_rpc_starting_header(height, &header)
+        .map_to_mm(|err| StartingHeaderValidationError::ValidationError {
             coin: ticker.to_string(),
             reason: err.to_string(),
-        })
-    })?;
+        })?;
 
     storage
         .add_block_headers_to_storage(HashMap::from([(height, header)]))
         .await
-        .map_err(|err| MmError::new(StartingHeaderValidationError::StorageError(err.to_string())))
+        .map_to_mm(|err| StartingHeaderValidationError::StorageError(err.to_string()))
 }
 
 async fn remove_excessive_headers_from_storage(
