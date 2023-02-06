@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bip32::DerivationPath;
-use crypto::hw_rpc_task::{HwConnectStatuses, TrezorRpcTaskConnectProcessor};
+use crypto::hw_rpc_task::HwConnectStatuses;
 use crypto::trezor::trezor_rpc_task::{TrezorRequestStatuses, TrezorRpcTaskProcessor, TryIntoUserAction};
 use crypto::trezor::{ProcessTrezorResponse, TrezorError, TrezorProcessingError};
 use crypto::{CryptoCtx, CryptoCtxError, HardwareWalletArc, HwError, HwProcessingError};
@@ -138,9 +138,7 @@ where
         derivation_path: DerivationPath,
         expected_address: String,
     ) -> MmResult<(), HDConfirmAddressError> {
-        let connect_processor = TrezorRpcTaskConnectProcessor::new(task_handle, connect_statuses.clone());
-        let trezor = hw_ctx.trezor(&connect_processor).await?;
-        let mut trezor_session = trezor.session().await?;
+        let mut trezor_session = hw_ctx.trezor().await?;
 
         let confirm_statuses = TrezorRequestStatuses {
             on_button_request: Task::InProgressStatus::confirm_addr_status(expected_address.clone()),

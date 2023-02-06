@@ -1,6 +1,6 @@
 use crate::hd_wallet::NewAccountCreatingError;
 use async_trait::async_trait;
-use crypto::hw_rpc_task::{HwConnectStatuses, TrezorRpcTaskConnectProcessor};
+use crypto::hw_rpc_task::HwConnectStatuses;
 use crypto::trezor::trezor_rpc_task::{TrezorRpcTaskProcessor, TryIntoUserAction};
 use crypto::trezor::utxo::IGNORE_XPUB_MAGIC;
 use crypto::trezor::{ProcessTrezorResponse, TrezorError, TrezorProcessingError};
@@ -162,9 +162,7 @@ where
         trezor_coin: String,
         derivation_path: DerivationPath,
     ) -> MmResult<XPub, HDExtractPubkeyError> {
-        let connect_processor = TrezorRpcTaskConnectProcessor::new(task_handle, statuses.clone());
-        let trezor = hw_ctx.trezor(&connect_processor).await?;
-        let mut trezor_session = trezor.session().await?;
+        let mut trezor_session = hw_ctx.trezor().await?;
 
         let pubkey_processor = TrezorRpcTaskProcessor::new(task_handle, statuses.to_trezor_request_statuses());
         let xpub = trezor_session
