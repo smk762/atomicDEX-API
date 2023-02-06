@@ -4,30 +4,29 @@ use crypto::hw_rpc_task::HwConnectStatuses;
 use crypto::trezor::trezor_rpc_task::{TrezorRequestStatuses, TrezorRpcTaskProcessor, TryIntoUserAction};
 use crypto::trezor::{ProcessTrezorResponse, TrezorError, TrezorProcessingError};
 use crypto::{CryptoCtx, CryptoCtxError, HardwareWalletArc, HwError, HwProcessingError};
+use enum_from::{EnumFromInner, EnumFromStringify};
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
 use rpc_task::{RpcTask, RpcTaskError, RpcTaskHandle};
 
 const SHOW_ADDRESS_ON_DISPLAY: bool = true;
 
+#[derive(EnumFromInner, EnumFromStringify)]
 pub enum HDConfirmAddressError {
     HwContextNotInitialized,
     RpcTaskError(RpcTaskError),
+    #[from_inner]
     HardwareWalletError(HwError),
-    InvalidAddress { expected: String, found: String },
+    InvalidAddress {
+        expected: String,
+        found: String,
+    },
+    #[from_stringify("CryptoCtxError")]
     Internal(String),
-}
-
-impl From<CryptoCtxError> for HDConfirmAddressError {
-    fn from(e: CryptoCtxError) -> Self { HDConfirmAddressError::Internal(e.to_string()) }
 }
 
 impl From<TrezorError> for HDConfirmAddressError {
     fn from(e: TrezorError) -> Self { HDConfirmAddressError::HardwareWalletError(HwError::from(e)) }
-}
-
-impl From<HwError> for HDConfirmAddressError {
-    fn from(e: HwError) -> Self { HDConfirmAddressError::HardwareWalletError(e) }
 }
 
 impl From<TrezorProcessingError<RpcTaskError>> for HDConfirmAddressError {

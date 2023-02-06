@@ -1,5 +1,6 @@
 use crate::privkey::private_from_seed_hash;
 use derive_more::Display;
+use enum_from::EnumFromStringify;
 use keys::{Error as KeysError, KeyPair};
 use mm2_err_handle::prelude::*;
 use primitives::hash::H160;
@@ -10,16 +11,13 @@ const SHARED_DB_MAGIC_SALT: &str = "uVa*6pcnpc9ki+VBX.6_L.";
 
 pub type SharedDbId = H160;
 
-#[derive(Display)]
+#[derive(Display, EnumFromStringify)]
 pub enum SharedDbIdError {
     #[display(fmt = "Passphrase cannot be empty")]
     NullStringPassphrase,
+    #[from_stringify("KeysError")]
     #[display(fmt = "Internal error: {_0}")]
     Internal(String),
-}
-
-impl From<KeysError> for SharedDbIdError {
-    fn from(e: KeysError) -> Self { SharedDbIdError::Internal(e.to_string()) }
 }
 
 pub fn shared_db_id_from_seed(passphrase: &str) -> MmResult<SharedDbId, SharedDbIdError> {

@@ -1529,6 +1529,7 @@ dependencies = [
  "common",
  "derive_more",
  "enum-primitive-derive",
+ "enum_from",
  "futures 0.3.15",
  "hex 0.4.2",
  "http 0.2.7",

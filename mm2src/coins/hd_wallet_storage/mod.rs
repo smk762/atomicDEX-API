@@ -360,7 +360,7 @@ mod tests {
             .expect("!HDWalletCoinStorage::upload_new_account: MORTY device=0 account=0");
 
         // All accounts must be in the only one database.
-        // Rows in the database must differ by only `coin`, `mm2_rmd160`, `hd_wallet_rmd160` and `account_id` values.
+        // Rows in the database must differ by only `coin`, `hd_wallet_rmd160` and `account_id` values.
         let all_accounts: Vec<_> = get_all_storage_items(&ctx)
             .await
             .into_iter()
@@ -457,7 +457,7 @@ mod tests {
             .expect("HDWalletCoinStorage::clear_accounts: RICK wallet=0");
 
         // All accounts must be in the only one database.
-        // Rows in the database must differ by only `coin`, `mm2_rmd160`, `hd_wallet_rmd160` and `account_id` values.
+        // Rows in the database must differ by only `coin`, `hd_wallet_rmd160` and `account_id` values.
         let all_accounts: Vec<_> = get_all_storage_items(&ctx)
             .await
             .into_iter()
