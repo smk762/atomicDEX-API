@@ -13,8 +13,8 @@ pub type SharedDbId = H160;
 
 #[derive(Display, EnumFromStringify)]
 pub enum SharedDbIdError {
-    #[display(fmt = "Passphrase cannot be empty")]
-    NullStringPassphrase,
+    #[display(fmt = "Passphrase cannot be an empty string")]
+    EmptyPassphrase,
     #[from_stringify("KeysError")]
     #[display(fmt = "Internal error: {_0}")]
     Internal(String),
@@ -23,7 +23,7 @@ pub enum SharedDbIdError {
 pub fn shared_db_id_from_seed(passphrase: &str) -> MmResult<SharedDbId, SharedDbIdError> {
     let stripped_passphrase = passphrase.strip_prefix("0x").unwrap_or(passphrase);
     if stripped_passphrase.is_empty() {
-        return MmError::err(SharedDbIdError::NullStringPassphrase);
+        return MmError::err(SharedDbIdError::EmptyPassphrase);
     }
 
     let changed_passphrase = format!("{stripped_passphrase} {SHARED_DB_MAGIC_SALT}");

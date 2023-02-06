@@ -149,7 +149,8 @@ pub enum MmInitError {
     SwapsKickStartError(String),
     #[display(fmt = "Order kick start error: {}", _0)]
     OrdersKickStartError(String),
-    NullStringPassphrase,
+    #[display(fmt = "Passphrase cannot be an empty string")]
+    EmptyPassphrase,
     #[display(fmt = "Invalid passphrase: {}", _0)]
     InvalidPassphrase(String),
     #[from_trait(WithHwRpcError::hw_rpc_error)]
@@ -205,7 +206,7 @@ impl From<CryptoInitError> for MmInitError {
             e @ CryptoInitError::InitializedAlready | e @ CryptoInitError::NotInitialized => {
                 MmInitError::Internal(e.to_string())
             },
-            CryptoInitError::NullStringPassphrase => MmInitError::NullStringPassphrase,
+            CryptoInitError::EmptyPassphrase => MmInitError::EmptyPassphrase,
             CryptoInitError::InvalidPassphrase(pass) => MmInitError::InvalidPassphrase(pass.to_string()),
             CryptoInitError::InvalidHdAccount { error, .. } => MmInitError::FieldWrongValueInConfig {
                 field: "hd_account".to_string(),

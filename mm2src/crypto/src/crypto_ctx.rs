@@ -25,8 +25,8 @@ pub type CryptoInitResult<T> = Result<T, MmError<CryptoInitError>>;
 pub enum CryptoInitError {
     NotInitialized,
     InitializedAlready,
-    #[display(fmt = "jeezy says we cant use the nullstring as passphrase and I agree")]
-    NullStringPassphrase,
+    #[display(fmt = "Passphrase cannot be an empty string")]
+    EmptyPassphrase,
     #[display(fmt = "Invalid passphrase: '{}'", _0)]
     InvalidPassphrase(PrivKeyError),
     #[display(fmt = "Invalid 'hd_account_id' = {}: {}", hd_account_id, error)]
@@ -44,7 +44,7 @@ impl From<PrivKeyError> for CryptoInitError {
 impl From<SharedDbIdError> for CryptoInitError {
     fn from(e: SharedDbIdError) -> Self {
         match e {
-            SharedDbIdError::NullStringPassphrase => CryptoInitError::NullStringPassphrase,
+            SharedDbIdError::EmptyPassphrase => CryptoInitError::EmptyPassphrase,
             SharedDbIdError::Internal(internal) => CryptoInitError::Internal(internal),
         }
     }
@@ -303,7 +303,7 @@ impl CryptoCtx {
         }
 
         if passphrase.is_empty() {
-            return MmError::err(CryptoInitError::NullStringPassphrase);
+            return MmError::err(CryptoInitError::EmptyPassphrase);
         }
 
         let (secp256k1_key_pair, key_pair_policy) = policy_builder.build(passphrase)?;
