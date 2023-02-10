@@ -1,7 +1,7 @@
 use crate::docker_tests::docker_tests_common::*;
-use http::StatusCode;
 use mm2_number::bigdecimal::Zero;
-use mm2_test_helpers::for_tests::{enable_solana_with_tokens, enable_spl, sign_message, verify_message};
+use mm2_test_helpers::for_tests::{disable_coin, disable_platform_coin_err, enable_solana_with_tokens, enable_spl,
+                                  sign_message, verify_message};
 use mm2_test_helpers::structs::{EnableSolanaWithTokensResponse, EnableSplResponse, RpcV2Response, SignatureResponse,
                                 VerificationResponse};
 use serde_json as json;
@@ -125,41 +125,13 @@ fn test_disable_solana_platform_coin_with_tokens() {
     ));
     block_on(enable_spl(&mm, "ADEX-SOL-DEVNET"));
 
-    // Try to disable platform coin, SOL-DEVNET
-    let disable = block_on(mm.rpc(&json! ({
-        "userpass": mm.userpass,
-        "method": "disable_coin",
-        "coin": "SOL-DEVNET",
-    })))
-    .unwrap();
-    assert_eq!(disable.0, StatusCode::OK);
+    // Try to disable platform coin, SOL-DEVNET. This should fail due to the dependent tokens.
+    block_on(disable_platform_coin_err(&mm, "SOL-DEVNET"));
 
-    // Confirm that token, USDC-SOL-DEVNET is also disabled
-    let response = block_on(mm.rpc(&json! ({
-        "userpass": mm.userpass,
-        "method": "my_balance",
-        "coin": "USDC-SOL-DEVNET"
-    })))
-    .unwrap();
-    assert_eq!(response.0, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(response.1.contains("No such coin: USDC-SOL-DEVNET"));
-
-    // Confirm that token, ADEX-SOL-DEVNET is also disabled
-    let response = block_on(mm.rpc(&json! ({
-        "userpass": mm.userpass,
-        "method": "my_balance",
-        "coin": "ADEX-SOL-DEVNET"
-    })))
-    .unwrap();
-    assert_eq!(response.0, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(response.1.contains("No such coin: ADEX-SOL-DEVNET"));
-
-    // Confirm that platform coin, SOL-DEVNET is also disabled
-    let response = block_on(mm.rpc(&json! ({
-        "userpass": mm.userpass,
-        "method": "my_balance",
-        "coin": "SOL-DEVNET"
-    })))
-    .unwrap();
-    assert_eq!(response.0, StatusCode::INTERNAL_SERVER_ERROR);
+    // Try to disable ADEX-SOL-DEVNET token first.
+    block_on(disable_coin(&mm, "ADEX-SOL-DEVNET"));
+    // Try to disable USDC-SOL-DEVNET token first.
+    block_on(disable_coin(&mm, "USDC-SOL-DEVNET"));
+    // Then try to disable SOL-DEVNET platform coin.
+    block_on(disable_coin(&mm, "SOL-DEVNET"));
 }
