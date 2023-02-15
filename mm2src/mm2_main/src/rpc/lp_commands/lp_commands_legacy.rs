@@ -71,12 +71,6 @@ pub async fn disable_coin(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
         Ok(None) => return ERR!("No such coin: {}", ticker),
         Err(err) => return ERR!("!lp_coinfind({}): ", err),
     };
-    let coins_ctx = try_s!(CoinsContext::from_ctx(&ctx));
-    // If a platform coin is to be disabled, we get all the enabled tokens for this platform coin first.
-    let dependent_tokens = coins_ctx.get_dependent_tokens(&ticker).await;
-    if !dependent_tokens.is_empty() {
-        return ERR!("There are tokens dependent on '{}': {:?}", ticker, dependent_tokens);
-    }
 
     // Get all matching orders and active swaps.
     let coins_to_disable: HashSet<_> = std::iter::once(ticker.clone()).collect();
@@ -85,7 +79,15 @@ pub async fn disable_coin(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
 
     // If there're matching orders or active swaps we return an error.
     if !active_swaps.is_empty() || !still_matching_orders.is_empty() {
-        let err = String::from("There're currently matching orders or active swaps for some tokens");
+        let err = "There are currently matching orders or active swaps for some tokens".to_string();
+        return disable_coin_err(err, &still_matching_orders, &[], &active_swaps);
+    }
+
+    let coins_ctx = try_s!(CoinsContext::from_ctx(&ctx));
+    // If a platform coin is to be disabled, we should check if there are any tokens dependent on it.
+    let dependent_tokens = coins_ctx.get_dependent_tokens(&ticker).await;
+    if !dependent_tokens.is_empty() {
+        let err = format!("There are tokens dependent on '{ticker}': {dependent_tokens:?}");
         return disable_coin_err(err, &still_matching_orders, &[], &active_swaps);
     }
 
