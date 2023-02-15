@@ -5,9 +5,9 @@ use common::{block_on, log};
 use gstuff::now_ms;
 use http::StatusCode;
 use mm2_number::BigDecimal;
-use mm2_test_helpers::for_tests::{disable_coin, disable_platform_coin_err, init_lightning, init_lightning_status,
-                                  my_balance, sign_message, start_swaps, verify_message,
-                                  wait_for_swaps_finish_and_check_status, MarketMakerIt};
+use mm2_test_helpers::for_tests::{disable_coin, disable_coin_err, init_lightning, init_lightning_status, my_balance,
+                                  sign_message, start_swaps, verify_message, wait_for_swaps_finish_and_check_status,
+                                  MarketMakerIt};
 use mm2_test_helpers::structs::{InitLightningStatus, InitTaskResult, LightningActivationResult, RpcV2Response,
                                 SignatureResponse, VerificationResponse};
 use serde_json::{self as json, json, Value as Json};
@@ -243,8 +243,8 @@ fn test_enable_lightning() {
     );
 
     // Try to disable platform coin, tBTC-TEST-segwit. This should fail due to the dependent tokens.
-    let dependent_tokens = &["tBTC-TEST-lightning"];
-    block_on(disable_platform_coin_err(&mm, "tBTC-TEST-segwit", dependent_tokens));
+    let error = block_on(disable_coin_err(&mm, "tBTC-TEST-segwit"));
+    assert_eq!(error.dependent_tokens, ["tBTC-TEST-lightning"]);
 
     // Try to disable tBTC-TEST-lightning token first.
     block_on(disable_coin(&mm, "tBTC-TEST-lightning"));

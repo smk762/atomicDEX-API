@@ -2321,9 +2321,9 @@ impl CoinsContext {
     }
 
     /// If `ticker` is a platform coin, returns tokens dependent on it.
-    pub async fn get_dependent_tokens(&self, ticker: &str) -> Vec<String> {
+    pub async fn get_dependent_tokens(&self, ticker: &str) -> HashSet<String> {
         let coins = self.platform_coin_tokens.lock();
-        coins.get(ticker).cloned().unwrap_or_default().into_iter().collect()
+        coins.get(ticker).cloned().unwrap_or_default()
     }
 
     pub async fn remove_coin(&self, coin: MmCoinEnum) {

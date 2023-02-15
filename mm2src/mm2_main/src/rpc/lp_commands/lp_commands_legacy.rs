@@ -25,6 +25,7 @@ use common::log::error;
 use common::{rpc_err_response, rpc_response, HyRes};
 use futures::compat::Future01CompatExt;
 use http::Response;
+use itertools::Itertools;
 use mm2_core::mm_ctx::MmArc;
 use mm2_metrics::MetricsOps;
 use mm2_number::{construct_detailed, BigDecimal};
@@ -79,17 +80,20 @@ pub async fn disable_coin(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
     let active_swaps = try_s!(active_swaps_using_coins(&ctx, &coins_to_disable));
     let still_matching_orders = try_s!(get_matching_orders(&ctx, &coins_to_disable).await);
 
-    // If there're matching orders or active swaps we return an error.
-    if !active_swaps.is_empty() || !still_matching_orders.is_empty() {
-        let err = "There are currently matching orders or active swaps for some tokens".to_string();
-        return disable_coin_err(err, &still_matching_orders, &[], &active_swaps, &[]);
-    }
-
     let coins_ctx = try_s!(CoinsContext::from_ctx(&ctx));
-    // If a platform coin is to be disabled, we should check if there are any tokens dependent on it.
-    let dependent_tokens = coins_ctx.get_dependent_tokens(&ticker).await;
-    if !dependent_tokens.is_empty() {
-        let err = format!("There are tokens dependent on '{ticker}'");
+    // Convert `HashSet<String>` into the sorted `Vec<String>`.
+    let dependent_tokens: Vec<_> = coins_ctx
+        .get_dependent_tokens(&ticker)
+        .await
+        .into_iter()
+        .sorted()
+        .collect();
+
+    // Return an error if:
+    // 1. There are matching orders or active swaps.
+    // 2. A platform coin is to be disabled and there are tokens dependent on it.
+    if !active_swaps.is_empty() || !still_matching_orders.is_empty() || !dependent_tokens.is_empty() {
+        let err = format!("There are currently matching orders, active swaps, or tokens dependent on '{ticker}'");
         return disable_coin_err(err, &still_matching_orders, &[], &active_swaps, &dependent_tokens);
     }
 

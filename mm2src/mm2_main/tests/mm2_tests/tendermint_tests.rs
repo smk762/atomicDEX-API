@@ -1,6 +1,6 @@
 use common::block_on;
 use mm2_number::BigDecimal;
-use mm2_test_helpers::for_tests::{atom_testnet_conf, disable_coin, disable_platform_coin_err, enable_tendermint,
+use mm2_test_helpers::for_tests::{atom_testnet_conf, disable_coin, disable_coin_err, enable_tendermint,
                                   enable_tendermint_token, get_tendermint_my_tx_history, iris_nimda_testnet_conf,
                                   iris_testnet_conf, my_balance, send_raw_transaction, withdraw_v1, MarketMakerIt,
                                   Mm2TestConf};
@@ -291,8 +291,8 @@ fn test_disable_tendermint_platform_coin_with_token() {
     assert!(&activation_res.get("result").unwrap().get("balances").is_some());
 
     // Try to disable platform coin, IRIS-TEST. This should fail due to the dependent tokens.
-    let dependent_tokens = &["IRIS-NIMDA"];
-    block_on(disable_platform_coin_err(&mm, "IRIS-TEST", dependent_tokens));
+    let error = block_on(disable_coin_err(&mm, "IRIS-TEST"));
+    assert_eq!(error.dependent_tokens, ["IRIS-NIMDA"]);
 
     // Try to disable IRIS-NIMDA token first.
     block_on(disable_coin(&mm, "IRIS-NIMDA"));

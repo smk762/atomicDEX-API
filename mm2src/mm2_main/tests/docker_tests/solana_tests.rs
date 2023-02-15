@@ -1,7 +1,7 @@
 use crate::docker_tests::docker_tests_common::*;
 use mm2_number::bigdecimal::Zero;
-use mm2_test_helpers::for_tests::{disable_coin, disable_platform_coin_err, enable_solana_with_tokens, enable_spl,
-                                  sign_message, verify_message};
+use mm2_test_helpers::for_tests::{disable_coin, disable_coin_err, enable_solana_with_tokens, enable_spl, sign_message,
+                                  verify_message};
 use mm2_test_helpers::structs::{EnableSolanaWithTokensResponse, EnableSplResponse, RpcV2Response, SignatureResponse,
                                 VerificationResponse};
 use serde_json as json;
@@ -126,8 +126,8 @@ fn test_disable_solana_platform_coin_with_tokens() {
     block_on(enable_spl(&mm, "ADEX-SOL-DEVNET"));
 
     // Try to disable platform coin, SOL-DEVNET. This should fail due to the dependent tokens.
-    let dependent_tokens = &["ADEX-SOL-DEVNET", "USDC-SOL-DEVNET"];
-    block_on(disable_platform_coin_err(&mm, "SOL-DEVNET", dependent_tokens));
+    let error = block_on(disable_coin_err(&mm, "SOL-DEVNET"));
+    assert_eq!(error.dependent_tokens, ["ADEX-SOL-DEVNET", "USDC-SOL-DEVNET"]);
 
     // Try to disable ADEX-SOL-DEVNET token first.
     block_on(disable_coin(&mm, "ADEX-SOL-DEVNET"));

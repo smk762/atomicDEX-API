@@ -1,6 +1,6 @@
 use common::block_on;
 use http::StatusCode;
-use mm2_test_helpers::for_tests::{disable_coin, disable_platform_coin_err, get_passphrase, MarketMakerIt, Mm2TestConf,
+use mm2_test_helpers::for_tests::{disable_coin, disable_coin_err, get_passphrase, MarketMakerIt, Mm2TestConf,
                                   ETH_DEV_NODES};
 use serde_json::{json, Value as Json};
 use std::str::FromStr;
@@ -66,8 +66,8 @@ fn test_disable_eth_coin_with_token() {
     let order_uuid = order_uuid.get("result").unwrap().get("uuid").unwrap().as_str().unwrap();
 
     // Try to disable platform coin, ETH. This should fail due to the dependent tokens.
-    let dependent_tokens = &["JST"];
-    block_on(disable_platform_coin_err(&mm, "ETH", dependent_tokens));
+    let error = block_on(disable_coin_err(&mm, "ETH"));
+    assert_eq!(error.dependent_tokens, ["JST"]);
 
     // Try to disable JST token first.
     // ETH and JST should be deactivated at once.

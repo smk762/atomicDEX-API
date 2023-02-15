@@ -1,7 +1,7 @@
 use crate::docker_tests::docker_tests_common::*;
 use crate::integration_tests_common::enable_native;
 use mm2_number::BigDecimal;
-use mm2_test_helpers::for_tests::{assert_coin_not_found_on_balance, disable_coin, disable_platform_coin_err,
+use mm2_test_helpers::for_tests::{assert_coin_not_found_on_balance, disable_coin, disable_coin_err,
                                   enable_bch_with_tokens, enable_slp, my_balance, UtxoRpcMode};
 use mm2_test_helpers::structs::{EnableBchWithTokensResponse, EnableElectrumResponse, EnableSlpResponse, RpcV2Response};
 use serde_json::{self as json};
@@ -177,6 +177,6 @@ fn test_disable_platform_coin_with_tokens() {
         false,
     ));
     // Try to disable platform coin, FORSLP. This should fail due to the dependent tokens.
-    let dependent_tokens = &["ADEXSLP"];
-    block_on(disable_platform_coin_err(&mm, "FORSLP", dependent_tokens));
+    let error = block_on(disable_coin_err(&mm, "FORSLP"));
+    assert_eq!(error.dependent_tokens, ["ADEXSLP"]);
 }
