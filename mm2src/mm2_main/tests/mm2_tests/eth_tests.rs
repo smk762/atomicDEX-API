@@ -66,7 +66,8 @@ fn test_disable_eth_coin_with_token() {
     let order_uuid = order_uuid.get("result").unwrap().get("uuid").unwrap().as_str().unwrap();
 
     // Try to disable platform coin, ETH. This should fail due to the dependent tokens.
-    block_on(disable_platform_coin_err(&mm, "ETH"));
+    let dependent_tokens = &["JST"];
+    block_on(disable_platform_coin_err(&mm, "ETH", dependent_tokens));
 
     // Try to disable JST token first.
     // ETH and JST should be deactivated at once.

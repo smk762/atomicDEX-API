@@ -177,5 +177,6 @@ fn test_disable_platform_coin_with_tokens() {
         false,
     ));
     // Try to disable platform coin, FORSLP. This should fail due to the dependent tokens.
-    block_on(disable_platform_coin_err(&mm, "FORSLP"));
+    let dependent_tokens = &["ADEXSLP"];
+    block_on(disable_platform_coin_err(&mm, "FORSLP", dependent_tokens));
 }

@@ -243,7 +243,8 @@ fn test_enable_lightning() {
     );
 
     // Try to disable platform coin, tBTC-TEST-segwit. This should fail due to the dependent tokens.
-    block_on(disable_platform_coin_err(&mm, "tBTC-TEST-segwit"));
+    let dependent_tokens = &["tBTC-TEST-lightning"];
+    block_on(disable_platform_coin_err(&mm, "tBTC-TEST-segwit", dependent_tokens));
 
     // Try to disable tBTC-TEST-lightning token first.
     block_on(disable_coin(&mm, "tBTC-TEST-lightning"));

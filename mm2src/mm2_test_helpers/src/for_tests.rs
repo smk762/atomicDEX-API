@@ -2384,7 +2384,7 @@ pub async fn disable_coin(mm: &MarketMakerIt, coin: &str) -> DisableResult {
 
 /// Checks whether the `disable_coin` RPC fails due to the following error:
 /// "There are tokens dependent on '$TICKER'".
-pub async fn disable_platform_coin_err(mm: &MarketMakerIt, coin: &str) {
+pub async fn disable_platform_coin_err(mm: &MarketMakerIt, coin: &str, dependent_tokens: &[&str]) {
     let disable = mm
         .rpc(&json! ({
             "userpass": mm.userpass,
@@ -2395,6 +2395,10 @@ pub async fn disable_platform_coin_err(mm: &MarketMakerIt, coin: &str) {
         .unwrap();
     assert!(!disable.0.is_success(), "'disable_coin' should have failed");
     assert!(disable.1.contains(&format!("There are tokens dependent on '{coin}'")));
+
+    let res: DisableCoinError = json::from_str(&disable.1).unwrap();
+    let expected: Vec<String> = dependent_tokens.iter().map(|token| token.to_string()).collect();
+    assert_eq!(res.dependent_tokens, expected);
 }
 
 pub async fn assert_coin_not_found_on_balance(mm: &MarketMakerIt, coin: &str) {

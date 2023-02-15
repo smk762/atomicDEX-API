@@ -48,6 +48,7 @@ pub fn disable_coin_err(
     matching: &[Uuid],
     cancelled: &[Uuid],
     active_swaps: &[Uuid],
+    dependent_tokens: &[String],
 ) -> Result<Response<Vec<u8>>, String> {
     let err = json!({
         "error": error,
@@ -55,7 +56,8 @@ pub fn disable_coin_err(
             "matching": matching,
             "cancelled": cancelled
         },
-        "active_swaps": active_swaps
+        "active_swaps": active_swaps,
+        "dependent_tokens": dependent_tokens,
     });
     Response::builder()
         .status(INTERNAL_SERVER_ERROR_CODE)
@@ -80,15 +82,15 @@ pub async fn disable_coin(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
     // If there're matching orders or active swaps we return an error.
     if !active_swaps.is_empty() || !still_matching_orders.is_empty() {
         let err = "There are currently matching orders or active swaps for some tokens".to_string();
-        return disable_coin_err(err, &still_matching_orders, &[], &active_swaps);
+        return disable_coin_err(err, &still_matching_orders, &[], &active_swaps, &[]);
     }
 
     let coins_ctx = try_s!(CoinsContext::from_ctx(&ctx));
     // If a platform coin is to be disabled, we should check if there are any tokens dependent on it.
     let dependent_tokens = coins_ctx.get_dependent_tokens(&ticker).await;
     if !dependent_tokens.is_empty() {
-        let err = format!("There are tokens dependent on '{ticker}': {dependent_tokens:?}");
-        return disable_coin_err(err, &still_matching_orders, &[], &active_swaps);
+        let err = format!("There are tokens dependent on '{ticker}'");
+        return disable_coin_err(err, &still_matching_orders, &[], &active_swaps, &dependent_tokens);
     }
 
     // Proceed with diabling the coin/tokens.
@@ -103,7 +105,7 @@ pub async fn disable_coin(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, St
             cancelled_orders.extend(cancelled);
         },
         Err(err) => {
-            return disable_coin_err(err, &still_matching_orders, &cancelled_orders, &active_swaps);
+            return disable_coin_err(err, &still_matching_orders, &cancelled_orders, &active_swaps, &[]);
         },
     }
 

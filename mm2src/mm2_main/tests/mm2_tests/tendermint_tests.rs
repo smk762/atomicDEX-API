@@ -291,7 +291,8 @@ fn test_disable_tendermint_platform_coin_with_token() {
     assert!(&activation_res.get("result").unwrap().get("balances").is_some());
 
     // Try to disable platform coin, IRIS-TEST. This should fail due to the dependent tokens.
-    block_on(disable_platform_coin_err(&mm, "IRIS-TEST"));
+    let dependent_tokens = &["IRIS-NIMDA"];
+    block_on(disable_platform_coin_err(&mm, "IRIS-TEST", dependent_tokens));
 
     // Try to disable IRIS-NIMDA token first.
     block_on(disable_coin(&mm, "IRIS-NIMDA"));
