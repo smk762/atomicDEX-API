@@ -2607,7 +2607,7 @@ impl Orderbook {
         i_am_relay: bool,
     ) -> Option<OrdermatchRequest> {
         let pubkey_state = pubkey_state_mut(&mut self.pubkeys_state, from_pubkey);
-
+        pubkey_state.last_keep_alive = now_ms() / 1000;
         let mut trie_roots_to_request = HashMap::new();
         for (alb_pair, trie_root) in message.trie_roots {
             let subscribed = self
@@ -2633,7 +2633,6 @@ impl Orderbook {
         }
 
         if trie_roots_to_request.is_empty() {
-            pubkey_state.last_keep_alive = message.timestamp;
             return None;
         }
 
