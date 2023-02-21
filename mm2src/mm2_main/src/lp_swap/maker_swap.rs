@@ -1615,6 +1615,7 @@ impl MakerSwapEvent {
             self,
             MakerSwapEvent::Started(_)
                 | MakerSwapEvent::Negotiated(_)
+                | MakerSwapEvent::MakerPaymentInstructionsReceived(_)
                 | MakerSwapEvent::TakerFeeValidated(_)
                 | MakerSwapEvent::MakerPaymentSent(_)
                 | MakerSwapEvent::TakerPaymentReceived(_)
