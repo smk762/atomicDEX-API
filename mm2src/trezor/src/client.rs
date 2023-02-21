@@ -41,21 +41,6 @@ impl TrezorClient {
         Ok((TrezorDeviceInfo::from(features), session))
     }
 
-    /// Checks if the Trezor device is vacant (not occupied),
-    /// and initializes a new Trezor session by sending
-    /// [Initialize](https://docs.trezor.io/trezor-firmware/common/communication/sessions.html#examples).
-    /// Returns `Ok(None)` if it is occupied already.
-    pub async fn try_init_new_session_if_not_occupied(
-        &self,
-    ) -> TrezorResult<Option<(TrezorDeviceInfo, TrezorSession<'_>)>> {
-        let mut session = match self.inner.try_lock() {
-            Some(inner) => TrezorSession { inner },
-            None => return Ok(None),
-        };
-        let features = session.initialize_device().await?;
-        Ok(Some((TrezorDeviceInfo::from(features), session)))
-    }
-
     /// Occupies the Trezor device for further interactions by locking a mutex.
     pub async fn session(&self) -> TrezorSession<'_> {
         TrezorSession {

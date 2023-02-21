@@ -81,66 +81,26 @@ impl HardwareWalletCtx {
         }
 
         let HwClient::Trezor(ref trezor) = self.hw_wallet;
-        match trezor.init_new_session().await {
-            Ok((_device, session)) => Ok(session),
-            Err(e) => {
-                self.handle_hw_error(&e);
-                Err(e.map(HwError::from))
-            },
-        }
+        let session = trezor.session().await;
+        self.check_if_connected(session).await
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub async fn trezor_connection_status(&self) -> HwConnectionStatus {
         if !self.hw_wallet_connected.load(Ordering::Relaxed) {
             return HwConnectionStatus::Unreachable;
         }
 
         let HwClient::Trezor(ref trezor) = self.hw_wallet;
-        let mut session = match trezor.try_session_if_not_occupied() {
+        let session = match trezor.try_session_if_not_occupied() {
             Some(session) => session,
             // If we got `None`, the session mutex is occupied by another task,
             // so for now we can consider the Trezor device as connected.
             None => return HwConnectionStatus::Connected,
         };
 
-        #[cfg(target_arch = "wasm32")]
-        match session.is_connected().await {
-            Ok(true) => HwConnectionStatus::Connected,
-            Ok(false) => {
-                self.handle_hw_error(&"Device has been disconnected");
-                HwConnectionStatus::Unreachable
-            },
-            Err(e) => {
-                self.handle_hw_error(&e);
-                HwConnectionStatus::Unreachable
-            },
-        }
-    }
-
-    /// Currently, we use the heavy [`TrezorClient::try_init_new_session_if_not_occupied`] method.
-    ///
-    /// Please note that we can't use [`TrezorSession::ping`] as it may request a Button/PIN press
-    /// if the device is **locked**.  So even if we cancel the Button/PIN request,
-    /// the display will have time to draw something, that is, blink.
-    ///
-    /// TODO figure out how to implement [`Transport::is_connected`] for the native `UsbTransport`.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub async fn trezor_connection_status(&self) -> HwConnectionStatus {
-        if !self.hw_wallet_connected.load(Ordering::Relaxed) {
-            return HwConnectionStatus::Unreachable;
-        }
-
-        let HwClient::Trezor(ref trezor) = self.hw_wallet;
-        match trezor.try_init_new_session_if_not_occupied().await {
-            Ok(Some((_device_info, _session))) => HwConnectionStatus::Connected,
-            // If we got `None`, the session mutex is occupied by another task,
-            // so for now we can consider the Trezor device as connected.
-            Ok(None) => HwConnectionStatus::Connected,
-            Err(e) => {
-                self.handle_hw_error(&e);
-                HwConnectionStatus::Unreachable
-            },
+        match self.check_if_connected(session).await {
+            Ok(_session) => HwConnectionStatus::Connected,
+            Err(_) => HwConnectionStatus::Unreachable,
         }
     }
 
@@ -175,6 +135,41 @@ impl HardwareWalletCtx {
             .await?;
         let extended_pubkey = Secp256k1ExtendedPublicKey::from_str(&mm2_internal_xpub).map_to_mm(HwError::from)?;
         Ok(H264::from(extended_pubkey.public_key().serialize()))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn check_if_connected<'a>(&self, mut session: TrezorSession<'a>) -> MmResult<TrezorSession<'a>, HwError> {
+        match session.is_connected().await {
+            Ok(true) => Ok(session),
+            Ok(false) => {
+                self.handle_hw_error(&HwError::DeviceDisconnected);
+                MmError::err(HwError::DeviceDisconnected)
+            },
+            Err(e) => {
+                self.handle_hw_error(&e);
+                Err(e.map(HwError::from))
+            },
+        }
+    }
+
+    /// Currently, we use the heavy [`TrezorSession::ping`] method although it may lead
+    /// to the Button/PIN press request if the device is **locked**.
+    /// So even if we cancel the Button/PIN request,
+    /// the display will have time to draw something, that is, blink.
+    ///
+    /// TODO figure out how to implement [`Transport::is_connected`] for the native `UsbTransport`.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn check_if_connected<'a>(&self, mut session: TrezorSession<'a>) -> MmResult<TrezorSession<'a>, HwError> {
+        match session.ping().await {
+            Ok(resp) => {
+                resp.cancel_if_not_ready().await;
+                Ok(session)
+            },
+            Err(e) => {
+                self.handle_hw_error(&e);
+                Err(e.map(HwError::from))
+            },
+        }
     }
 
     /// If either the [`HardwareWalletCtx::hw_wallet`] client failed on a connection check,
