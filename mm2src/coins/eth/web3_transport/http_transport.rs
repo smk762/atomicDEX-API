@@ -1,6 +1,7 @@
 use crate::eth::{web3_transport::Web3SendOut, EthCoin, GuiAuthMessages, RpcTransportEventHandler,
                  RpcTransportEventHandlerShared, Web3RpcError};
 use common::APPLICATION_JSON;
+use futures::lock::Mutex as AsyncMutex;
 use http::header::CONTENT_TYPE;
 use jsonrpc_core::{Call, Response};
 use mm2_net::transport::{GuiAuthValidation, GuiAuthValidationGenerator};
@@ -32,10 +33,18 @@ fn single_response<T: Deref<Target = [u8]>>(response: T, rpc_url: &str) -> Resul
     }
 }
 
+#[derive(Debug)]
+struct HttpTransportRpcClient(AsyncMutex<HttpTransportRpcClientImpl>);
+
+#[derive(Debug)]
+struct HttpTransportRpcClientImpl {
+    nodes: Vec<HttpTransportNode>,
+}
+
 #[derive(Clone, Debug)]
 pub struct HttpTransport {
     id: Arc<AtomicUsize>,
-    nodes: Vec<HttpTransportNode>,
+    client: Arc<HttpTransportRpcClient>,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
     pub(crate) gui_auth_validation_generator: Option<GuiAuthValidationGenerator>,
 }
@@ -50,9 +59,10 @@ impl HttpTransport {
     #[cfg(test)]
     #[inline]
     pub fn new(nodes: Vec<HttpTransportNode>) -> Self {
+        let client_impl = HttpTransportRpcClientImpl { nodes };
         HttpTransport {
             id: Arc::new(AtomicUsize::new(0)),
-            nodes,
+            client: Arc::new(HttpTransportRpcClient(AsyncMutex::new(client_impl))),
             event_handlers: Default::default(),
             gui_auth_validation_generator: None,
         }
@@ -63,9 +73,10 @@ impl HttpTransport {
         nodes: Vec<HttpTransportNode>,
         event_handlers: Vec<RpcTransportEventHandlerShared>,
     ) -> Self {
+        let client_impl = HttpTransportRpcClientImpl { nodes };
         HttpTransport {
             id: Arc::new(AtomicUsize::new(0)),
-            nodes,
+            client: Arc::new(HttpTransportRpcClient(AsyncMutex::new(client_impl))),
             event_handlers,
             gui_auth_validation_generator: None,
         }
@@ -77,10 +88,11 @@ impl HttpTransport {
             uri: url.parse().unwrap(),
             gui_auth,
         }];
+        let client_impl = HttpTransportRpcClientImpl { nodes };
 
         HttpTransport {
             id: Arc::new(AtomicUsize::new(0)),
-            nodes,
+            client: Arc::new(HttpTransportRpcClient(AsyncMutex::new(client_impl))),
             event_handlers: Default::default(),
             gui_auth_validation_generator: None,
         }
@@ -101,7 +113,7 @@ impl Transport for HttpTransport {
     fn send(&self, _id: RequestId, request: Call) -> Self::Out {
         Box::pin(send_request(
             request,
-            self.nodes.clone(),
+            self.client.clone(),
             self.event_handlers.clone(),
             self.gui_auth_validation_generator.clone(),
         ))
@@ -111,7 +123,7 @@ impl Transport for HttpTransport {
     fn send(&self, _id: RequestId, request: Call) -> Self::Out {
         Box::pin(send_request(
             request,
-            self.nodes.clone(),
+            self.client.clone(),
             self.event_handlers.clone(),
             self.gui_auth_validation_generator.clone(),
         ))
@@ -160,7 +172,7 @@ fn handle_gui_auth_payload_if_activated(
 #[cfg(not(target_arch = "wasm32"))]
 async fn send_request(
     request: Call,
-    nodes: Vec<HttpTransportNode>,
+    client: Arc<HttpTransportRpcClient>,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
     gui_auth_validation_generator: Option<GuiAuthValidationGenerator>,
 ) -> Result<Json, Error> {
@@ -177,7 +189,9 @@ async fn send_request(
 
     let serialized_request = to_string(&request);
 
-    for node in nodes.iter() {
+    let mut client_impl = client.0.lock().await;
+
+    for (i, node) in client_impl.nodes.clone().iter().enumerate() {
         let serialized_request =
             match handle_gui_auth_payload_if_activated(&gui_auth_validation_generator, node, &request) {
                 Ok(Some(r)) => r,
@@ -231,6 +245,8 @@ async fn send_request(
             continue;
         }
 
+        client_impl.nodes.rotate_left(i);
+
         return single_response(body, &node.uri.to_string());
     }
 
@@ -240,14 +256,16 @@ async fn send_request(
 #[cfg(target_arch = "wasm32")]
 async fn send_request(
     request: Call,
-    nodes: Vec<HttpTransportNode>,
+    client: Arc<HttpTransportRpcClient>,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
     gui_auth_validation_generator: Option<GuiAuthValidationGenerator>,
 ) -> Result<Json, Error> {
     let serialized_request = to_string(&request);
 
     let mut transport_errors = Vec::new();
-    for node in nodes.iter() {
+    let mut client_impl = client.0.lock().await;
+
+    for (i, node) in client_impl.nodes.clone().iter().enumerate() {
         let serialized_request =
             match handle_gui_auth_payload_if_activated(&gui_auth_validation_generator, node, &request) {
                 Ok(Some(r)) => r,
@@ -259,7 +277,10 @@ async fn send_request(
             };
 
         match send_request_once(serialized_request.clone(), &node.uri, &event_handlers).await {
-            Ok(response_json) => return Ok(response_json),
+            Ok(response_json) => {
+                client_impl.nodes.rotate_left(i);
+                return Ok(response_json);
+            },
             Err(Error::Transport(e)) => {
                 transport_errors.push(Web3RpcError::Transport(e.to_string()));
             },
