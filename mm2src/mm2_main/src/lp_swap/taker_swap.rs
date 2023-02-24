@@ -1053,7 +1053,7 @@ impl TakerSwap {
         let time_dif = self.r().data.started_at.abs_diff(maker_data.started_at());
         if time_dif > 60 {
             return Ok((Some(TakerSwapCommand::Finish), vec![TakerSwapEvent::NegotiateFailed(
-                ERRL!("Started_at time_dif over 60 {}", time_dif).into(),
+                ERRL!("The time difference between you and the maker cannot be longer than 60 seconds. Current difference: {}. Please make sure that your system clock is synced to the correct time before starting another swap!", time_dif).into(),
             )]));
         }
 
