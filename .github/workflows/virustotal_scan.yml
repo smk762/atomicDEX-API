@@ -1,8 +1,8 @@
-name: released
+name: VirusTotal Scan
 
 on:
   release:
-    types: [edited, released, published]
+    types: [created, edited, released, published]
 
 jobs:
   virustotal:
