@@ -55,7 +55,7 @@ use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::ops::Deref;
-use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))] use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
@@ -484,7 +484,7 @@ impl EthCoinImpl {
         Box::new(self.web3.trace().filter(filter.build()).map_err(|e| ERRL!("{}", e)))
     }
 
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    #[cfg(not(target_arch = "wasm32"))]
     fn eth_traces_path(&self, ctx: &MmArc) -> PathBuf {
         ctx.dbdir()
             .join("TRANSACTIONS")
@@ -528,7 +528,7 @@ impl EthCoinImpl {
         unreachable!()
     }
 
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    #[cfg(not(target_arch = "wasm32"))]
     fn erc20_events_path(&self, ctx: &MmArc) -> PathBuf {
         ctx.dbdir()
             .join("TRANSACTIONS")

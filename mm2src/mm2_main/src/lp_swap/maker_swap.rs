@@ -73,8 +73,10 @@ pub const MAKER_ERROR_EVENTS: [&str; 15] = [
 
 pub const MAKER_PAYMENT_SENT_LOG: &str = "Maker payment sent";
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn stats_maker_swap_dir(ctx: &MmArc) -> PathBuf { ctx.dbdir().join("SWAPS").join("STATS").join("MAKER") }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn stats_maker_swap_file_path(ctx: &MmArc, uuid: &Uuid) -> PathBuf {
     stats_maker_swap_dir(ctx).join(format!("{}.json", uuid))
 }

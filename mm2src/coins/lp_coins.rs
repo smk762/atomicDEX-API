@@ -66,7 +66,6 @@ use std::fmt;
 use std::future::Future as Future03;
 use std::num::NonZeroUsize;
 use std::ops::{Add, Deref};
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -80,6 +79,7 @@ cfg_native! {
     use futures::AsyncWriteExt;
     use lightning_invoice::{Invoice, ParseOrSemanticError};
     use std::io;
+    use std::path::PathBuf;
     use zcash_primitives::transaction::Transaction as ZTransaction;
     use z_coin::ZcoinProtocolInfo;
 }
@@ -201,6 +201,7 @@ pub mod coins_tests;
 pub mod eth;
 use eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
 
+pub mod hd_confirm_address;
 pub mod hd_pubkey;
 
 pub mod hd_wallet;
@@ -215,7 +216,8 @@ pub mod qrc20;
 use qrc20::{qrc20_coin_with_policy, Qrc20ActivationParams, Qrc20Coin, Qrc20FeeDetails};
 
 pub mod rpc_command;
-use rpc_command::{init_account_balance::{AccountBalanceTaskManager, AccountBalanceTaskManagerShared},
+use rpc_command::{get_new_address::{GetNewAddressTaskManager, GetNewAddressTaskManagerShared},
+                  init_account_balance::{AccountBalanceTaskManager, AccountBalanceTaskManagerShared},
                   init_create_account::{CreateAccountTaskManager, CreateAccountTaskManagerShared},
                   init_scan_for_new_addresses::{ScanAddressesTaskManager, ScanAddressesTaskManagerShared},
                   init_withdraw::{WithdrawTaskManager, WithdrawTaskManagerShared}};
@@ -1962,6 +1964,7 @@ pub trait MmCoin:
     fn process_history_loop(&self, ctx: MmArc) -> Box<dyn Future<Item = (), Error = ()> + Send>;
 
     /// Path to tx history file
+    #[cfg(not(target_arch = "wasm32"))]
     fn tx_history_path(&self, ctx: &MmArc) -> PathBuf {
         let my_address = self.my_address().unwrap_or_default();
         // BCH cash address format has colon after prefix, e.g. bitcoincash:
@@ -1973,6 +1976,7 @@ pub trait MmCoin:
     }
 
     /// Path to tx history migration file
+    #[cfg(not(target_arch = "wasm32"))]
     fn tx_migration_path(&self, ctx: &MmArc) -> PathBuf {
         let my_address = self.my_address().unwrap_or_default();
         // BCH cash address format has colon after prefix, e.g. bitcoincash:
@@ -2226,6 +2230,7 @@ pub struct CoinsContext {
     balance_update_handlers: AsyncMutex<Vec<Box<dyn BalanceTradeFeeUpdatedHandler + Send + Sync>>>,
     account_balance_task_manager: AccountBalanceTaskManagerShared,
     create_account_manager: CreateAccountTaskManagerShared,
+    get_new_address_manager: GetNewAddressTaskManagerShared,
     platform_coin_tokens: PaMutex<HashMap<String, HashSet<String>>>,
     scan_addresses_manager: ScanAddressesTaskManagerShared,
     withdraw_task_manager: WithdrawTaskManagerShared,
@@ -2249,13 +2254,14 @@ impl CoinsContext {
                 coins: AsyncMutex::new(HashMap::new()),
                 balance_update_handlers: AsyncMutex::new(vec![]),
                 account_balance_task_manager: AccountBalanceTaskManager::new_shared(),
-                withdraw_task_manager: WithdrawTaskManager::new_shared(),
                 create_account_manager: CreateAccountTaskManager::new_shared(),
+                get_new_address_manager: GetNewAddressTaskManager::new_shared(),
                 scan_addresses_manager: ScanAddressesTaskManager::new_shared(),
+                withdraw_task_manager: WithdrawTaskManager::new_shared(),
                 #[cfg(target_arch = "wasm32")]
-                tx_history_db: ConstructibleDb::new_shared(ctx),
+                tx_history_db: ConstructibleDb::new(ctx).into_shared(),
                 #[cfg(target_arch = "wasm32")]
-                hd_wallet_db: ConstructibleDb::new_shared(ctx),
+                hd_wallet_db: ConstructibleDb::new_shared_db(ctx).into_shared(),
             })
         })))
     }
