@@ -36,6 +36,7 @@
 
 use async_trait::async_trait;
 use base58::FromBase58Error;
+use common::custom_futures::timeout::TimeoutError;
 use common::executor::{abortable_queue::{AbortableQueue, WeakSpawner},
                        AbortSettings, AbortedError, SpawnAbortable, SpawnFuture};
 use common::log::LogOnError;
@@ -85,8 +86,8 @@ cfg_native! {
 }
 
 cfg_wasm32! {
-    use mm2_db::indexed_db::{ConstructibleDb, DbLocked, SharedDb};
     use hd_wallet_storage::HDWalletDb;
+    use mm2_db::indexed_db::{ConstructibleDb, DbLocked, SharedDb};
     use tx_history_storage::wasm::{clear_tx_history, load_tx_history, save_tx_history, TxHistoryDb};
     pub type TxHistoryDbLocked<'a> = DbLocked<'a, TxHistoryDb>;
 }
@@ -738,7 +739,12 @@ pub trait SwapOps {
         other_side_address: Option<&[u8]>,
     ) -> Result<Option<BytesJson>, MmError<NegotiateSwapContractAddrErr>>;
 
+    /// Consider using [`SwapOps::derive_htlc_pubkey`] if you need the public key only.
+    /// Some coins may not have a private key.
     fn derive_htlc_key_pair(&self, swap_unique_data: &[u8]) -> KeyPair;
+
+    /// Derives an HTLC key-pair and returns a public key corresponding to that key.
+    fn derive_htlc_pubkey(&self, swap_unique_data: &[u8]) -> Vec<u8>;
 
     fn validate_other_pubkey(&self, raw_pubkey: &[u8]) -> MmResult<(), ValidateOtherPubKeyErr>;
 
@@ -984,6 +990,10 @@ pub struct WithdrawRequest {
     max: bool,
     fee: Option<WithdrawFee>,
     memo: Option<String>,
+    /// Currently, this flag is used by ETH/ERC20 coins activated with MetaMask **only**.
+    #[cfg(target_arch = "wasm32")]
+    #[serde(default)]
+    broadcast: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1025,26 +1035,6 @@ pub struct VerificationRequest {
 }
 
 impl WithdrawRequest {
-    pub fn new(
-        coin: String,
-        from: Option<WithdrawFrom>,
-        to: String,
-        amount: BigDecimal,
-        max: bool,
-        fee: Option<WithdrawFee>,
-        memo: Option<String>,
-    ) -> WithdrawRequest {
-        WithdrawRequest {
-            coin,
-            from,
-            to,
-            amount,
-            max,
-            fee,
-            memo,
-        }
-    }
-
     pub fn new_max(coin: String, to: String) -> WithdrawRequest {
         WithdrawRequest {
             coin,
@@ -1054,6 +1044,8 @@ impl WithdrawRequest {
             max: true,
             fee: None,
             memo: None,
+            #[cfg(target_arch = "wasm32")]
+            broadcast: false,
         }
     }
 }
@@ -1729,8 +1721,9 @@ pub enum WithdrawError {
     #[display(fmt = "RPC 'task' is awaiting '{}' user action", expected)]
     UnexpectedUserAction { expected: String },
     #[from_trait(WithHwRpcError::hw_rpc_error)]
-    #[display(fmt = "{}", _0)]
     HwError(HwRpcError),
+    #[cfg(target_arch = "wasm32")]
+    BroadcastExpected(String),
     #[display(fmt = "Transport error: {}", _0)]
     Transport(String),
     #[from_trait(WithInternal::internal)]
@@ -1757,6 +1750,8 @@ impl HttpStatusCode for WithdrawError {
             | WithdrawError::UnknownAccount { .. }
             | WithdrawError::UnexpectedUserAction { .. } => StatusCode::BAD_REQUEST,
             WithdrawError::HwError(_) => StatusCode::GONE,
+            #[cfg(target_arch = "wasm32")]
+            WithdrawError::BroadcastExpected(_) => StatusCode::BAD_REQUEST,
             WithdrawError::Transport(_) | WithdrawError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -1786,6 +1781,10 @@ impl From<UtxoSignWithKeyPairError> for WithdrawError {
         let error = format!("Error signing: {}", e);
         WithdrawError::InternalError(error)
     }
+}
+
+impl From<TimeoutError> for WithdrawError {
+    fn from(e: TimeoutError) -> Self { WithdrawError::Timeout(e.duration) }
 }
 
 impl WithdrawError {

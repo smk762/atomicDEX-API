@@ -999,8 +999,8 @@ impl TakerSwap {
         let taker_coin_swap_contract_address = self.taker_coin.swap_contract_address();
 
         let unique_data = self.unique_swap_data();
-        let maker_coin_htlc_key_pair = self.maker_coin.derive_htlc_key_pair(&unique_data);
-        let taker_coin_htlc_key_pair = self.taker_coin.derive_htlc_key_pair(&unique_data);
+        let maker_coin_htlc_pubkey = self.maker_coin.derive_htlc_pubkey(&unique_data);
+        let taker_coin_htlc_pubkey = self.taker_coin.derive_htlc_pubkey(&unique_data);
 
         let data = TakerSwapData {
             taker_coin: self.taker_coin.ticker().to_owned(),
@@ -1025,8 +1025,8 @@ impl TakerSwap {
             maker_payment_spend_trade_fee: Some(SavedTradeFee::from(maker_payment_spend_trade_fee)),
             maker_coin_swap_contract_address,
             taker_coin_swap_contract_address,
-            maker_coin_htlc_pubkey: Some(maker_coin_htlc_key_pair.public_slice().into()),
-            taker_coin_htlc_pubkey: Some(taker_coin_htlc_key_pair.public_slice().into()),
+            maker_coin_htlc_pubkey: Some(maker_coin_htlc_pubkey.as_slice().into()),
+            taker_coin_htlc_pubkey: Some(taker_coin_htlc_pubkey.as_slice().into()),
             p2p_privkey: self.p2p_privkey.map(SerializableSecp256k1Keypair::from),
         };
 
