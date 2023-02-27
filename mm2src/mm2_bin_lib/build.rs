@@ -55,11 +55,10 @@ fn mm_version() -> String {
 
     let mm_version_p = root().join("../../MM_VERSION");
     let v_file = String::from_utf8(slurp(&mm_version_p)).unwrap();
-    let tag_from_ci = v_file.trim().to_string();
 
     // if there is MM_VERSION file, that means CI wants to put a tag to version
     if !v_file.is_empty() {
-        version = format!("{}_{}", version, tag_from_ci);
+        version = format!("{}_{}", version, v_file.trim());
     } else {
         let mut command = Command::new("git");
         command.arg("log").arg("--pretty=format:%h").arg("-n1");

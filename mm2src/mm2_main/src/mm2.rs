@@ -376,7 +376,7 @@ pub fn mm2_main(version: String, datetime: String) {
     }
 
     if first_arg == Some("--version") || first_arg == Some("-v") || first_arg == Some("version") {
-        println!("AtomicDEX MarketMaker: {version}");
+        println!("AtomicDEX API: {version}");
         return;
     }
 
@@ -390,7 +390,7 @@ pub fn mm2_main(version: String, datetime: String) {
         return;
     }
 
-    log!("AtomicDEX MarketMaker {} DT {}", version, datetime);
+    log!("AtomicDEX API {} DT {}", version, datetime);
 
     if let Err(err) = run_lp_main(first_arg, &|_| (), version, datetime) {
         log!("{}", err);
