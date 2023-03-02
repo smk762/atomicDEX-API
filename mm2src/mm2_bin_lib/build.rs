@@ -46,11 +46,7 @@ fn root() -> PathBuf {
 /// we might skip synchronizing the Git repository there),
 /// but if it is, then we're going to check if the “MM_DATETIME” and the Git data match.
 fn mm_version() -> String {
-    // We fetch the actual git version here,
-    // with `git log '--pretty=format:%h' -n 1` for the nightlies,
-    // and a release tag when building from some kind of a stable branch,
-    // though we should keep the ability for the tooling to provide the “MM_VERSION”
-    // externally, because moving the entire ".git" around is not always practical.
+    // Reading version of `mm2_bin_lib` from cargo manifest
     let mut version = env!("CARGO_PKG_VERSION").to_owned();
 
     let mm_version_p = root().join("../../MM_VERSION");
