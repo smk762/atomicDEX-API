@@ -55,7 +55,9 @@ fn mm_version() -> String {
     // if there is MM_VERSION file, that means CI wants to put a tag to version
     if !v_file.is_empty() {
         version = format!("{}_{}", version, v_file.trim());
-    } else {
+    }
+    // put commit tag to the version
+    else {
         let mut command = Command::new("git");
         command.arg("log").arg("--pretty=format:%h").arg("-n1");
         if let Ok(go) = command.output() {
