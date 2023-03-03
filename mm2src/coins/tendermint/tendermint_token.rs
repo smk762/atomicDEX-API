@@ -515,16 +515,13 @@ impl MmCoin for TendermintToken {
                 .await
                 .map_to_mm(WithdrawError::Transport)?;
 
-            let _sequence_lock = platform.sequence_lock.lock().await;
             let account_info = platform.my_account_info().await?;
-
             let timeout_height = current_block + TIMEOUT_HEIGHT_DELTA;
 
-            let simulated_tx = platform
-                .gen_simulated_tx(account_info.clone(), msg_send.clone(), timeout_height, memo.clone())
-                .map_to_mm(|e| WithdrawError::InternalError(e.to_string()))?;
+            let fee_amount_u64 = platform
+                .calculate_fee_amount_as_u64(msg_send.clone(), timeout_height, memo.clone())
+                .await?;
 
-            let fee_amount_u64 = platform.calculate_fee_amount_as_u64(simulated_tx).await?;
             let fee_amount_dec = big_decimal_from_sat_unsigned(fee_amount_u64, platform.decimals());
 
             if base_denom_balance < fee_amount_u64 {
