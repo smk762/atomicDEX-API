@@ -1819,6 +1819,25 @@ impl MarketCoinOps for TendermintCoin {
                     .broadcast_tx_commit(tx_bytes.into())
                     .await
             );
+
+            if broadcast_res
+                .check_tx
+                .log
+                .to_string()
+                .contains("incorrect account sequence")
+                || broadcast_res
+                    .deliver_tx
+                    .log
+                    .to_string()
+                    .contains("incorrect account sequence")
+            {
+                return ERR!(
+                    "Wrong account sequence catched. check_tx log: {}, deliver_tx log: {}",
+                    broadcast_res.check_tx.log,
+                    broadcast_res.deliver_tx.log
+                );
+            }
+
             if !broadcast_res.check_tx.code.is_ok() {
                 return ERR!("Tx check failed {:?}", broadcast_res.check_tx);
             }
