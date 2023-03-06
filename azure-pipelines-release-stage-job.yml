@@ -41,7 +41,7 @@ jobs:
           mkdir upload
         displayName: 'Recreate upload dir'
       - bash: |
-          VERSION=2.1.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Debug
+          VERSION=$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Debug
           if ! grep -q $VERSION MM_VERSION; then
             echo $VERSION > MM_VERSION
           fi
@@ -67,6 +67,7 @@ jobs:
         condition: eq( variables['DEBUG_UPLOADED'], '' )
         env:
           MANUAL_MM_VERSION: true
+          JEMALLOC_SYS_WITH_MALLOC_CONF: "background_thread:true,narenas:1,tcache:false,dirty_decay_ms:0,muzzy_decay_ms:0,metadata_thp:auto"
       - bash: |
           zip upload/mm2-$(COMMIT_HASH)-$(Agent.OS)-Debug target-xenial/debug/mm2 target-xenial/debug/libmm2.a -j
         displayName: 'Prepare debug build upload Linux'
@@ -82,7 +83,7 @@ jobs:
         condition: and( eq( variables['Agent.OS'], 'Windows_NT' ), eq( variables['DEBUG_UPLOADED'], '' ) )
       - bash: |
           rm -f MM_VERSION
-          VERSION=2.1.$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Release
+          VERSION=$(Build.BuildId)_$(Build.SourceBranchName)_$(COMMIT_HASH)_$(Agent.OS)_Release
           if ! grep -q $VERSION MM_VERSION; then
             echo $VERSION > MM_VERSION
           fi

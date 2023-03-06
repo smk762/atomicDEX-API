@@ -53,16 +53,16 @@ by setting the NDK_HOME variable.
 
 #### armeabi-v7a
 
-    cross build --features native --target=armv7-linux-androideabi --release --lib
+    cross build --target=armv7-linux-androideabi --release --lib
 
 #### arm64-v8a
 
-    cross build --features native --target=aarch64-linux-android --release --lib
+    cross build --target=aarch64-linux-android --release --lib
 
 #### x86
 
-    cross build --features native --target=i686-linux-android --release --lib
+    cross build --target=i686-linux-android --release --lib
 
 #### x86_64
 
-    cross build --features native --target=x86_64-linux-android --release --lib
+    cross build --target=x86_64-linux-android --release --lib

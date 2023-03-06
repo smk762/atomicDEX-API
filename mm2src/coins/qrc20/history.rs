@@ -3,8 +3,8 @@ use crate::utxo::{RequestTxHistoryResult, UtxoFeeDetails};
 use crate::{CoinsContext, TxFeeDetails, TxHistoryResult};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use common::jsonrpc_client::JsonRpcErrorType;
-use common::mm_metrics::MetricsArc;
 use itertools::Itertools;
+use mm2_metrics::MetricsArc;
 use script_pubkey::{extract_contract_call_from_script, extract_gas_from_script, ExtractGasEnum};
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -224,7 +224,7 @@ impl Qrc20Coin {
         receipt: TxReceipt,
         miner_fee: BigDecimal,
     ) -> Result<TxTransferMap, String> {
-        let my_address = try_s!(self.utxo.derivation_method.iguana_or_err());
+        let my_address = try_s!(self.utxo.derivation_method.single_addr_or_err());
         let tx_hash: H256Json = try_s!(H256Json::from_str(&qtum_details.tx_hash));
         if qtum_tx.outputs.len() <= (receipt.output_index as usize) {
             return ERR!(
@@ -352,7 +352,8 @@ impl Qrc20Coin {
                         },
                         JsonRpcErrorType::InvalidRequest(err)
                         | JsonRpcErrorType::Transport(err)
-                        | JsonRpcErrorType::Parse(_, err) => {
+                        | JsonRpcErrorType::Parse(_, err)
+                        | JsonRpcErrorType::Internal(err) => {
                             return RequestTxHistoryResult::Retry {
                                 error: ERRL!("Error {} on blockchain_contract_event_get_history", err),
                             };
@@ -620,7 +621,7 @@ impl TransferHistoryBuilder {
                     .coin
                     .utxo
                     .derivation_method
-                    .iguana_or_err()
+                    .single_addr_or_err()
                     .mm_err(|e| UtxoRpcError::Internal(e.to_string()))?;
                 qtum::contract_addr_from_utxo_addr(my_address.clone())
                     .mm_err(|e| UtxoRpcError::Internal(e.to_string()))?
@@ -813,7 +814,7 @@ fn is_transfer_event_log(log: &LogEntry) -> bool {
 mod tests {
     use super::*;
     use common::block_on;
-    use common::mm_metrics::{MetricType, MetricsJson, MetricsOps};
+    use mm2_metrics::{MetricType, MetricsJson, MetricsOps};
     use mm2_test_helpers::for_tests::find_metrics_in_json;
     use qrc20_tests::qrc20_coin_for_test;
 
@@ -839,8 +840,8 @@ mod tests {
             3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144,
             72, 172, 110, 180, 13, 123, 179, 10, 49,
         ];
-        let (ctx, coin) = qrc20_coin_for_test(&priv_key, None);
-        ctx.metrics.init().unwrap();
+        let (ctx, coin) = qrc20_coin_for_test(priv_key, None);
+        ctx.metrics.init();
 
         let tx_hash: H256Json = hex::decode("85ede12ccc12fb1709c4d9e403e96c0c394b0916f2f6098d41d8dfa00013fcdb")
             .unwrap()
@@ -871,8 +872,8 @@ mod tests {
             3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144,
             72, 172, 110, 180, 13, 123, 179, 10, 49,
         ];
-        let (ctx, coin) = qrc20_coin_for_test(&priv_key, None);
-        ctx.metrics.init().unwrap();
+        let (ctx, coin) = qrc20_coin_for_test(priv_key, None);
+        ctx.metrics.init();
 
         let tx_hash: H256Json = hex::decode("85ede12ccc12fb1709c4d9e403e96c0c394b0916f2f6098d41d8dfa00013fcdb")
             .unwrap()
@@ -913,8 +914,8 @@ mod tests {
             3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144,
             72, 172, 110, 180, 13, 123, 179, 10, 49,
         ];
-        let (ctx, coin) = qrc20_coin_for_test(&priv_key, None);
-        ctx.metrics.init().unwrap();
+        let (ctx, coin) = qrc20_coin_for_test(priv_key, None);
+        ctx.metrics.init();
 
         let tx_hash: H256Json = hex::decode("85ede12ccc12fb1709c4d9e403e96c0c394b0916f2f6098d41d8dfa00013fcdb")
             .unwrap()
@@ -955,7 +956,7 @@ mod tests {
             3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144,
             72, 172, 110, 180, 13, 123, 179, 10, 49,
         ];
-        let (ctx, coin) = qrc20_coin_for_test(&priv_key, None);
+        let (ctx, coin) = qrc20_coin_for_test(priv_key, None);
 
         let tx_hash: H256Json = hex::decode("35e03bc529528a853ee75dde28f27eec8ed7b152b6af7ab6dfa5d55ea46f25ac")
             .unwrap()
@@ -980,7 +981,7 @@ mod tests {
             3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144,
             72, 172, 110, 180, 13, 123, 179, 10, 49,
         ];
-        let (ctx, coin) = qrc20_coin_for_test(&priv_key, None);
+        let (ctx, coin) = qrc20_coin_for_test(priv_key, None);
 
         let tx_hash: H256Json = hex::decode("85ede12ccc12fb1709c4d9e403e96c0c394b0916f2f6098d41d8dfa00013fcdb")
             .unwrap()
@@ -1005,10 +1006,10 @@ mod tests {
             3, 98, 177, 3, 108, 39, 234, 144, 131, 178, 103, 103, 127, 80, 230, 166, 53, 68, 147, 215, 42, 216, 144,
             72, 172, 110, 180, 13, 123, 179, 10, 49,
         ];
-        let (ctx, coin) = qrc20_coin_for_test(&priv_key, None);
+        let (ctx, coin) = qrc20_coin_for_test(priv_key, None);
 
         let metrics = MetricsArc::new();
-        metrics.init().unwrap();
+        metrics.init();
 
         let tx_hash_invalid: H256Json = hex::decode("0000000000000000000000000000000000000000000000000000000000000000")
             .unwrap()

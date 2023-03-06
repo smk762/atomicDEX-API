@@ -1,7 +1,8 @@
 use crate::transport::{SlurpError, SlurpResult};
 use common::executor::spawn_local;
-use common::stringify_js_error;
+use common::{stringify_js_error, APPLICATION_JSON};
 use futures::channel::oneshot;
+use http::header::CONTENT_TYPE;
 use http::{HeaderMap, StatusCode};
 use js_sys::Uint8Array;
 use mm2_err_handle::prelude::*;
@@ -27,7 +28,7 @@ pub async fn slurp_url(url: &str) -> SlurpResult {
 /// Please note the return header map is empty, because `wasm_bindgen` doesn't provide the way to extract all headers.
 pub async fn slurp_post_json(url: &str, body: String) -> SlurpResult {
     FetchRequest::post(url)
-        .header("Content-Type", "application/json")
+        .header(CONTENT_TYPE.as_str(), APPLICATION_JSON)
         .body_utf8(body)
         .request_str()
         .await
@@ -108,6 +109,9 @@ impl FetchRequest {
             let result = Self::fetch_str(request).await;
             tx.send(result).ok();
         };
+
+        // The spawned future doesn't capture shared pointers,
+        // so we can use `spawn_local` here.
         spawn_local(fut);
     }
 
@@ -116,6 +120,9 @@ impl FetchRequest {
             let result = Self::fetch_array(request).await;
             tx.send(result).ok();
         };
+
+        // The spawned future doesn't capture shared pointers,
+        // so we can use `spawn_local` here.
         spawn_local(fut);
     }
 

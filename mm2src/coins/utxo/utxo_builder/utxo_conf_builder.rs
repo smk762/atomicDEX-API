@@ -3,14 +3,14 @@ use crate::utxo::{parse_hex_encoded_u32, UtxoCoinConf, DEFAULT_DYNAMIC_FEE_VOLAT
                   MATURE_CONFIRMATIONS_DEFAULT};
 use crate::UtxoActivationParams;
 use bitcrypto::ChecksumType;
-use crypto::trezor::utxo::TrezorUtxoCoin;
-use crypto::{Bip32Error, ChildNumber};
+use crypto::{Bip32Error, StandardHDPathToCoin};
 use derive_more::Display;
 pub use keys::{Address, AddressFormat as UtxoAddressFormat, AddressHashEnum, KeyPair, Private, Public, Secret,
                Type as ScriptType};
 use mm2_err_handle::prelude::*;
 use script::SignatureVersion;
 use serde_json::{self as json, Value as Json};
+use spv_validation::conf::SPVConf;
 use std::num::NonZeroU64;
 use std::sync::atomic::AtomicBool;
 
@@ -24,23 +24,13 @@ pub enum UtxoConfError {
     DerivationPathIsNotSet,
     #[display(fmt = "'trezor_coin' field is not found in config")]
     TrezorCoinIsNotSet,
-    #[display(fmt = "Invalid 'derivation_path' purpose {}. BIP44 is supported only", found)]
-    InvalidDerivationPathPurpose {
-        found: ChildNumber,
-    },
-    #[display(
-        fmt = "Invalid length '{}' of 'derivation_path'. Expected \"m/purpose'/coin_type'/\" path, i.e 2 children",
-        found_children
-    )]
-    InvalidDerivationPathLen {
-        found_children: usize,
-    },
     #[display(fmt = "Error deserializing 'derivation_path': {}", _0)]
     ErrorDeserializingDerivationPath(String),
+    #[display(fmt = "Error deserializing 'spv_conf': {}", _0)]
+    ErrorDeserializingSPVConf(String),
     InvalidConsensusBranchId(String),
     InvalidVersionGroupId(String),
     InvalidAddressFormat(String),
-    InvalidBlockHeaderParams(String),
     InvalidDecimals(String),
 }
 
@@ -98,7 +88,9 @@ impl<'a> UtxoConfBuilder<'a> {
         let estimate_fee_mode = self.estimate_fee_mode();
         let estimate_fee_blocks = self.estimate_fee_blocks();
         let trezor_coin = self.trezor_coin();
-        let enable_spv_proof = self.enable_spv_proof();
+        let derivation_path = self.derivation_path()?;
+        let avg_blocktime = self.avg_blocktime();
+        let spv_conf = self.spv_conf()?;
 
         Ok(UtxoCoinConf {
             ticker: self.ticker.to_owned(),
@@ -130,7 +122,9 @@ impl<'a> UtxoConfBuilder<'a> {
             mature_confirmations,
             estimate_fee_blocks,
             trezor_coin,
-            enable_spv_proof,
+            spv_conf,
+            derivation_path,
+            avg_blocktime,
         })
     }
 
@@ -284,9 +278,17 @@ impl<'a> UtxoConfBuilder<'a> {
 
     fn estimate_fee_blocks(&self) -> u32 { json::from_value(self.conf["estimate_fee_blocks"].clone()).unwrap_or(1) }
 
-    fn trezor_coin(&self) -> Option<TrezorUtxoCoin> {
-        json::from_value(self.conf["trezor_coin"].clone()).unwrap_or_default()
+    fn trezor_coin(&self) -> Option<String> { self.conf["trezor_coin"].as_str().map(|coin| coin.to_string()) }
+
+    fn spv_conf(&self) -> UtxoConfResult<Option<SPVConf>> {
+        json::from_value(self.conf["spv_conf"].clone())
+            .map_to_mm(|e| UtxoConfError::ErrorDeserializingSPVConf(e.to_string()))
     }
 
-    fn enable_spv_proof(&self) -> bool { self.conf["enable_spv_proof"].as_bool().unwrap_or(false) }
+    fn derivation_path(&self) -> UtxoConfResult<Option<StandardHDPathToCoin>> {
+        json::from_value(self.conf["derivation_path"].clone())
+            .map_to_mm(|e| UtxoConfError::ErrorDeserializingDerivationPath(e.to_string()))
+    }
+
+    fn avg_blocktime(&self) -> Option<u64> { self.conf["avg_blocktime"].as_u64() }
 }

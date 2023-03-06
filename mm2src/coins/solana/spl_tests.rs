@@ -89,6 +89,7 @@ fn spl_my_balance() {
     assert_eq!(res.spendable, BigDecimal::from(0));
 }
 
+// Stop ignoring when Solana is released
 #[test]
 #[ignore]
 #[cfg(not(target_arch = "wasm32"))]

@@ -4,20 +4,25 @@ use crate::standalone_coin::{InitStandaloneCoinActivationOps, InitStandaloneCoin
                              InitStandaloneCoinInitialStatus, InitStandaloneCoinTaskHandle,
                              InitStandaloneCoinTaskManagerShared};
 use async_trait::async_trait;
-use coins::coin_balance::{EnableCoinBalance, IguanaWalletBalance};
+use coins::coin_balance::{CoinBalanceReport, IguanaWalletBalance};
+use coins::my_tx_history_v2::TxHistoryStorage;
+use coins::tx_history_storage::CreateTxHistoryStorageError;
 use coins::z_coin::{z_coin_from_conf_and_params, BlockchainScanStopped, SyncStatus, ZCoin, ZCoinBuildError,
                     ZcoinActivationParams, ZcoinProtocolInfo};
-use coins::{BalanceError, CoinProtocol, MarketCoinOps, RegisterCoinError};
+use coins::{BalanceError, CoinProtocol, MarketCoinOps, PrivKeyBuildPolicy, RegisterCoinError};
 use crypto::hw_rpc_task::{HwRpcTaskAwaitingStatus, HwRpcTaskUserAction};
-use crypto::CryptoInitError;
+use crypto::CryptoCtxError;
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
+use mm2_metrics::MetricsArc;
+use mm2_number::BigDecimal;
 use rpc_task::RpcTaskError;
 use ser_error_derive::SerializeErrorType;
 use serde_derive::Serialize;
 use serde_json::Value as Json;
+use std::collections::HashMap;
 use std::time::Duration;
 
 pub type ZcoinTaskManagerShared = InitStandaloneCoinTaskManagerShared<ZCoin>;
@@ -29,11 +34,17 @@ pub type ZcoinUserAction = HwRpcTaskUserAction;
 pub struct ZcoinActivationResult {
     pub ticker: String,
     pub current_block: u64,
-    pub wallet_balance: EnableCoinBalance,
+    pub wallet_balance: CoinBalanceReport,
 }
 
 impl CurrentBlock for ZcoinActivationResult {
     fn current_block(&self) -> u64 { self.current_block }
+}
+
+impl GetAddressesBalances for ZcoinActivationResult {
+    fn get_addresses_balances(&self) -> HashMap<String, BigDecimal> {
+        self.wallet_balance.to_addresses_total_balances()
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -116,12 +127,20 @@ impl From<RpcTaskError> for ZcoinInitError {
     }
 }
 
-impl From<CryptoInitError> for ZcoinInitError {
-    fn from(err: CryptoInitError) -> Self { ZcoinInitError::Internal(err.to_string()) }
+impl From<CryptoCtxError> for ZcoinInitError {
+    fn from(err: CryptoCtxError) -> Self { ZcoinInitError::Internal(err.to_string()) }
 }
 
 impl From<BlockchainScanStopped> for ZcoinInitError {
     fn from(e: BlockchainScanStopped) -> Self { ZcoinInitError::Internal(e.to_string()) }
+}
+
+impl From<CreateTxHistoryStorageError> for ZcoinInitError {
+    fn from(e: CreateTxHistoryStorageError) -> Self {
+        match e {
+            CreateTxHistoryStorageError::Internal(internal) => ZcoinInitError::Internal(internal),
+        }
+    }
 }
 
 impl From<ZcoinInitError> for InitStandaloneCoinError {
@@ -143,6 +162,10 @@ impl From<ZcoinInitError> for InitStandaloneCoinError {
             ZcoinInitError::Internal(e) => InitStandaloneCoinError::Internal(e),
         }
     }
+}
+
+impl From<CryptoCtxError> for InitStandaloneCoinError {
+    fn from(e: CryptoCtxError) -> Self { InitStandaloneCoinError::Internal(e.to_string()) }
 }
 
 impl TryFromCoinProtocol for ZcoinProtocolInfo {
@@ -179,14 +202,17 @@ impl InitStandaloneCoinActivationOps for ZCoin {
         protocol_info: ZcoinProtocolInfo,
         task_handle: &ZcoinRpcTaskHandle,
     ) -> MmResult<Self, ZcoinInitError> {
-        let secp_privkey = ctx.secp256k1_key_pair().private().secret;
+        // When `ZCoin` supports Trezor, we'll need to check [`ZcoinActivationParams::priv_key_policy`]
+        // instead of using [`PrivKeyBuildPolicy::detect_priv_key_policy`].
+        let priv_key_policy = PrivKeyBuildPolicy::detect_priv_key_policy(&ctx)?;
+
         let coin = z_coin_from_conf_and_params(
             &ctx,
             &ticker,
             &coin_conf,
             activation_request,
             protocol_info,
-            secp_privkey.as_slice(),
+            priv_key_policy,
         )
         .await
         .mm_err(|e| ZcoinInitError::from_build_err(e, ticker))?;
@@ -233,10 +259,19 @@ impl InitStandaloneCoinActivationOps for ZCoin {
         Ok(ZcoinActivationResult {
             ticker: self.ticker().into(),
             current_block,
-            wallet_balance: EnableCoinBalance::Iguana(IguanaWalletBalance {
+            wallet_balance: CoinBalanceReport::Iguana(IguanaWalletBalance {
                 address: self.my_z_address_encoded(),
                 balance,
             }),
         })
+    }
+
+    /// Transaction history is fetching from a wallet database for `ZCoin`.
+    fn start_history_background_fetching(
+        &self,
+        _metrics: MetricsArc,
+        _storage: impl TxHistoryStorage,
+        _current_balances: HashMap<String, BigDecimal>,
+    ) {
     }
 }

@@ -3,9 +3,11 @@ name = "db_common"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+doctest = false
 
 [dependencies]
+common = { path = "../common" }
 hex = "0.4.2"
 log = "0.4.8"
 uuid = { version = "0.7", features = ["serde", "v4"] }

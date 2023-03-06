@@ -11,6 +11,7 @@
 //!                   binary
 
 #![allow(uncommon_codepoints)]
+#![feature(allocator_api)]
 #![feature(integer_atomics, panic_info_message)]
 #![feature(async_closure)]
 #![feature(hash_raw_entry)]
@@ -27,7 +28,7 @@
 
 /// Implements a `From` for `enum` with a variant name matching the name of the type stored.
 ///
-/// This is helpful as a workaround for the lack of datasort refinements.  
+/// This is helpful as a workaround for the lack of datasort refinements.
 /// And also as a simpler alternative to `enum_dispatch` and `enum_derive`.
 ///
 ///     enum Color {Red (Red)}
@@ -84,59 +85,79 @@ macro_rules! try_h {
     };
 }
 
+/// Drops mutability of given variable
+#[macro_export]
+macro_rules! drop_mutability {
+    ($t: ident) => {
+        let $t = $t;
+    };
+}
+
+/// Reads inner value of `Option<T>`, returns `Ok(None)` otherwise.
+#[macro_export]
+macro_rules! some_or_return_ok_none {
+    ($val:expr) => {
+        match $val {
+            Some(t) => t,
+            None => {
+                return Ok(None);
+            },
+        }
+    };
+}
+
 #[macro_use]
 pub mod jsonrpc_client;
 #[macro_use]
-pub mod log;
+pub mod fmt;
 #[macro_use]
-pub mod mm_metrics;
+pub mod log;
 
 pub mod crash_reports;
 pub mod custom_futures;
 pub mod custom_iter;
+#[path = "executor/mod.rs"] pub mod executor;
+pub mod number_type_casting;
 pub mod seri;
 #[path = "patterns/state_machine.rs"] pub mod state_machine;
 pub mod time_cache;
 
 #[cfg(not(target_arch = "wasm32"))]
-#[path = "executor/native_executor.rs"]
-pub mod executor;
-
-#[cfg(not(target_arch = "wasm32"))]
 #[path = "wio.rs"]
 pub mod wio;
 
-#[cfg(target_arch = "wasm32")]
-#[path = "executor/wasm_executor.rs"]
-pub mod executor;
-
 #[cfg(target_arch = "wasm32")] pub mod wasm;
+
 #[cfg(target_arch = "wasm32")] pub use wasm::*;
 
 use backtrace::SymbolName;
+use chrono::Utc;
 pub use futures::compat::Future01CompatExt;
-use futures::future::{abortable, AbortHandle, FutureExt};
 use futures01::{future, Future};
-use http::header::{HeaderValue, CONTENT_TYPE};
+use http::header::CONTENT_TYPE;
 use http::Response;
 use parking_lot::{Mutex as PaMutex, MutexGuard as PaMutexGuard};
 use rand::{rngs::SmallRng, SeedableRng};
 use serde::{de, ser};
 use serde_json::{self as json, Value as Json};
-use std::fmt::{self, Write as FmtWrite};
+use sha2::{Digest, Sha256};
+use std::alloc::Allocator;
+use std::fmt::Write as FmtWrite;
+use std::fs::File;
 use std::future::Future as Future03;
-use std::io::Write;
+use std::io::{BufReader, Read, Write};
 use std::iter::Peekable;
 use std::mem::{forget, zeroed};
 use std::num::NonZeroUsize;
 use std::ops::{Add, Deref, Div, RangeInclusive};
 use std::os::raw::c_void;
 use std::panic::{set_hook, PanicInfo};
+use std::path::PathBuf;
 use std::ptr::read_volatile;
 use std::sync::atomic::Ordering;
+use std::time::{Duration, SystemTime, SystemTimeError};
 use uuid::Uuid;
 
-use crate::executor::spawn;
 pub use http::StatusCode;
 pub use serde;
 
@@ -145,13 +166,17 @@ cfg_native! {
     #[cfg(not(windows))]
     use findshlibs::{IterationControl, Segment, SharedLibrary, TargetSharedLibrary};
     use std::env;
-    use std::path::PathBuf;
     use std::sync::Mutex;
 }
 
 cfg_wasm32! {
     use std::sync::atomic::AtomicUsize;
 }
+
+pub const X_GRPC_WEB: &str = "x-grpc-web";
+pub const APPLICATION_JSON: &str = "application/json";
+pub const APPLICATION_GRPC_WEB: &str = "application/grpc-web";
+pub const APPLICATION_GRPC_WEB_PROTO: &str = "application/grpc-web+proto";
 
 pub const SATOSHIS: u64 = 100_000_000;
 
@@ -164,7 +189,7 @@ lazy_static! {
 pub auto trait NotSame {}
 impl<X> !NotSame for (X, X) {}
 // Makes the error conversion work for structs/enums containing Box<dyn ...>
-impl<T: ?Sized> NotSame for Box<T> {}
+impl<T: ?Sized, A: Allocator> NotSame for Box<T, A> {}
 
 /// Converts u64 satoshis to f64
 pub fn sat_to_f(sat: u64) -> f64 { sat as f64 / SATOSHIS as f64 }
@@ -184,8 +209,8 @@ impl Default for bits256 {
     }
 }
 
-impl fmt::Display for bits256 {
-    fn fmt(&self, fm: &mut fmt::Formatter) -> fmt::Result {
+impl std::fmt::Display for bits256 {
+    fn fmt(&self, fm: &mut std::fmt::Formatter) -> std::fmt::Result {
         for &ch in self.bytes.iter() {
             fn hex_from_digit(num: u8) -> char {
                 if num < 10 {
@@ -218,7 +243,7 @@ impl<'de> de::Deserialize<'de> for bits256 {
         struct Bits256Visitor;
         impl<'de> de::Visitor<'de> for Bits256Visitor {
             type Value = bits256;
-            fn expecting(&self, fm: &mut fmt::Formatter) -> fmt::Result { fm.write_str("a byte array") }
+            fn expecting(&self, fm: &mut std::fmt::Formatter) -> std::fmt::Result { fm.write_str("a byte array") }
             fn visit_seq<S>(self, mut seq: S) -> Result<bits256, S::Error>
             where
                 S: de::SeqAccess<'de>,
@@ -250,8 +275,8 @@ impl<'de> de::Deserialize<'de> for bits256 {
     }
 }
 
-impl fmt::Debug for bits256 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { (self as &dyn fmt::Display).fmt(f) }
+impl std::fmt::Debug for bits256 {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { (self as &dyn std::fmt::Display).fmt(f) }
 }
 
 impl From<[u8; 32]> for bits256 {
@@ -462,8 +487,8 @@ pub fn set_panic_hook() {
 
         let mut trace = String::new();
         stack_trace(&mut stack_trace_frame, &mut |l| trace.push_str(l));
-        log::info!("{}", info);
-        log::info!("backtrace\n{}", trace);
+        log!("{}", info);
+        log!("backtrace\n{}", trace);
 
         let _ = ENTERED.try_with(|e| e.compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed));
     }))
@@ -500,7 +525,7 @@ where
 {
     let rf = match Response::builder()
         .status(status)
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .header(CONTENT_TYPE, APPLICATION_JSON)
         .body(Vec::from(body))
     {
         Ok(r) => future::ok::<Response<Vec<u8>>, String>(r),
@@ -512,6 +537,11 @@ where
     Box::new(rf)
 }
 
+/// An alternative to the `std::convert::Infallible` that implements `Serialize`.
+/// Replace it with `!` when it's stable.
+#[derive(Clone, Deserialize, Serialize)]
+pub enum SerdeInfallible {}
+
 /// An mmrpc 2.0 compatible error variant that is used when the serialization of an RPC response is failed.
 #[derive(Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
@@ -519,8 +549,8 @@ pub enum SerializationError {
     InternalError(String),
 }
 
-impl fmt::Display for SerializationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for SerializationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SerializationError::InternalError(internal) => {
                 write!(f, "Internal error: Couldn't serialize an RPC response: {}", internal)
@@ -530,9 +560,7 @@ impl fmt::Display for SerializationError {
 }
 
 impl SerializationError {
-    pub fn from_error<E: serde::ser::Error>(e: E) -> SerializationError {
-        SerializationError::InternalError(e.to_string())
-    }
+    pub fn from_error<E: ser::Error>(e: E) -> SerializationError { SerializationError::InternalError(e.to_string()) }
 }
 
 #[derive(Clone, Serialize)]
@@ -572,7 +600,7 @@ pub fn rpc_err_response(status: u16, msg: &str) -> HyRes {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn var(name: &str) -> Result<String, String> {
-    match std::env::var(name) {
+    match env::var(name) {
         Ok(v) => Ok(v),
         Err(_err) => ERR!("No {}", name),
     }
@@ -621,7 +649,6 @@ pub fn now_ms() -> u64 { js_sys::Date::now() as u64 }
 #[cfg(target_arch = "wasm32")]
 pub fn now_float() -> f64 {
     use gstuff::duration_to_float;
-    use std::time::Duration;
     duration_to_float(Duration::from_millis(now_ms()))
 }
 
@@ -749,6 +776,16 @@ pub const fn ten() -> usize { 10 }
 pub const fn ten_f64() -> f64 { 10. }
 
 pub const fn one_hundred() -> usize { 100 }
+
+pub const fn one_thousand_u32() -> u32 { 1000 }
+
+pub const fn one_and_half_f64() -> f64 { 1.5 }
+
+pub const fn three_hundred_f64() -> f64 { 300. }
+
+pub const fn one_f64() -> f64 { 1. }
+
+pub const fn sixty_f64() -> f64 { 60. }
 
 pub fn one() -> NonZeroUsize { NonZeroUsize::new(1).unwrap() }
 
@@ -926,16 +963,30 @@ impl<Id> Default for PagingOptionsEnum<Id> {
     fn default() -> Self { PagingOptionsEnum::PageNumber(NonZeroUsize::new(1).expect("1 > 0")) }
 }
 
-/// The AbortHandle that aborts on drop
-pub struct AbortOnDropHandle(AbortHandle);
+#[inline(always)]
+pub fn get_utc_timestamp() -> i64 { Utc::now().timestamp() }
 
-impl Drop for AbortOnDropHandle {
-    #[inline(always)]
-    fn drop(&mut self) { self.0.abort(); }
+#[inline(always)]
+pub fn get_local_duration_since_epoch() -> Result<Duration, SystemTimeError> {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
 }
 
-pub fn spawn_abortable(fut: impl Future03<Output = ()> + Send + 'static) -> AbortOnDropHandle {
-    let (abortable, handle) = abortable(fut);
-    spawn(abortable.then(|_| async {}));
-    AbortOnDropHandle(handle)
+/// open file and calculate its sha256 digest as lowercase hex string
+pub fn sha256_digest(path: &PathBuf) -> Result<String, std::io::Error> {
+    let input = File::open(path)?;
+    let mut reader = BufReader::new(input);
+
+    let digest = {
+        let mut hasher = Sha256::new();
+        let mut buffer = [0; 1024];
+        loop {
+            let count = reader.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+        }
+        format!("{:x}", hasher.finalize())
+    };
+    Ok(digest)
 }

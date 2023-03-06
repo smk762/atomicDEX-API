@@ -19,8 +19,7 @@
 //  marketmaker
 //
 use coins::lp_coinfind;
-use common::executor::spawn;
-use common::mm_metrics::{ClockOps, MetricsOps};
+use common::executor::SpawnFuture;
 use common::{log, Future01CompatExt};
 use derive_more::Display;
 use futures::{channel::oneshot, StreamExt};
@@ -32,11 +31,13 @@ use mm2_libp2p::atomicdex_behaviour::{AdexBehaviourCmd, AdexBehaviourEvent, Adex
 use mm2_libp2p::peers_exchange::PeerAddresses;
 use mm2_libp2p::{decode_message, encode_message, DecodingError, GossipsubMessage, Libp2pPublic, Libp2pSecpPublic,
                  MessageId, NetworkPorts, PeerId, TOPIC_SEPARATOR};
+use mm2_metrics::{mm_label, mm_timing};
 #[cfg(test)] use mocktopus::macros::*;
 use parking_lot::Mutex as PaMutex;
 use serde::de;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
+use wasm_timer::Instant;
 
 use crate::mm2::{lp_ordermatch, lp_stats, lp_swap};
 
@@ -112,7 +113,8 @@ pub async fn p2p_event_process_loop(ctx: MmWeak, mut rx: AdexEventRx, i_am_relay
         };
         match adex_event {
             Some(AdexBehaviourEvent::Message(peer_id, message_id, message)) => {
-                spawn(process_p2p_message(ctx, peer_id, message_id, message, i_am_relay));
+                let spawner = ctx.spawner();
+                spawner.spawn(process_p2p_message(ctx, peer_id, message_id, message, i_am_relay));
             },
             Some(AdexBehaviourEvent::PeerRequest {
                 peer_id,
@@ -133,11 +135,14 @@ async fn process_p2p_message(
     ctx: MmArc,
     peer_id: PeerId,
     message_id: MessageId,
-    message: GossipsubMessage,
+    mut message: GossipsubMessage,
     i_am_relay: bool,
 ) {
     let mut to_propagate = false;
     let mut orderbook_pairs = vec![];
+
+    message.topics.dedup();
+    drop_mutability!(message);
 
     for topic in message.topics {
         let mut split = topic.as_str().split(TOPIC_SEPARATOR);
@@ -151,13 +156,30 @@ async fn process_p2p_message(
                 lp_swap::process_msg(ctx.clone(), split.next().unwrap_or_default(), &message.data).await;
                 to_propagate = true;
             },
+            Some(lp_swap::WATCHER_PREFIX) => {
+                if ctx.is_watcher() {
+                    lp_swap::process_watcher_msg(ctx.clone(), &message.data).await;
+                }
+                to_propagate = true;
+            },
             Some(lp_swap::TX_HELPER_PREFIX) => {
                 if let Some(pair) = split.next() {
                     if let Ok(Some(coin)) = lp_coinfind(&ctx, pair).await {
-                        match coin.send_raw_tx_bytes(&message.data).compat().await {
-                            Ok(id) => log::debug!("Transaction broadcasted successfully: {:?} ", id),
-                            Err(e) => log::error!("Broadcast transaction failed. {}", e),
-                        }
+                        if let Err(e) = coin.tx_enum_from_bytes(&message.data) {
+                            log::error!("Message cannot continue the process due to: {:?}", e);
+                            continue;
+                        };
+
+                        let fut = coin.send_raw_tx_bytes(&message.data);
+                        ctx.spawner().spawn(async {
+                            match fut.compat().await {
+                                Ok(id) => log::debug!("Transaction broadcasted successfully: {:?} ", id),
+                                // TODO (After https://github.com/KomodoPlatform/atomicDEX-API/pull/1433)
+                                // Maybe do not log an error if the transaction is already sent to
+                                // the blockchain
+                                Err(e) => log::error!("Broadcast transaction failed (ignore this error if the transaction already sent by another seednode). {}", e),
+                            };
+                        })
                     }
                 }
             },
@@ -326,11 +348,10 @@ pub async fn request_one_peer<T: de::DeserializeOwned>(
     req: P2PRequest,
     peer: String,
 ) -> P2PRequestResult<Option<T>> {
-    let clock = ctx.metrics.clock().expect("Metrics clock is not available");
-    let start = clock.now();
+    let start = Instant::now();
     let mut responses = request_peers::<T>(ctx.clone(), req, vec![peer.clone()]).await?;
-    let end = clock.now();
-    mm_timing!(ctx.metrics, "peer.outgoing_request.timing", start, end, "peer" => peer);
+    let elapsed = start.elapsed();
+    mm_timing!(ctx.metrics, "peer.outgoing_request.timing", elapsed, "peer" => peer);
     if responses.len() != 1 {
         return MmError::err(P2PRequestError::ExpectedSingleResponseError(responses.len()));
     }

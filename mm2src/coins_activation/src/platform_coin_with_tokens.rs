@@ -2,18 +2,16 @@ use crate::prelude::*;
 use async_trait::async_trait;
 use coins::my_tx_history_v2::TxHistoryStorage;
 use coins::tx_history_storage::{CreateTxHistoryStorageError, TxHistoryStorageBuilder};
-use coins::{lp_coinfind, CoinProtocol, CoinsContext, MmCoinEnum};
-use common::mm_metrics::MetricsArc;
+use coins::{lp_coinfind, CoinProtocol, CoinsContext, MmCoinEnum, PrivKeyPolicyNotAllowed};
 use common::{log, HttpStatusCode, StatusCode};
+use crypto::CryptoCtxError;
 use derive_more::Display;
-use futures::future::AbortHandle;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
 use mm2_number::BigDecimal;
 use ser_error_derive::SerializeErrorType;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value as Json;
-use std::convert::Infallible;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct TokenActivationRequest<Req> {
@@ -23,7 +21,7 @@ pub struct TokenActivationRequest<Req> {
 }
 
 pub trait TokenOf: Into<MmCoinEnum> {
-    type PlatformCoin: PlatformWithTokensActivationOps + RegisterTokenInfo<Self>;
+    type PlatformCoin: TryPlatformCoinFromMmCoinEnum + PlatformWithTokensActivationOps + RegisterTokenInfo<Self> + Clone;
 }
 
 pub struct TokenActivationParams<Req, Protocol> {
@@ -65,7 +63,8 @@ pub trait TokenAsMmCoinInitializer: Send + Sync {
 
 pub enum InitTokensAsMmCoinsError {
     TokenConfigIsNotFound(String),
-    InvalidPubkey(String),
+    CouldNotFetchBalance(String),
+    Internal(String),
     TokenProtocolParseError { ticker: String, error: String },
     UnexpectedTokenProtocol { ticker: String, protocol: CoinProtocol },
 }
@@ -87,12 +86,8 @@ impl From<CoinConfWithProtocolError> for InitTokensAsMmCoinsError {
     }
 }
 
-pub trait RegisterTokenInfo<T: TokenOf<PlatformCoin = Self>> {
+pub trait RegisterTokenInfo<T: TokenOf> {
     fn register_token_info(&self, token: &T);
-}
-
-impl From<std::convert::Infallible> for InitTokensAsMmCoinsError {
-    fn from(e: Infallible) -> Self { match e {} }
 }
 
 #[async_trait]
@@ -149,7 +144,6 @@ pub trait PlatformWithTokensActivationOps: Into<MmCoinEnum> {
         coin_conf: Json,
         activation_request: Self::ActivationRequest,
         protocol_conf: Self::PlatformProtocolInfo,
-        priv_key: &[u8],
     ) -> Result<Self, MmError<Self::ActivationError>>;
 
     fn token_initializers(
@@ -160,10 +154,10 @@ pub trait PlatformWithTokensActivationOps: Into<MmCoinEnum> {
 
     fn start_history_background_fetching(
         &self,
-        metrics: MetricsArc,
+        ctx: MmArc,
         storage: impl TxHistoryStorage,
         initial_balance: BigDecimal,
-    ) -> AbortHandle;
+    );
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,10 +201,12 @@ pub enum EnablePlatformCoinWithTokensError {
         error: String,
     },
     #[display(fmt = "Private key is not allowed: {}", _0)]
-    PrivKeyNotAllowed(String),
+    PrivKeyPolicyNotAllowed(PrivKeyPolicyNotAllowed),
     #[display(fmt = "Unexpected derivation method: {}", _0)]
     UnexpectedDerivationMethod(String),
     Transport(String),
+    AtLeastOneNodeRequired(String),
+    InvalidPayload(String),
     Internal(String),
 }
 
@@ -245,7 +241,8 @@ impl From<InitTokensAsMmCoinsError> for EnablePlatformCoinWithTokensError {
             InitTokensAsMmCoinsError::UnexpectedTokenProtocol { ticker, protocol } => {
                 EnablePlatformCoinWithTokensError::UnexpectedTokenProtocol { ticker, protocol }
             },
-            InitTokensAsMmCoinsError::InvalidPubkey(e) => EnablePlatformCoinWithTokensError::Internal(e),
+            InitTokensAsMmCoinsError::Internal(e) => EnablePlatformCoinWithTokensError::Internal(e),
+            InitTokensAsMmCoinsError::CouldNotFetchBalance(e) => EnablePlatformCoinWithTokensError::Transport(e),
         }
     }
 }
@@ -258,13 +255,17 @@ impl From<CreateTxHistoryStorageError> for EnablePlatformCoinWithTokensError {
     }
 }
 
+impl From<CryptoCtxError> for EnablePlatformCoinWithTokensError {
+    fn from(e: CryptoCtxError) -> Self { EnablePlatformCoinWithTokensError::Internal(e.to_string()) }
+}
+
 impl HttpStatusCode for EnablePlatformCoinWithTokensError {
     fn status_code(&self) -> StatusCode {
         match self {
             EnablePlatformCoinWithTokensError::CoinProtocolParseError { .. }
             | EnablePlatformCoinWithTokensError::TokenProtocolParseError { .. }
             | EnablePlatformCoinWithTokensError::PlatformCoinCreationError { .. }
-            | EnablePlatformCoinWithTokensError::PrivKeyNotAllowed(_)
+            | EnablePlatformCoinWithTokensError::PrivKeyPolicyNotAllowed(_)
             | EnablePlatformCoinWithTokensError::UnexpectedDerivationMethod(_)
             | EnablePlatformCoinWithTokensError::Transport(_)
             | EnablePlatformCoinWithTokensError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -272,6 +273,8 @@ impl HttpStatusCode for EnablePlatformCoinWithTokensError {
             | EnablePlatformCoinWithTokensError::PlatformConfigIsNotFound(_)
             | EnablePlatformCoinWithTokensError::TokenConfigIsNotFound(_)
             | EnablePlatformCoinWithTokensError::UnexpectedPlatformProtocol { .. }
+            | EnablePlatformCoinWithTokensError::InvalidPayload { .. }
+            | EnablePlatformCoinWithTokensError::AtLeastOneNodeRequired(_)
             | EnablePlatformCoinWithTokensError::UnexpectedTokenProtocol { .. } => StatusCode::BAD_REQUEST,
         }
     }
@@ -294,15 +297,12 @@ where
 
     let (platform_conf, platform_protocol) = coin_conf_with_protocol(&ctx, &req.ticker)?;
 
-    let priv_key = &*ctx.secp256k1_key_pair().private().secret;
-
     let platform_coin = Platform::enable_platform_coin(
         ctx.clone(),
         req.ticker.clone(),
         platform_conf,
         req.request.clone(),
         platform_protocol,
-        priv_key,
     )
     .await?;
     let mut mm_tokens = Vec::new();
@@ -315,12 +315,11 @@ where
     log::info!("{} current block {}", req.ticker, activation_result.current_block());
 
     if req.request.tx_history() {
-        let abort_handler = platform_coin.start_history_background_fetching(
-            ctx.metrics.clone(),
+        platform_coin.start_history_background_fetching(
+            ctx.clone(),
             TxHistoryStorageBuilder::new(&ctx).build()?,
             activation_result.get_platform_balance(),
         );
-        ctx.abort_handlers.lock().unwrap().push(abort_handler);
     }
 
     let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();

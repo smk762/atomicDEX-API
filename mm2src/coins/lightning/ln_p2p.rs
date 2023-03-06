@@ -1,23 +1,22 @@
 use super::*;
-use common::executor::{spawn, Timer};
+use common::executor::{spawn_abortable, SpawnFuture, Timer};
 use common::log::LogState;
 use derive_more::Display;
 use lightning::chain::Access;
 use lightning::ln::msgs::NetAddress;
 use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
-use lightning::routing::network_graph::{NetGraphMsgHandler, NetworkGraph};
+use lightning::routing::gossip;
 use lightning_net_tokio::SocketDescriptor;
-use lightning_persister::storage::NodesAddressesMapShared;
 use mm2_net::ip_addr::fetch_external_ip;
 use rand::RngCore;
-use secp256k1::SecretKey;
+use secp256k1v22::{PublicKey, SecretKey};
 use std::net::{IpAddr, Ipv4Addr};
 use tokio::net::TcpListener;
 
 const TRY_RECONNECTING_TO_NODE_INTERVAL: f64 = 60.;
 const BROADCAST_NODE_ANNOUNCEMENT_INTERVAL: u64 = 600;
 
-type NetworkGossip = NetGraphMsgHandler<Arc<NetworkGraph>, Arc<dyn Access + Send + Sync>, Arc<LogState>>;
+pub type NetworkGossip = gossip::P2PGossipSync<Arc<NetworkGraph>, Arc<dyn Access + Send + Sync>, Arc<LogState>>;
 
 pub type PeerManager =
     SimpleArcPeerManager<SocketDescriptor, ChainMonitor, Platform, Platform, dyn Access + Send + Sync, LogState>;
@@ -30,12 +29,22 @@ pub enum ConnectToNodeRes {
     ConnectedSuccessfully { pubkey: PublicKey, node_addr: SocketAddr },
 }
 
-pub async fn connect_to_node(
+#[derive(Display)]
+pub enum ConnectionError {
+    #[display(fmt = "Handshake error: {}", _0)]
+    HandshakeErr(String),
+    #[display(fmt = "Timeout error: {}", _0)]
+    TimeOut(String),
+}
+
+pub async fn connect_to_ln_node(
     pubkey: PublicKey,
     node_addr: SocketAddr,
     peer_manager: Arc<PeerManager>,
-) -> ConnectToNodeResult<ConnectToNodeRes> {
-    if peer_manager.get_peer_node_ids().contains(&pubkey) {
+) -> Result<ConnectToNodeRes, ConnectionError> {
+    let peer_manager_ref = peer_manager.clone();
+    let peer_node_ids = async_blocking(move || peer_manager_ref.get_peer_node_ids()).await;
+    if peer_node_ids.contains(&pubkey) {
         return Ok(ConnectToNodeRes::AlreadyConnected { pubkey, node_addr });
     }
 
@@ -43,7 +52,7 @@ pub async fn connect_to_node(
         match lightning_net_tokio::connect_outbound(Arc::clone(&peer_manager), pubkey, node_addr).await {
             Some(fut) => Box::pin(fut),
             None => {
-                return MmError::err(ConnectToNodeError::ConnectionError(format!(
+                return Err(ConnectionError::TimeOut(format!(
                     "Failed to connect to node: {}",
                     pubkey
                 )))
@@ -54,7 +63,7 @@ pub async fn connect_to_node(
         // Make sure the connection is still established.
         match futures::poll!(&mut connection_closed_future) {
             std::task::Poll::Ready(_) => {
-                return MmError::err(ConnectToNodeError::ConnectionError(format!(
+                return Err(ConnectionError::HandshakeErr(format!(
                     "Node {} disconnected before finishing the handshake",
                     pubkey
                 )));
@@ -62,7 +71,9 @@ pub async fn connect_to_node(
             std::task::Poll::Pending => {},
         }
 
-        if peer_manager.get_peer_node_ids().contains(&pubkey) {
+        let peer_manager = peer_manager.clone();
+        let peer_node_ids = async_blocking(move || peer_manager.get_peer_node_ids()).await;
+        if peer_node_ids.contains(&pubkey) {
             break;
         }
 
@@ -73,12 +84,12 @@ pub async fn connect_to_node(
     Ok(ConnectToNodeRes::ConnectedSuccessfully { pubkey, node_addr })
 }
 
-pub async fn connect_to_nodes_loop(open_channels_nodes: NodesAddressesMapShared, peer_manager: Arc<PeerManager>) {
+pub async fn connect_to_ln_nodes_loop(open_channels_nodes: NodesAddressesMapShared, peer_manager: Arc<PeerManager>) {
     loop {
         let open_channels_nodes = open_channels_nodes.lock().clone();
         for (pubkey, node_addr) in open_channels_nodes {
             let peer_manager = peer_manager.clone();
-            match connect_to_node(pubkey, node_addr, peer_manager.clone()).await {
+            match connect_to_ln_node(pubkey, node_addr, peer_manager.clone()).await {
                 Ok(res) => {
                     if let ConnectToNodeRes::ConnectedSuccessfully { .. } = res {
                         log::info!("{}", res.to_string());
@@ -133,13 +144,18 @@ pub async fn ln_node_announcement_loop(
                 continue;
             },
         };
-        channel_manager.broadcast_node_announcement(node_color, node_name, addresses);
+        let channel_manager = channel_manager.clone();
+        async_blocking(move || channel_manager.broadcast_node_announcement(node_color, node_name, addresses)).await;
 
         Timer::sleep(BROADCAST_NODE_ANNOUNCEMENT_INTERVAL as f64).await;
     }
 }
 
 async fn ln_p2p_loop(peer_manager: Arc<PeerManager>, listener: TcpListener) {
+    // This container consists of abort handlers of the spawned inbound connections.
+    // They will be dropped once `LightningCoin` is dropped because `ln_p2p_loop` is spawned
+    // via [`Platform::abortable_system`].
+    let mut spawned = Vec::new();
     loop {
         let peer_mgr = peer_manager.clone();
         let tcp_stream = match listener.accept().await {
@@ -153,18 +169,19 @@ async fn ln_p2p_loop(peer_manager: Arc<PeerManager>, listener: TcpListener) {
             },
         };
         if let Ok(stream) = tcp_stream.into_std() {
-            spawn(async move {
+            spawned.push(spawn_abortable(async move {
                 lightning_net_tokio::setup_inbound(peer_mgr.clone(), stream).await;
-            });
+            }));
         };
     }
 }
 
 pub async fn init_peer_manager(
     ctx: MmArc,
+    platform: &Arc<Platform>,
     listening_port: u16,
     channel_manager: Arc<ChannelManager>,
-    network_gossip: Arc<NetworkGossip>,
+    gossip_sync: Arc<NetworkGossip>,
     node_secret: SecretKey,
     logger: Arc<LogState>,
 ) -> EnableLightningResult<Arc<PeerManager>> {
@@ -181,7 +198,7 @@ pub async fn init_peer_manager(
     rand::thread_rng().fill_bytes(&mut ephemeral_bytes);
     let lightning_msg_handler = MessageHandler {
         chan_handler: channel_manager,
-        route_handler: network_gossip,
+        route_handler: gossip_sync,
     };
 
     // IgnoringMessageHandler is used as custom message types (experimental and application-specific messages) is not needed
@@ -194,7 +211,6 @@ pub async fn init_peer_manager(
     ));
 
     // Initialize p2p networking
-    spawn(ln_p2p_loop(peer_manager.clone(), listener));
-
+    platform.spawner().spawn(ln_p2p_loop(peer_manager.clone(), listener));
     Ok(peer_manager)
 }

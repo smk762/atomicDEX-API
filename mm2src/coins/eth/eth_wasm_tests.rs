@@ -20,7 +20,7 @@ async fn test_send() {
         &hex::decode("809465b17d0a4ddb3e4c69e8f23c2cabad868f51f8bed5c765ad1d6516c3306f").unwrap(),
     )
     .unwrap();
-    let transport = Web3Transport::new(vec!["http://195.201.0.6:8565".into()]).unwrap();
+    let transport = Web3Transport::single_node("http://195.201.0.6:8565", false);
     let web3 = Web3::new(transport);
     let ctx = MmCtxBuilder::new().into_mm_arc();
     let coin = EthCoin(Arc::new(EthCoinImpl {
@@ -28,8 +28,8 @@ async fn test_send() {
         coin_type: EthCoinType::Eth,
         my_address: key_pair.address(),
         sign_message_prefix: Some(String::from("Ethereum Signed Message:\n")),
-        key_pair,
-        swap_contract_address: Address::from("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94"),
+        priv_key_policy: key_pair.into(),
+        swap_contract_address: Address::from_str("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94").unwrap(),
         fallback_swap_contract: None,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
@@ -46,18 +46,20 @@ async fn test_send() {
         chain_id: None,
         logs_block_range: DEFAULT_LOGS_BLOCK_RANGE,
         nonce_lock: new_nonce_lock(),
+        erc20_tokens_infos: Default::default(),
+        abortable_system: AbortableQueue::default(),
     }));
-    let tx = coin
-        .send_maker_payment(
-            1000,
-            &DEX_FEE_ADDR_RAW_PUBKEY,
-            &[1; 20],
-            "0.001".parse().unwrap(),
-            &None,
-            &[],
-        )
-        .compat()
-        .await;
+    let maker_payment_args = SendMakerPaymentArgs {
+        time_lock_duration: 0,
+        time_lock: 1000,
+        other_pubkey: &DEX_FEE_ADDR_RAW_PUBKEY,
+        secret_hash: &[1; 20],
+        amount: "0.001".parse().unwrap(),
+        swap_contract_address: &None,
+        swap_unique_data: &[],
+        payment_instructions: &None,
+    };
+    let tx = coin.send_maker_payment(maker_payment_args).compat().await;
     console::log_1(&format!("{:?}", tx).into());
 
     let block = coin.current_block().compat().await;

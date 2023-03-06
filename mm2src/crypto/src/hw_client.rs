@@ -1,71 +1,19 @@
+use crate::hw_error::HwError;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::hw_error::HwResult;
 use async_trait::async_trait;
 #[cfg(not(target_os = "ios"))]
-use common::custom_futures::FutureTimerExt;
+use common::custom_futures::timeout::FutureTimerExt;
 use derive_more::Display;
-#[cfg(not(target_os = "ios"))] use futures::FutureExt;
-use hw_common::primitives::Bip32Error;
+use futures::FutureExt;
 use mm2_err_handle::prelude::*;
-use primitives::hash::H264;
+use rpc::v1::types::H160 as H160Json;
 use std::time::Duration;
 use trezor::client::TrezorClient;
-use trezor::{TrezorError, TrezorProcessingError, TrezorRequestProcessor, TrezorUserInteraction};
+use trezor::device_info::TrezorDeviceInfo;
+use trezor::{TrezorError, TrezorProcessingError, TrezorRequestProcessor};
 
-pub type HwResult<T> = Result<T, MmError<HwError>>;
-
-#[derive(Clone, Debug, Display)]
-pub enum HwError {
-    NoTrezorDeviceAvailable,
-    #[display(fmt = "Found multiple devices ({}). Please unplug unused devices", count)]
-    CannotChooseDevice {
-        count: usize,
-    },
-    #[display(fmt = "Couldn't connect to a Hardware Wallet device in {:?}", timeout)]
-    ConnectionTimedOut {
-        timeout: Duration,
-    },
-    #[display(
-        fmt = "Expected a Hardware Wallet device with '{}' pubkey, found '{}'",
-        expected_pubkey,
-        actual_pubkey
-    )]
-    FoundUnexpectedDevice {
-        actual_pubkey: H264,
-        expected_pubkey: H264,
-    },
-    DeviceDisconnected,
-    #[display(fmt = "'{}' transport not supported", transport)]
-    TransportNotSupported {
-        transport: String,
-    },
-    #[display(fmt = "Invalid xpub received from a device: '{}'", _0)]
-    InvalidXpub(Bip32Error),
-    Failure(String),
-    UnderlyingError(String),
-    ProtocolError(String),
-    UnexpectedUserInteractionRequest(TrezorUserInteraction),
-    Internal(String),
-}
-
-impl From<TrezorError> for HwError {
-    fn from(e: TrezorError) -> Self {
-        let error = e.to_string();
-        match e {
-            TrezorError::TransportNotSupported { transport } => HwError::TransportNotSupported { transport },
-            TrezorError::ErrorRequestingAccessPermission(_) => HwError::NoTrezorDeviceAvailable,
-            TrezorError::DeviceDisconnected => HwError::DeviceDisconnected,
-            TrezorError::UnderlyingError(_) => HwError::UnderlyingError(error),
-            TrezorError::ProtocolError(_) | TrezorError::UnexpectedMessageType(_) => HwError::Internal(error),
-            // TODO handle the failure correctly later
-            TrezorError::Failure(_) => HwError::Failure(error),
-            TrezorError::UnexpectedInteractionRequest(req) => HwError::UnexpectedUserInteractionRequest(req),
-            TrezorError::Internal(_) => HwError::Internal(error),
-        }
-    }
-}
-
-impl From<Bip32Error> for HwError {
-    fn from(e: Bip32Error) -> Self { HwError::InvalidXpub(e) }
-}
+pub type HwPubkey = H160Json;
 
 #[derive(Display)]
 pub enum HwProcessingError<E> {
@@ -96,6 +44,20 @@ impl<E> NotEqual for HwProcessingError<E> {}
 #[derive(Clone, Copy, Deserialize)]
 pub enum HwWalletType {
     Trezor,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type")]
+pub enum HwDeviceInfo {
+    Trezor(TrezorDeviceInfo),
+}
+
+#[derive(Debug, Serialize)]
+pub enum HwConnectionStatus {
+    Connected,
+    /// `Unreachable` means that the device is either disconnected or is in an incorrect state,
+    /// so it should be reinitialized.
+    Unreachable,
 }
 
 #[async_trait]
@@ -160,7 +122,7 @@ impl HwClient {
     pub(crate) async fn trezor<Processor: TrezorConnectProcessor>(
         processor: &Processor,
     ) -> MmResult<TrezorClient, HwProcessingError<Processor::Error>> {
-        use common::custom_futures::TimeoutError;
+        use common::custom_futures::timeout::TimeoutError;
         use common::executor::Timer;
 
         async fn try_to_connect() -> HwResult<Option<TrezorClient>> {

@@ -60,7 +60,7 @@ impl From<CoinFindError> for HDAccountBalanceRpcError {
 impl From<UnexpectedDerivationMethod> for HDAccountBalanceRpcError {
     fn from(e: UnexpectedDerivationMethod) -> Self {
         match e {
-            UnexpectedDerivationMethod::HDWalletUnavailable => HDAccountBalanceRpcError::CoinIsActivatedNotWithHDWallet,
+            UnexpectedDerivationMethod::ExpectedHDWallet => HDAccountBalanceRpcError::CoinIsActivatedNotWithHDWallet,
             unexpected_error => HDAccountBalanceRpcError::Internal(unexpected_error.to_string()),
         }
     }
@@ -72,8 +72,7 @@ impl From<BalanceError> for HDAccountBalanceRpcError {
             BalanceError::Transport(transport) => HDAccountBalanceRpcError::Transport(transport),
             BalanceError::InvalidResponse(rpc) => HDAccountBalanceRpcError::RpcInvalidResponse(rpc),
             BalanceError::UnexpectedDerivationMethod(der_method) => HDAccountBalanceRpcError::from(der_method),
-            BalanceError::WalletStorageError(e) => HDAccountBalanceRpcError::Internal(e),
-            BalanceError::Internal(internal) => HDAccountBalanceRpcError::Internal(internal),
+            BalanceError::WalletStorageError(e) | BalanceError::Internal(e) => HDAccountBalanceRpcError::Internal(e),
         }
     }
 }
@@ -85,9 +84,11 @@ impl From<InvalidBip44ChainError> for HDAccountBalanceRpcError {
 impl From<AddressDerivingError> for HDAccountBalanceRpcError {
     fn from(e: AddressDerivingError) -> Self {
         match e {
+            AddressDerivingError::InvalidBip44Chain { chain } => HDAccountBalanceRpcError::InvalidBip44Chain { chain },
             AddressDerivingError::Bip32Error(bip32) => {
                 HDAccountBalanceRpcError::ErrorDerivingAddress(bip32.to_string())
             },
+            AddressDerivingError::Internal(internal) => HDAccountBalanceRpcError::Internal(internal),
         }
     }
 }
@@ -95,11 +96,12 @@ impl From<AddressDerivingError> for HDAccountBalanceRpcError {
 impl From<RpcTaskError> for HDAccountBalanceRpcError {
     fn from(e: RpcTaskError) -> Self {
         match e {
-            RpcTaskError::Canceled => HDAccountBalanceRpcError::Internal("Canceled".to_owned()),
+            RpcTaskError::Cancelled => HDAccountBalanceRpcError::Internal("Cancelled".to_owned()),
             RpcTaskError::Timeout(timeout) => HDAccountBalanceRpcError::Timeout(timeout),
-            RpcTaskError::NoSuchTask(_) | RpcTaskError::UnexpectedTaskStatus { .. } => {
-                HDAccountBalanceRpcError::Internal(e.to_string())
-            },
+            RpcTaskError::NoSuchTask(_)
+            // `UnexpectedTaskStatus` and `UnexpectedUserAction` are not expected at the balance request.
+            | RpcTaskError::UnexpectedTaskStatus { .. }
+            | RpcTaskError::UnexpectedUserAction { .. } => HDAccountBalanceRpcError::Internal(e.to_string()),
             RpcTaskError::Internal(internal) => HDAccountBalanceRpcError::Internal(internal),
         }
     }

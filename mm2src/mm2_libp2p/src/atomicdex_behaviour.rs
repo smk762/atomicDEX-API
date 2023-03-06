@@ -3,15 +3,16 @@ use crate::{adex_ping::AdexPing,
             peers_exchange::{PeerAddresses, PeersExchange},
             request_response::{build_request_response_behaviour, PeerRequest, PeerResponse, RequestResponseBehaviour,
                                RequestResponseBehaviourEvent, RequestResponseSender},
-            runtime::{SwarmRuntimeOps, SWARM_RUNTIME},
+            runtime::SwarmRuntime,
             NetworkInfo, NetworkPorts, RelayAddress, RelayAddressError};
 use atomicdex_gossipsub::{Gossipsub, GossipsubConfigBuilder, GossipsubEvent, GossipsubMessage, MessageId, Topic,
                           TopicHash};
+use common::executor::SpawnFuture;
 use derive_more::Display;
 use futures::{channel::{mpsc::{channel, Receiver, Sender},
                         oneshot},
-              future::{abortable, join_all, poll_fn, AbortHandle},
-              Future, SinkExt, StreamExt};
+              future::{join_all, poll_fn},
+              Future, FutureExt, SinkExt, StreamExt};
 use futures_rustls::rustls;
 use libp2p::core::transport::Boxed as BoxedTransport;
 use libp2p::{core::{ConnectedPoint, Multiaddr, Transport},
@@ -240,7 +241,7 @@ pub struct AtomicDexBehaviour {
     #[behaviour(ignore)]
     event_tx: Sender<AdexBehaviourEvent>,
     #[behaviour(ignore)]
-    spawn_fn: fn(Box<dyn Future<Output = ()> + Send + Unpin + 'static>) -> (),
+    runtime: SwarmRuntime,
     #[behaviour(ignore)]
     cmd_rx: Receiver<AdexBehaviourCmd>,
     #[behaviour(ignore)]
@@ -258,7 +259,7 @@ impl AtomicDexBehaviour {
         }
     }
 
-    fn spawn(&self, fut: impl Future<Output = ()> + Send + 'static) { (self.spawn_fn)(Box::new(Box::pin(fut))) }
+    fn spawn(&self, fut: impl Future<Output = ()> + Send + 'static) { self.runtime.spawn(fut) }
 
     fn process_cmd(&mut self, cmd: AdexBehaviourCmd) {
         match cmd {
@@ -517,7 +518,7 @@ fn maintain_connection_to_relays(swarm: &mut AtomicDexSwarm, bootstrap_addresses
             .filter(|peer| !relays_mesh.contains(peer))
             .collect();
         for peer in not_in_mesh.choose_multiple(&mut rng, to_disconnect_num) {
-            if !swarm.behaviour().peers_exchange.is_reserved_peer(*peer) {
+            if !swarm.behaviour().peers_exchange.is_reserved_peer(peer) {
                 info!("Disconnecting peer {}", peer);
                 if Swarm::disconnect_peer_id(swarm, **peer).is_err() {
                     error!("Peer {} disconnect error", peer);
@@ -609,19 +610,21 @@ impl NodeType {
 pub async fn spawn_gossipsub(
     netid: u16,
     force_key: Option<[u8; 32]>,
-    spawn_fn: fn(Box<dyn Future<Output = ()> + Send + Unpin + 'static>) -> (),
+    runtime: SwarmRuntime,
     to_dial: Vec<RelayAddress>,
     node_type: NodeType,
     on_poll: impl Fn(&AtomicDexSwarm) + Send + 'static,
-) -> Result<(Sender<AdexBehaviourCmd>, AdexEventRx, PeerId, AbortHandle), AdexBehaviourError> {
-    let (result_tx, result_rx) = futures::channel::oneshot::channel();
+) -> Result<(Sender<AdexBehaviourCmd>, AdexEventRx, PeerId), AdexBehaviourError> {
+    let (result_tx, result_rx) = oneshot::channel();
+
+    let runtime_c = runtime.clone();
     let fut = async move {
-        let result = start_gossipsub(netid, force_key, spawn_fn, to_dial, node_type, on_poll);
+        let result = start_gossipsub(netid, force_key, runtime, to_dial, node_type, on_poll);
         result_tx.send(result).unwrap();
     };
 
     // `Libp2p` must be spawned on the tokio runtime
-    SWARM_RUNTIME.spawn(fut);
+    runtime_c.spawn(fut);
     result_rx.await.expect("Fatal error on starting gossipsub")
 }
 
@@ -638,11 +641,11 @@ pub async fn spawn_gossipsub(
 fn start_gossipsub(
     netid: u16,
     force_key: Option<[u8; 32]>,
-    spawn_fn: fn(Box<dyn Future<Output = ()> + Send + Unpin + 'static>) -> (),
+    runtime: SwarmRuntime,
     to_dial: Vec<RelayAddress>,
     node_type: NodeType,
     on_poll: impl Fn(&AtomicDexSwarm) + Send + 'static,
-) -> Result<(Sender<AdexBehaviourCmd>, AdexEventRx, PeerId, AbortHandle), AdexBehaviourError> {
+) -> Result<(Sender<AdexBehaviourCmd>, AdexEventRx, PeerId), AdexBehaviourError> {
     let i_am_relay = node_type.is_relay();
     let mut rng = rand::thread_rng();
     let local_key = generate_ed25519_keypair(&mut rng, force_key);
@@ -717,7 +720,7 @@ fn start_gossipsub(
         let adex_behavior = AtomicDexBehaviour {
             floodsub,
             event_tx,
-            spawn_fn,
+            runtime: runtime.clone(),
             cmd_rx,
             netid,
             gossipsub,
@@ -726,7 +729,7 @@ fn start_gossipsub(
             ping,
         };
         libp2p::swarm::SwarmBuilder::new(transport, adex_behavior, local_peer_id)
-            .executor(Box::new(&*SWARM_RUNTIME))
+            .executor(Box::new(runtime.clone()))
             .build()
     };
     swarm
@@ -804,10 +807,8 @@ fn start_gossipsub(
         Poll::Pending
     });
 
-    let (polling_fut, abort_handle) = abortable(polling_fut);
-    SWARM_RUNTIME.spawn(polling_fut);
-
-    Ok((cmd_tx, event_rx, local_peer_id, abort_handle))
+    runtime.spawn(polling_fut.then(|_| futures::future::ready(())));
+    Ok((cmd_tx, event_rx, local_peer_id))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -827,10 +828,13 @@ fn build_dns_ws_transport(
 ) -> BoxedTransport<(PeerId, libp2p::core::muxing::StreamMuxerBox)> {
     use libp2p::websocket::tls as libp2p_tls;
 
-    let tcp = libp2p::tcp::TokioTcpConfig::new().nodelay(true);
-    let dns_tcp =
-        libp2p::dns::TokioDnsConfig::custom(tcp, libp2p::dns::ResolverConfig::google(), Default::default()).unwrap();
-    let mut ws_dns_tcp = libp2p::websocket::WsConfig::new(dns_tcp.clone());
+    let ws_tcp = libp2p::dns::TokioDnsConfig::custom(
+        libp2p::tcp::TokioTcpConfig::new().nodelay(true),
+        libp2p::dns::ResolverConfig::google(),
+        Default::default(),
+    )
+    .unwrap();
+    let mut ws_dns_tcp = libp2p::websocket::WsConfig::new(ws_tcp);
 
     if let Some(certs) = wss_certs {
         let server_priv_key = libp2p_tls::PrivateKey::new(certs.server_priv_key.0.clone());
@@ -841,6 +845,15 @@ fn build_dns_ws_transport(
         let wss_config = libp2p_tls::Config::new(server_priv_key, certs).unwrap();
         ws_dns_tcp.set_tls_config(wss_config);
     }
+
+    // This is for preventing port reuse of dns/tcp instead of
+    // websocket ports.
+    let dns_tcp = libp2p::dns::TokioDnsConfig::custom(
+        libp2p::tcp::TokioTcpConfig::new().nodelay(true),
+        libp2p::dns::ResolverConfig::google(),
+        Default::default(),
+    )
+    .unwrap();
 
     let transport = dns_tcp.or_transport(ws_dns_tcp);
     upgrade_transport(transport, noise_keys)

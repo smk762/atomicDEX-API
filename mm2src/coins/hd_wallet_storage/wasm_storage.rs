@@ -14,12 +14,10 @@ const DB_NAME: &str = "hd_wallet";
 const DB_VERSION: u32 = 1;
 /// An index of the `HDAccountTable` table that consists of the following properties:
 /// * coin - coin ticker
-/// * mm2_rmd160 - RIPEMD160(SHA256(x)) where x is a pubkey with which mm2 is launched
 /// * hd_wallet_rmd160 - RIPEMD160(SHA256(x)) where x is a pubkey extracted from a Hardware Wallet device or passphrase.
 const WALLET_ID_INDEX: &str = "wallet_id";
 /// A **unique** index of the `HDAccountTable` table that consists of the following properties:
 /// * coin - coin ticker
-/// * mm2_rmd160 - RIPEMD160(SHA256(x)) where x is a pubkey with which mm2 is launched
 /// * hd_wallet_rmd160 - RIPEMD160(SHA256(x)) where x is a pubkey extracted from a Hardware Wallet device or passphrase.
 /// * account_id - HD account id
 const WALLET_ACCOUNT_ID_INDEX: &str = "wallet_account_id";
@@ -75,8 +73,8 @@ impl From<InitDbError> for HDWalletStorageError {
     fn from(e: InitDbError) -> Self { HDWalletStorageError::Internal(e.to_string()) }
 }
 
-/// The table has the following individually non-unique indexes: `coin`, `mm2_rmd160`, `hd_wallet_rmd160`, `account_id`,
-/// one non-unique multi-index `wallet_id` that consists of `coin`, `mm2_rmd160`, `hd_wallet_rmd160`,
+/// The table has the following individually non-unique indexes: `coin`, `hd_wallet_rmd160`, `account_id`,
+/// one non-unique multi-index `wallet_id` that consists of `coin`, `hd_wallet_rmd160`,
 /// and one unique multi-index `wallet_account_id` that consists of these four indexes in a row.
 /// See [`HDAccountTable::on_update_needed`].
 #[derive(Deserialize, Serialize)]
@@ -84,9 +82,6 @@ pub struct HDAccountTable {
     /// [`HDWalletId::coin`].
     /// Non-unique index that is used to fetch/remove items from the storage.
     coin: String,
-    /// [`HDWalletId::mm2_rmd160`].
-    /// Non-unique index that is used to fetch/remove items from the storage.
-    mm2_rmd160: String,
     /// [`HDWalletId::hd_wallet_rmd160`].
     /// Non-unique index that is used to fetch/remove items from the storage.
     hd_wallet_rmd160: String,
@@ -106,10 +101,10 @@ impl TableSignature for HDAccountTable {
         match (old_version, new_version) {
             (0, 1) => {
                 let table = upgrader.create_table(Self::table_name())?;
-                table.create_multi_index(WALLET_ID_INDEX, &["coin", "mm2_rmd160", "hd_wallet_rmd160"], false)?;
+                table.create_multi_index(WALLET_ID_INDEX, &["coin", "hd_wallet_rmd160"], false)?;
                 table.create_multi_index(
                     WALLET_ACCOUNT_ID_INDEX,
-                    &["coin", "mm2_rmd160", "hd_wallet_rmd160", "account_id"],
+                    &["coin", "hd_wallet_rmd160", "account_id"],
                     true,
                 )?;
             },
@@ -123,7 +118,6 @@ impl HDAccountTable {
     fn new(wallet_id: HDWalletId, account_info: HDAccountStorageItem) -> HDAccountTable {
         HDAccountTable {
             coin: wallet_id.coin,
-            mm2_rmd160: wallet_id.mm2_rmd160,
             hd_wallet_rmd160: wallet_id.hd_wallet_rmd160,
             account_id: account_info.account_id,
             account_xpub: account_info.account_xpub,
@@ -180,14 +174,13 @@ impl HDWalletStorageInternalOps for HDWalletIndexedDbStorage {
 
     async fn load_accounts(&self, wallet_id: HDWalletId) -> HDWalletStorageResult<Vec<HDAccountStorageItem>> {
         let shared_db = self.get_shared_db()?;
-        let locked_db = Self::lock_db(&shared_db).await?;
+        let locked_db = Self::lock_db_mutex(&shared_db).await?;
 
         let transaction = locked_db.inner.transaction().await?;
         let table = transaction.table::<HDAccountTable>().await?;
 
         let index_keys = MultiIndex::new(WALLET_ID_INDEX)
             .with_value(wallet_id.coin)?
-            .with_value(wallet_id.mm2_rmd160)?
             .with_value(wallet_id.hd_wallet_rmd160)?;
         Ok(table
             .get_items_by_multi_index(index_keys)
@@ -203,7 +196,7 @@ impl HDWalletStorageInternalOps for HDWalletIndexedDbStorage {
         account_id: u32,
     ) -> HDWalletStorageResult<Option<HDAccountStorageItem>> {
         let shared_db = self.get_shared_db()?;
-        let locked_db = Self::lock_db(&shared_db).await?;
+        let locked_db = Self::lock_db_mutex(&shared_db).await?;
 
         let transaction = locked_db.inner.transaction().await?;
         let table = transaction.table::<HDAccountTable>().await?;
@@ -245,7 +238,7 @@ impl HDWalletStorageInternalOps for HDWalletIndexedDbStorage {
         account: HDAccountStorageItem,
     ) -> HDWalletStorageResult<()> {
         let shared_db = self.get_shared_db()?;
-        let locked_db = Self::lock_db(&shared_db).await?;
+        let locked_db = Self::lock_db_mutex(&shared_db).await?;
 
         let transaction = locked_db.inner.transaction().await?;
         let table = transaction.table::<HDAccountTable>().await?;
@@ -260,14 +253,13 @@ impl HDWalletStorageInternalOps for HDWalletIndexedDbStorage {
 
     async fn clear_accounts(&self, wallet_id: HDWalletId) -> HDWalletStorageResult<()> {
         let shared_db = self.get_shared_db()?;
-        let locked_db = Self::lock_db(&shared_db).await?;
+        let locked_db = Self::lock_db_mutex(&shared_db).await?;
 
         let transaction = locked_db.inner.transaction().await?;
         let table = transaction.table::<HDAccountTable>().await?;
 
         let index_keys = MultiIndex::new(WALLET_ID_INDEX)
             .with_value(wallet_id.coin)?
-            .with_value(wallet_id.mm2_rmd160)?
             .with_value(wallet_id.hd_wallet_rmd160)?;
         table.delete_items_by_multi_index(index_keys).await?;
         Ok(())
@@ -281,7 +273,7 @@ impl HDWalletIndexedDbStorage {
             .or_mm_err(|| HDWalletStorageError::Internal("'HDWalletIndexedDbStorage::db' doesn't exist".to_owned()))
     }
 
-    async fn lock_db(db: &SharedDb<HDWalletDb>) -> HDWalletStorageResult<HDWalletDbLocked<'_>> {
+    async fn lock_db_mutex(db: &SharedDb<HDWalletDb>) -> HDWalletStorageResult<HDWalletDbLocked<'_>> {
         db.get_or_initialize().await.mm_err(HDWalletStorageError::from)
     }
 
@@ -292,7 +284,6 @@ impl HDWalletIndexedDbStorage {
     ) -> HDWalletStorageResult<Option<(ItemId, HDAccountTable)>> {
         let index_keys = MultiIndex::new(WALLET_ACCOUNT_ID_INDEX)
             .with_value(wallet_id.coin)?
-            .with_value(wallet_id.mm2_rmd160)?
             .with_value(wallet_id.hd_wallet_rmd160)?
             .with_value(account_id)?;
         table
@@ -306,7 +297,7 @@ impl HDWalletIndexedDbStorage {
         F: FnOnce(&mut HDAccountTable),
     {
         let shared_db = self.get_shared_db()?;
-        let locked_db = Self::lock_db(&shared_db).await?;
+        let locked_db = Self::lock_db_mutex(&shared_db).await?;
 
         let transaction = locked_db.inner.transaction().await?;
         let table = transaction.table::<HDAccountTable>().await?;

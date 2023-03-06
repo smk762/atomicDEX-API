@@ -1,17 +1,23 @@
 use crate::context::CoinsActivationContext;
 use crate::prelude::*;
-use crate::standalone_coin::init_standalone_coin_error::{InitStandaloneCoinError, InitStandaloneCoinStatusError,
+use crate::standalone_coin::init_standalone_coin_error::{CancelInitStandaloneCoinError, InitStandaloneCoinError,
+                                                         InitStandaloneCoinStatusError,
                                                          InitStandaloneCoinUserActionError};
 use async_trait::async_trait;
-use coins::{lp_coinfind, lp_register_coin, MmCoinEnum, RegisterCoinError, RegisterCoinParams};
+use coins::my_tx_history_v2::TxHistoryStorage;
+use coins::tx_history_storage::{CreateTxHistoryStorageError, TxHistoryStorageBuilder};
+use coins::{lp_coinfind, lp_register_coin, CoinsContext, MmCoinEnum, RegisterCoinError, RegisterCoinParams};
 use common::{log, SuccessResponse};
 use crypto::trezor::trezor_rpc_task::RpcTaskHandle;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
-use rpc_task::rpc_common::{InitRpcTaskResponse, RpcTaskStatusRequest, RpcTaskUserActionRequest};
+use mm2_metrics::MetricsArc;
+use mm2_number::BigDecimal;
+use rpc_task::rpc_common::{CancelRpcTaskRequest, InitRpcTaskResponse, RpcTaskStatusRequest, RpcTaskUserActionRequest};
 use rpc_task::{RpcTask, RpcTaskManager, RpcTaskManagerShared, RpcTaskStatus, RpcTaskTypes};
 use serde_derive::Deserialize;
 use serde_json::Value as Json;
+use std::collections::HashMap;
 
 pub type InitStandaloneCoinResponse = InitRpcTaskResponse;
 pub type InitStandaloneCoinStatusRequest = RpcTaskStatusRequest;
@@ -27,11 +33,12 @@ pub struct InitStandaloneCoinReq<T> {
 
 #[async_trait]
 pub trait InitStandaloneCoinActivationOps: Into<MmCoinEnum> + Send + Sync + 'static {
-    type ActivationRequest: TxHistory + Sync + Send;
-    type StandaloneProtocol: TryFromCoinProtocol + Send;
+    type ActivationRequest: TxHistory + Clone + Send + Sync;
+    type StandaloneProtocol: TryFromCoinProtocol + Clone + Send + Sync;
     // The following types are related to `RpcTask` management.
-    type ActivationResult: serde::Serialize + Clone + CurrentBlock + Send + Sync + 'static;
+    type ActivationResult: serde::Serialize + Clone + CurrentBlock + GetAddressesBalances + Send + Sync + 'static;
     type ActivationError: From<RegisterCoinError>
+        + From<CreateTxHistoryStorageError>
         + Into<InitStandaloneCoinError>
         + SerMmErrorType
         + NotEqual
@@ -61,6 +68,13 @@ pub trait InitStandaloneCoinActivationOps: Into<MmCoinEnum> + Send + Sync + 'sta
         task_handle: &InitStandaloneCoinTaskHandle<Self>,
         activation_request: &Self::ActivationRequest,
     ) -> Result<Self::ActivationResult, MmError<Self::ActivationError>>;
+
+    fn start_history_background_fetching(
+        &self,
+        metrics: MetricsArc,
+        storage: impl TxHistoryStorage,
+        current_balances: HashMap<String, BigDecimal>,
+    );
 }
 
 pub async fn init_standalone_coin<Standalone>(
@@ -80,6 +94,7 @@ where
     let (coin_conf, protocol_info) = coin_conf_with_protocol(&ctx, &request.ticker)?;
 
     let coins_act_ctx = CoinsActivationContext::from_ctx(&ctx).map_to_mm(InitStandaloneCoinError::Internal)?;
+    let spawner = ctx.spawner();
     let task = InitStandaloneCoinTask::<Standalone> {
         ctx,
         request,
@@ -88,7 +103,7 @@ where
     };
     let task_manager = Standalone::rpc_task_manager(&coins_act_ctx);
 
-    let task_id = RpcTaskManager::spawn_rpc_task(task_manager, task)
+    let task_id = RpcTaskManager::spawn_rpc_task(task_manager, &spawner, task)
         .mm_err(|e| InitStandaloneCoinError::Internal(e.to_string()))?;
 
     Ok(InitStandaloneCoinResponse { task_id })
@@ -132,6 +147,18 @@ pub async fn init_standalone_coin_user_action<Standalone: InitStandaloneCoinActi
     Ok(SuccessResponse::new())
 }
 
+pub async fn cancel_init_standalone_coin<Standalone: InitStandaloneCoinActivationOps>(
+    ctx: MmArc,
+    req: CancelRpcTaskRequest,
+) -> MmResult<SuccessResponse, CancelInitStandaloneCoinError> {
+    let coins_act_ctx = CoinsActivationContext::from_ctx(&ctx).map_to_mm(CancelInitStandaloneCoinError::Internal)?;
+    let mut task_manager = Standalone::rpc_task_manager(&coins_act_ctx)
+        .lock()
+        .map_to_mm(|poison| CancelInitStandaloneCoinError::Internal(poison.to_string()))?;
+    task_manager.cancel_task(req.task_id)?;
+    Ok(SuccessResponse::new())
+}
+
 pub struct InitStandaloneCoinTask<Standalone: InitStandaloneCoinActivationOps> {
     ctx: MmArc,
     request: InitStandaloneCoinReq<Standalone::ActivationRequest>,
@@ -156,14 +183,23 @@ where
         <Standalone::InProgressStatus as InitStandaloneCoinInitialStatus>::initial_status()
     }
 
-    async fn run(self, task_handle: &RpcTaskHandle<Self>) -> Result<Self::Item, MmError<Self::Error>> {
+    /// Try to disable the coin in case if we managed to register it already.
+    async fn cancel(self) {
+        if let Ok(c_ctx) = CoinsContext::from_ctx(&self.ctx) {
+            if let Ok(Some(coin)) = lp_coinfind(&self.ctx, &self.request.ticker).await {
+                c_ctx.remove_coin(coin).await;
+            };
+        };
+    }
+
+    async fn run(&mut self, task_handle: &RpcTaskHandle<Self>) -> Result<Self::Item, MmError<Self::Error>> {
         let ticker = self.request.ticker.clone();
         let coin = Standalone::init_standalone_coin(
             self.ctx.clone(),
             ticker.clone(),
-            self.coin_conf,
+            self.coin_conf.clone(),
             &self.request.activation_params,
-            self.protocol_info,
+            self.protocol_info.clone(),
             task_handle,
         )
         .await?;
@@ -174,8 +210,16 @@ where
         log::info!("{} current block {}", ticker, result.current_block());
 
         let tx_history = self.request.activation_params.tx_history();
+        if tx_history {
+            let current_balances = result.get_addresses_balances();
+            coin.start_history_background_fetching(
+                self.ctx.metrics.clone(),
+                TxHistoryStorageBuilder::new(&self.ctx).build()?,
+                current_balances,
+            );
+        }
 
-        lp_register_coin(&self.ctx, coin.into(), RegisterCoinParams { ticker, tx_history }).await?;
+        lp_register_coin(&self.ctx, coin.into(), RegisterCoinParams { ticker }).await?;
 
         Ok(result)
     }

@@ -90,7 +90,9 @@ use http::StatusCode;
 use itertools::Itertools;
 use ser_error::SerializeErrorType;
 use serde::{Serialize, Serializer};
+use std::alloc::Allocator;
 use std::cell::UnsafeCell;
+use std::error::Error as StdError;
 use std::fmt;
 use std::panic::Location;
 
@@ -102,7 +104,7 @@ impl<E> !NotMmError for MmError<E> {}
 
 /// This is required because an auto trait is not automatically implemented for a non-sized types,
 /// e.g for Box<dyn Trait>.
-impl<T: ?Sized> NotMmError for Box<T> {}
+impl<T: ?Sized, A: Allocator> NotMmError for Box<T, A> {}
 
 impl<T: ?Sized> NotMmError for UnsafeCell<T> {}
 
@@ -110,17 +112,34 @@ pub trait SerMmErrorType: SerializeErrorType + fmt::Display + NotMmError {}
 
 impl<E> SerMmErrorType for E where E: SerializeErrorType + fmt::Display + NotMmError {}
 
+pub auto trait NotEqual {}
+impl<X> !NotEqual for (X, X) {}
+impl<T: ?Sized, A: Allocator> NotEqual for Box<T, A> {}
+
 /// The unified error representation tracing an error path.
-#[derive(Clone, Debug, Display, Eq, PartialEq)]
-#[display(fmt = "{} {}", "trace.formatted()", etype)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct MmError<E: NotMmError> {
     pub(crate) etype: E,
     pub(crate) trace: Vec<TraceLocation>,
 }
 
-pub auto trait NotEqual {}
-impl<X> !NotEqual for (X, X) {}
-impl<T: ?Sized> NotEqual for Box<T> {}
+impl<E> fmt::Display for MmError<E>
+where
+    E: NotMmError + fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{} {}", self.trace.formatted(), self.etype) }
+}
+
+impl<E> fmt::Debug for MmError<E>
+where
+    E: NotMmError + fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {:?}", self.trace.formatted(), self.etype)
+    }
+}
+
+impl<E: fmt::Display + StdError + NotMmError> StdError for MmError<E> {}
 
 /// Track the location whenever `MmError<E2>::from(MmError<E1>)` is called.
 impl<E1, E2> From<MmError<E1>> for MmError<E2>

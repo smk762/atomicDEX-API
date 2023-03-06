@@ -48,20 +48,25 @@ notice = "warn"
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 
-# RUSTSEC-2021-0113 is related to metrics-util crate that is not actively used for now despite being still present in deps tree
 # RUSTSEC-2020-0071 is related to time crate, which is used only by chrono in our deps tree, remove when https://github.com/chronotope/chrono/issues/700 is resolved
 # RUSTSEC-2022-0040 is related to owning-ref, which seems unmaintained. We need to find a way to get rid of it. https://github.com/KomodoPlatform/atomicDEX-API/issues/1429
-# RUSTSEC-2020-0159 is related to chrono, updated in dev
 # RUSTSEC-2022-0055 is axum/axum-core vulnerability, which seems to be related only to server-side, which we don't utilize.
 # RUSTSEC-2023-0001 is tokio Windows-specific bug in the code that we don't use
+# Unignore RUSTSEC-2022-0084 after updating libp2p
 ignore = [
-    "RUSTSEC-2021-0113",
     "RUSTSEC-2020-0071",
     "RUSTSEC-2022-0040",
-    "RUSTSEC-2020-0159",
-    "RUSTSEC-2022-0055",
-    "RUSTSEC-2023-0001",
-    #"RUSTSEC-0000-0000",
+	"RUSTSEC-2022-0041",
+    "RUSTSEC-2022-0070",
+    "RUSTSEC-2021-0145",
+    "RUSTSEC-2020-0056",
+    "RUSTSEC-2022-0080",
+    "RUSTSEC-2020-0036",
+    "RUSTSEC-2021-0139",
+    "RUSTSEC-2021-0059",
+    "RUSTSEC-2021-0060",
+    "RUSTSEC-2022-0090",
+    "RUSTSEC-2023-0018",
 ]
 # Threshold for security vulnerabilities, any vulnerability with a CVSS score
 # lower than the range specified will be ignored. Note that ignored advisories
@@ -183,6 +188,7 @@ deny = [
 # The goal is to reduce this list as much as possible
 skip = [
     { name = "aes", version = "*" },
+    { name = "adler", version = "*" },
     { name = "ahash", version = "*" },
     { name = "arrayvec", version = "*" },
     { name = "autocfg", version = "*" },
@@ -267,6 +273,8 @@ skip = [
     { name = "rustls-pemfile", version = "*" },
     { name = "scopeguard", version = "*" },
     { name = "sct", version = "*" },
+    { name = "secp256k1", version = "*" },
+    { name = "secp256k1-sys", version = "*" },
     { name = "semver", version = "*" },
     { name = "send_wrapper", version = "*" },
     { name = "sha2", version = "*" },
@@ -276,6 +284,7 @@ skip = [
     { name = "subtle", version = "*" },
     { name = "syn", version = "*" },
     { name = "time", version = "*" },
+    { name = "time-macros", version = "*" },
     { name = "tiny-keccak", version = "*" },
     { name = "tokio-util", version = "*" },
     { name = "trie-root", version = "*" },
@@ -283,6 +292,7 @@ skip = [
     { name = "unicode-xid", version = "*" },
     { name = "unsigned-varint", version = "*" },
     { name = "url", version = "*" },
+    { name = "uuid", version = "*" },
     { name = "wasi", version = "*" },
     { name = "webpki", version = "*" },
     { name = "wyz", version = "*" },

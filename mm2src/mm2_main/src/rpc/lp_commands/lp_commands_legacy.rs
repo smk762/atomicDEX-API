@@ -19,63 +19,105 @@
 //  marketmaker
 //
 
-use coins::{disable_coin as disable_coin_impl, lp_coinfind, lp_coininit, MmCoinEnum};
-use common::executor::{spawn, Timer};
+use coins::{lp_coinfind, lp_coininit, CoinsContext, MmCoinEnum};
+use common::executor::Timer;
 use common::log::error;
-use common::mm_metrics::MetricsOps;
 use common::{rpc_err_response, rpc_response, HyRes};
 use futures::compat::Future01CompatExt;
 use http::Response;
+use itertools::Itertools;
 use mm2_core::mm_ctx::MmArc;
+use mm2_metrics::MetricsOps;
 use mm2_number::{construct_detailed, BigDecimal};
 use serde_json::{self as json, Value as Json};
 use std::borrow::Cow;
+use std::collections::HashSet;
+use std::iter::Extend;
+use uuid::Uuid;
 
 use crate::mm2::lp_dispatcher::{dispatch_lp_event, StopCtxEvent};
 use crate::mm2::lp_network::subscribe_to_topic;
-use crate::mm2::lp_ordermatch::{cancel_orders_by, CancelBy};
-use crate::mm2::lp_swap::{active_swaps_using_coin, tx_helper_topic};
+use crate::mm2::lp_ordermatch::{cancel_orders_by, get_matching_orders, CancelBy};
+use crate::mm2::lp_swap::{active_swaps_using_coins, tx_helper_topic, watcher_topic};
 use crate::mm2::MmVersionResult;
+
+const INTERNAL_SERVER_ERROR_CODE: u16 = 500;
+const RESPONSE_OK_STATUS_CODE: u16 = 200;
+
+pub fn disable_coin_err(
+    error: String,
+    matching: &[Uuid],
+    cancelled: &[Uuid],
+    active_swaps: &[Uuid],
+    dependent_tokens: &[String],
+) -> Result<Response<Vec<u8>>, String> {
+    let err = json!({
+        "error": error,
+        "orders": {
+            "matching": matching,
+            "cancelled": cancelled
+        },
+        "active_swaps": active_swaps,
+        "dependent_tokens": dependent_tokens,
+    });
+    Response::builder()
+        .status(INTERNAL_SERVER_ERROR_CODE)
+        .body(json::to_vec(&err).unwrap())
+        .map_err(|e| ERRL!("{}", e))
+}
 
 /// Attempts to disable the coin
 pub async fn disable_coin(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> {
     let ticker = try_s!(req["coin"].as_str().ok_or("No 'coin' field")).to_owned();
-    let _coin = match lp_coinfind(&ctx, &ticker).await {
+    let coin = match lp_coinfind(&ctx, &ticker).await {
         Ok(Some(t)) => t,
         Ok(None) => return ERR!("No such coin: {}", ticker),
         Err(err) => return ERR!("!lp_coinfind({}): ", err),
     };
-    let swaps = try_s!(active_swaps_using_coin(&ctx, &ticker));
-    if !swaps.is_empty() {
-        let err = json!({
-            "error": format!("There're active swaps using {}", ticker),
-            "swaps": swaps,
-        });
-        return Response::builder()
-            .status(500)
-            .body(json::to_vec(&err).unwrap())
-            .map_err(|e| ERRL!("{}", e));
-    }
-    let (cancelled, still_matching) = try_s!(cancel_orders_by(&ctx, CancelBy::Coin { ticker: ticker.clone() }).await);
-    if !still_matching.is_empty() {
-        let err = json!({
-            "error": format!("There're currently matching orders using {}", ticker),
-            "orders": {
-                "matching": still_matching,
-                "cancelled": cancelled,
-            }
-        });
-        return Response::builder()
-            .status(500)
-            .body(json::to_vec(&err).unwrap())
-            .map_err(|e| ERRL!("{}", e));
+
+    // Get all matching orders and active swaps.
+    let coins_to_disable: HashSet<_> = std::iter::once(ticker.clone()).collect();
+    let active_swaps = try_s!(active_swaps_using_coins(&ctx, &coins_to_disable));
+    let still_matching_orders = try_s!(get_matching_orders(&ctx, &coins_to_disable).await);
+
+    let coins_ctx = try_s!(CoinsContext::from_ctx(&ctx));
+    // Convert `HashSet<String>` into the sorted `Vec<String>`.
+    let dependent_tokens: Vec<_> = coins_ctx
+        .get_dependent_tokens(&ticker)
+        .await
+        .into_iter()
+        .sorted()
+        .collect();
+
+    // Return an error if:
+    // 1. There are matching orders or active swaps.
+    // 2. A platform coin is to be disabled and there are tokens dependent on it.
+    if !active_swaps.is_empty() || !still_matching_orders.is_empty() || !dependent_tokens.is_empty() {
+        let err = format!("There are currently matching orders, active swaps, or tokens dependent on '{ticker}'");
+        return disable_coin_err(err, &still_matching_orders, &[], &active_swaps, &dependent_tokens);
     }
 
-    try_s!(disable_coin_impl(&ctx, &ticker).await);
+    // Proceed with diabling the coin/tokens.
+    let mut cancelled_orders = vec![];
+    log!("disabling {ticker} coin");
+    let cancelled_and_matching_orders = cancel_orders_by(&ctx, CancelBy::Coin {
+        ticker: ticker.to_string(),
+    })
+    .await;
+    match cancelled_and_matching_orders {
+        Ok((cancelled, _)) => {
+            cancelled_orders.extend(cancelled);
+        },
+        Err(err) => {
+            return disable_coin_err(err, &still_matching_orders, &cancelled_orders, &active_swaps, &[]);
+        },
+    }
+
+    coins_ctx.remove_coin(coin).await;
     let res = json!({
         "result": {
             "coin": ticker,
-            "cancelled_orders": cancelled,
+            "cancelled_orders": cancelled_orders,
         }
     });
     Response::builder()
@@ -136,6 +178,9 @@ pub async fn enable(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> 
     if coin.is_utxo_in_native_mode() {
         subscribe_to_topic(&ctx, tx_helper_topic(coin.ticker()));
     }
+    if ctx.is_watcher() {
+        subscribe_to_topic(&ctx, watcher_topic(coin.ticker()));
+    }
 
     Ok(res)
 }
@@ -143,7 +188,7 @@ pub async fn enable(ctx: MmArc, req: Json) -> Result<Response<Vec<u8>>, String> 
 #[cfg(target_arch = "wasm32")]
 pub fn help() -> HyRes {
     rpc_response(
-        500,
+        INTERNAL_SERVER_ERROR_CODE,
         json!({
             "error":"'help' is only supported in native mode"
         })
@@ -154,7 +199,7 @@ pub fn help() -> HyRes {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn help() -> HyRes {
     rpc_response(
-        200,
+        RESPONSE_OK_STATUS_CODE,
         "
         buy(base, rel, price, relvolume, timeout=10, duration=3600)
         electrum(coin, urls)
@@ -176,8 +221,8 @@ pub fn help() -> HyRes {
 /// Get MarketMaker session metrics
 pub fn metrics(ctx: MmArc) -> HyRes {
     match ctx.metrics.collect_json().map(|value| value.to_string()) {
-        Ok(response) => rpc_response(200, response),
-        Err(err) => rpc_err_response(500, &err),
+        Ok(response) => rpc_response(RESPONSE_OK_STATUS_CODE, response),
+        Err(err) => rpc_err_response(INTERNAL_SERVER_ERROR_CODE, &err.to_string()),
     }
 }
 
@@ -204,12 +249,18 @@ pub async fn stop(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
     dispatch_lp_event(ctx.clone(), StopCtxEvent.into()).await;
     // Should delay the shutdown a bit in order not to trip the "stop" RPC call in unit tests.
     // Stopping immediately leads to the "stop" RPC call failing with the "errno 10054" sometimes.
-    spawn(async move {
+    let fut = async move {
         Timer::sleep(0.05).await;
         if let Err(e) = ctx.stop() {
             error!("Error stopping MmCtx: {}", e);
         }
-    });
+    };
+
+    // Please note we shouldn't use `MmCtx::spawner` to spawn this future,
+    // as all spawned futures will be dropped on `MmArc::stop`, so this future will be dropped as well,
+    // and it may lead to an unexpected behaviour.
+    common::executor::spawn(fut);
+
     let res = json!({
         "result": "success"
     });
@@ -247,7 +298,14 @@ pub async fn sim_panic(req: Json) -> Result<Response<Vec<u8>>, String> {
     Ok(try_s!(Response::builder().body(js)))
 }
 
-pub fn version() -> HyRes { rpc_response(200, MmVersionResult::new().to_json().to_string()) }
+pub fn version(ctx: MmArc) -> HyRes {
+    rpc_response(
+        RESPONSE_OK_STATUS_CODE,
+        MmVersionResult::new(ctx.mm_version.clone(), ctx.datetime.clone())
+            .to_json()
+            .to_string(),
+    )
+}
 
 pub async fn get_peers_info(ctx: MmArc) -> Result<Response<Vec<u8>>, String> {
     use crate::mm2::lp_network::P2PContext;

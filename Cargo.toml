@@ -1,18 +1,19 @@
 [workspace]
 members = [
     "mm2src/coins",
-    "mm2src/coins/lightning_persister",
-    "mm2src/coins/lightning_background_processor",
     "mm2src/coins/utxo_signer",
     "mm2src/coins_activation",
     "mm2src/common/shared_ref_counter",
     "mm2src/crypto",
     "mm2src/db_common",
+    "mm2src/derives/enum_from",
     "mm2src/derives/ser_error",
     "mm2src/derives/ser_error_derive",
     "mm2src/floodsub",
     "mm2src/gossipsub",
+    "mm2src/mm2_gui_storage",
     "mm2src/hw_common",
+    "mm2src/mm2_bin_lib",
     "mm2src/mm2_bitcoin/crypto",
     "mm2src/mm2_bitcoin/chain",
     "mm2src/mm2_bitcoin/keys",
@@ -25,14 +26,17 @@ members = [
     "mm2src/mm2_core",
     "mm2src/mm2_db",
     "mm2src/mm2_err_handle",
-    "mm2src/mm2_test_helpers",
+    "mm2src/mm2_eth",
+    "mm2src/mm2_io",
     "mm2src/mm2_libp2p",
+    "mm2src/mm2_metamask",
+    "mm2src/mm2_metrics",
     "mm2src/mm2_main",
     "mm2src/mm2_net",
     "mm2src/mm2_number",
-    "mm2src/mm2_io",
     "mm2src/mm2_rpc",
     "mm2src/rpc_task",
+    "mm2src/mm2_test_helpers",
     "mm2src/trezor",
 ]
 
@@ -40,11 +44,11 @@ members = [
 resolver = "2"
 
 [profile.release]
-# Due to the "overrides" only affects our workspace crates, as intended.
-debug = true
+debug = 1
 debug-assertions = false
-# For better or worse, might affect the stack traces in our portion of the code.
-#opt-level = 1
+# For some reason, opt-level 3 started causing infinite Windows builds after Cosmos integration
+# TODO troubleshoot it
+opt-level = 2
 
 [profile.test]
 # required to avoid a long running process of librustcash additional chain validation that is enabled with debug assertions
@@ -54,11 +58,8 @@ debug-assertions = false
 # Turns debugging symbols off for the out-of-workspace dependencies.
 debug = false
 
-# The backtrace disables build.define("HAVE_DL_ITERATE_PHDR", "1"); for android which results in "unknown" function
-# names being printed, but dl_iterate_phdr is present since API version 21 https://github.com/rust-lang/rust/issues/17520#issuecomment-344885468
-# We're using 21 version for Android build so we're fine to use the patch.
-# Consider removing once this issue is solved and fix applied to upstream repository
-# https://github.com/rust-lang/backtrace-rs/issues/227
-[patch.crates-io]
-backtrace = { git = "https://github.com/artemii235/backtrace-rs.git" }
-backtrace-sys = { git = "https://github.com/artemii235/backtrace-rs.git" }
+[profile.ci]
+inherits = "dev"
+# full debug info is not required
+debug = 1
+debug-assertions = false

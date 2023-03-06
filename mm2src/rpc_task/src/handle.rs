@@ -1,6 +1,6 @@
 use crate::manager::{RpcTaskManager, RpcTaskManagerWeak};
-use crate::{FinishedTaskResult, RpcTask, RpcTaskError, RpcTaskResult, TaskId, TaskStatus};
-use common::custom_futures::FutureTimerExt;
+use crate::{RpcTask, RpcTaskError, RpcTaskResult, TaskId, TaskStatus};
+use common::custom_futures::timeout::FutureTimerExt;
 use common::log::LogOnError;
 use futures::channel::oneshot;
 use mm2_err_handle::prelude::*;
@@ -15,11 +15,6 @@ pub struct RpcTaskHandle<Task: RpcTask> {
 }
 
 impl<Task: RpcTask> RpcTaskHandle<Task> {
-    pub(crate) fn abort(self) {
-        self.lock_and_then(|mut task_manager| task_manager.cancel_task(self.task_id))
-            .ok();
-    }
-
     fn lock_and_then<F, T>(&self, f: F) -> RpcTaskResult<T>
     where
         F: FnOnce(TaskManagerLock<Task>) -> RpcTaskResult<T>,
@@ -58,23 +53,24 @@ impl<Task: RpcTask> RpcTaskHandle<Task> {
         user_action_rx
             .timeout(timeout)
             .await?
-            .map_to_mm(|_canceled| RpcTaskError::Canceled)
+            .map_to_mm(|_canceled| RpcTaskError::Cancelled)
     }
 
     pub(crate) fn finish(self, result: Result<Task::Item, MmError<Task::Error>>) {
-        let task_result = Self::prepare_task_result(result);
-        self.lock_and_then(|mut task_manager| {
-            task_manager.update_task_status(self.task_id, TaskStatus::Ready(task_result))
-        })
-        .warn_log();
+        let task_status = Self::prepare_task_result(result);
+        self.lock_and_then(|mut task_manager| task_manager.update_task_status(self.task_id, task_status))
+            .warn_log();
     }
 
-    fn prepare_task_result(
-        result: Result<Task::Item, MmError<Task::Error>>,
-    ) -> FinishedTaskResult<Task::Item, Task::Error> {
+    pub(crate) fn on_cancelled(self) {
+        self.lock_and_then(|mut task_manager| task_manager.on_task_cancelling_finished(self.task_id))
+            .warn_log();
+    }
+
+    fn prepare_task_result(result: Result<Task::Item, MmError<Task::Error>>) -> TaskStatus<Task> {
         match result {
-            Ok(task_item) => FinishedTaskResult::ok(task_item),
-            Err(task_error) => FinishedTaskResult::Err(task_error),
+            Ok(task_item) => TaskStatus::Ok(task_item),
+            Err(task_error) => TaskStatus::Error(task_error),
         }
     }
 }

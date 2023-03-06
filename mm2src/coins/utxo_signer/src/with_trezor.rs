@@ -1,39 +1,38 @@
 use crate::sign_common::{complete_tx, p2pkh_spend_with_signature};
-use crate::sign_params::{SendingOutputInfo, SpendingInputInfo, UtxoSignTxParams};
+use crate::sign_params::{OutputDestination, SendingOutputInfo, SpendingInputInfo, UtxoSignTxParams};
 use crate::{TxProvider, UtxoSignTxError, UtxoSignTxResult};
 use chain::{Transaction as UtxoTx, TransactionOutput};
 use common::log::debug;
-use crypto::trezor::utxo::{PrevTx, PrevTxInput, PrevTxOutput, TrezorInputScriptType, TrezorUtxoCoin, TxOutput,
-                           TxSignResult, UnsignedTxInput, UnsignedUtxoTx};
-use crypto::trezor::TrezorClient;
+use crypto::trezor::utxo::{PrevTx, PrevTxInput, PrevTxOutput, TrezorInputScriptType, TxOutput, TxSignResult,
+                           UnsignedTxInput, UnsignedUtxoTx};
+use crypto::trezor::TrezorSession;
 use keys::bytes::Bytes;
 use mm2_err_handle::prelude::*;
 use rpc::v1::types::H256 as H256Json;
 use script::{SignatureVersion, UnsignedTransactionInput};
 use serialization::deserialize;
 
-pub struct TrezorTxSigner<TxP> {
-    pub trezor: TrezorClient,
+pub struct TrezorTxSigner<'a, TxP> {
+    pub trezor: TrezorSession<'a>,
     pub tx_provider: TxP,
-    pub trezor_coin: TrezorUtxoCoin,
+    pub trezor_coin: String,
     pub params: UtxoSignTxParams,
     pub fork_id: u32,
     pub branch_id: u32,
 }
 
-impl<TxP: TxProvider + Send + Sync> TrezorTxSigner<TxP> {
-    pub async fn sign_tx(self) -> UtxoSignTxResult<UtxoTx> {
+impl<'a, TxP: TxProvider + Send + Sync> TrezorTxSigner<'a, TxP> {
+    pub async fn sign_tx(mut self) -> UtxoSignTxResult<UtxoTx> {
         if let SignatureVersion::WitnessV0 = self.params.signature_version {
             return MmError::err(UtxoSignTxError::TrezorDoesntSupportP2WPKH);
         }
 
         let trezor_unsigned_tx = self.get_trezor_unsigned_tx().await?;
-        let mut session = self.trezor.session().await?;
 
         let TxSignResult {
             signatures,
             serialized_tx,
-        } = session.sign_utxo_tx(trezor_unsigned_tx).await?;
+        } = self.trezor.sign_utxo_tx(trezor_unsigned_tx).await?;
         debug!("Transaction signed by Trezor: {}", hex::encode(serialized_tx));
         if signatures.len() != self.params.inputs_count() {
             return MmError::err(UtxoSignTxError::InvalidSignaturesNumber {
@@ -69,19 +68,25 @@ impl<TxP: TxProvider + Send + Sync> TrezorTxSigner<TxP> {
             .collect();
 
         Ok(UnsignedUtxoTx {
-            coin: self.trezor_coin,
+            coin: self.trezor_coin.clone(),
             inputs,
             outputs,
             version: self.params.unsigned_tx.version as u32,
             lock_time: self.params.unsigned_tx.lock_time,
+            expiry: self.expiry_if_required(self.params.unsigned_tx.expiry_height),
             version_group_id: self.version_group_id(),
             branch_id: self.branch_id(),
         })
     }
 
     fn get_trezor_output(&self, tx_output: &TransactionOutput, output_info: &SendingOutputInfo) -> TxOutput {
+        let (address, address_derivation_path) = match output_info.destination_address {
+            OutputDestination::Plain { ref address } => (Some(address.clone()), None),
+            OutputDestination::Change { ref derivation_path } => (None, Some(derivation_path.clone())),
+        };
         TxOutput {
-            address: output_info.destination_address.clone(),
+            address,
+            address_derivation_path,
             amount: tx_output.value,
             script_type: output_info.trezor_output_script_type(),
         }
@@ -144,6 +149,7 @@ impl<TxP: TxProvider + Send + Sync> TrezorTxSigner<TxP> {
             outputs: prev_tx_outputs,
             version: prev_utxo.version as u32,
             lock_time: prev_utxo.lock_time,
+            expiry: self.expiry_if_required(prev_utxo.expiry_height),
             version_group_id: self.version_group_id(),
             branch_id: self.branch_id(),
             extra_data: self.extra_data(),
@@ -168,6 +174,16 @@ impl<TxP: TxProvider + Send + Sync> TrezorTxSigner<TxP> {
         }
     }
 
+    /// `expiry` must be set for Decred and Zcash coins *only*.
+    /// This fixes : https://github.com/KomodoPlatform/atomicDEX-API/issues/1626
+    fn expiry_if_required(&self, tx_expiry: u32) -> Option<u32> {
+        if self.is_overwinter_compatible() {
+            Some(tx_expiry)
+        } else {
+            None
+        }
+    }
+
     /// Temporary use `0000000000000000000000` extra data for Zcash coins *only*.
     /// https://github.com/trezor/connect/issues/610#issuecomment-646022404
     fn extra_data(&self) -> Vec<u8> {
@@ -179,5 +195,8 @@ impl<TxP: TxProvider + Send + Sync> TrezorTxSigner<TxP> {
     }
 
     /// https://github.com/trezor/trezor-utxo-lib/blob/trezor/src/transaction.js#L405
-    fn is_overwinter_compatible(&self) -> bool { self.params.unsigned_tx.version > 3 }
+    fn is_overwinter_compatible(&self) -> bool { self.is_zcash_type() && self.params.unsigned_tx.version > 3 }
+
+    /// https://github.com/trezor/trezor-utxo-lib/blob/trezor/src/coins.js#L55
+    fn is_zcash_type(&self) -> bool { matches!(self.trezor_coin.as_str(), "Komodo" | "Zcash" | "Zcash Testnet") }
 }

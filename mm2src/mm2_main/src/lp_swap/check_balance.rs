@@ -170,7 +170,8 @@ pub struct TakerFeeAdditionalInfo {
     pub fee_to_send_dex_fee: TradeFee,
 }
 
-#[derive(Debug, Display)]
+#[derive(Debug, Display, Serialize, SerializeErrorType)]
+#[serde(tag = "error_type", content = "error_data")]
 pub enum CheckBalanceError {
     #[display(
         fmt = "Not enough {} for swap: available {}, required at least {}, locked by swaps {:?}",
@@ -221,7 +222,7 @@ impl From<BalanceError> for CheckBalanceError {
             BalanceError::Transport(transport) | BalanceError::InvalidResponse(transport) => {
                 CheckBalanceError::Transport(transport)
             },
-            e @ BalanceError::UnexpectedDerivationMethod(_) | e @ BalanceError::WalletStorageError(_) => {
+            BalanceError::UnexpectedDerivationMethod(_) | BalanceError::WalletStorageError(_) => {
                 CheckBalanceError::InternalError(e.to_string())
             },
             BalanceError::Internal(internal) => CheckBalanceError::InternalError(internal),

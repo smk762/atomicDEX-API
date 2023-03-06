@@ -1,4 +1,6 @@
+use common::jsonrpc_client::JsonRpcErrorType;
 use derive_more::Display;
+use ethkey::Secret;
 use http::{HeaderMap, StatusCode};
 use mm2_err_handle::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -25,6 +27,17 @@ pub enum SlurpError {
     Internal(String),
 }
 
+impl From<SlurpError> for JsonRpcErrorType {
+    fn from(err: SlurpError) -> Self {
+        match err {
+            SlurpError::InvalidRequest(err) => Self::InvalidRequest(err),
+            SlurpError::Transport { .. } | SlurpError::Timeout { .. } => Self::Transport(err.to_string()),
+            SlurpError::ErrorDeserializing { uri, error } => Self::Parse(uri.into(), error),
+            SlurpError::Internal(_) => Self::Internal(err.to_string()),
+        }
+    }
+}
+
 /// Send POST JSON HTTPS request and parse response
 pub async fn post_json<T>(url: &str, json: String) -> Result<T, MmError<SlurpError>>
 where
@@ -47,4 +60,20 @@ where
         uri: url.to_owned(),
         error: e.to_string(),
     })
+}
+
+#[derive(Clone, Debug)]
+pub struct GuiAuthValidationGenerator {
+    pub coin_ticker: String,
+    pub secret: Secret,
+    pub address: String,
+}
+
+/// gui-auth specific data-type that needed in order to perform gui-auth calls
+#[derive(Serialize, Clone)]
+pub struct GuiAuthValidation {
+    pub coin_ticker: String,
+    pub address: String,
+    pub timestamp_message: i64,
+    pub signature: String,
 }

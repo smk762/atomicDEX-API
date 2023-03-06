@@ -24,6 +24,7 @@ pub enum ScriptType {
     CreateSender,
     Call,
     Create,
+    ColdStaking,
 }
 
 /// Address from Script
@@ -96,6 +97,8 @@ impl Script {
     pub fn new(data: Bytes) -> Self { Script { data } }
 
     pub fn to_bytes(&self) -> Bytes { self.data.clone() }
+
+    pub fn as_slice(&self) -> &[u8] { self.data.as_slice() }
 
     /// Is empty script
     pub fn is_empty(&self) -> bool { self.data.len() == 0 }
@@ -459,6 +462,9 @@ impl Script {
                 Ok(vec![]) // TODO
             },
             ScriptType::Create => {
+                Ok(vec![]) // TODO
+            },
+            ScriptType::ColdStaking => {
                 Ok(vec![]) // TODO
             },
         }

@@ -1,30 +1,34 @@
-use super::rpc_clients::TxMerkleBranch;
 use super::*;
 use crate::coin_balance::{AddressBalanceStatus, HDAddressBalance, HDWalletBalanceOps};
+use crate::coin_errors::{MyAddressError, ValidatePaymentError};
+use crate::hd_confirm_address::HDConfirmAddress;
 use crate::hd_pubkey::{ExtractExtendedPubkey, HDExtractPubkeyError, HDXPubExtractor};
-use crate::hd_wallet::{AccountUpdatingError, AddressDerivingError, HDAccountMut, HDAccountsMap,
-                       NewAccountCreatingError};
+use crate::hd_wallet::{AccountUpdatingError, AddressDerivingResult, HDAccountMut, HDAccountsMap,
+                       NewAccountCreatingError, NewAddressDeriveConfirmError, NewAddressDerivingError};
 use crate::hd_wallet_storage::{HDWalletCoinWithStorageOps, HDWalletStorageResult};
 use crate::rpc_command::init_withdraw::WithdrawTaskHandle;
 use crate::utxo::rpc_clients::{electrum_script_hash, BlockHashOrHeight, UnspentInfo, UnspentMap, UtxoRpcClientEnum,
                                UtxoRpcClientOps, UtxoRpcResult};
+use crate::utxo::spv::SimplePaymentVerification;
 use crate::utxo::tx_cache::TxCacheResult;
 use crate::utxo::utxo_withdraw::{InitUtxoWithdraw, StandardUtxoWithdraw, UtxoWithdraw};
-use crate::{CanRefundHtlc, CoinBalance, CoinWithDerivationMethod, GetWithdrawSenderAddress, HDAddressId,
-            RawTransactionError, RawTransactionRequest, RawTransactionRes, SearchForSwapTxSpendInput, SignatureError,
-            SignatureResult, SwapOps, TradePreimageValue, TransactionFut, TxFeeDetails, ValidateAddressResult,
-            ValidatePaymentInput, VerificationError, VerificationResult, WithdrawFrom, WithdrawResult,
-            WithdrawSenderAddress};
-use bitcrypto::dhash256;
+use crate::{CanRefundHtlc, CoinBalance, CoinWithDerivationMethod, GetWithdrawSenderAddress, HDAccountAddressId,
+            RawTransactionError, RawTransactionRequest, RawTransactionRes, SearchForSwapTxSpendInput,
+            SendMakerPaymentSpendPreimageInput, SendWatcherRefundsPaymentArgs, SignatureError, SignatureResult,
+            SwapOps, TradePreimageValue, TransactionFut, TxFeeDetails, TxMarshalingErr, ValidateAddressResult,
+            ValidateOtherPubKeyErr, ValidatePaymentFut, ValidatePaymentInput, VerificationError, VerificationResult,
+            WatcherSearchForSwapTxSpendInput, WatcherValidatePaymentInput, WatcherValidateTakerFeeInput, WithdrawFrom,
+            WithdrawResult, WithdrawSenderAddress, EARLY_CONFIRMATION_ERR_LOG, INVALID_RECEIVER_ERR_LOG,
+            INVALID_SENDER_ERR_LOG, OLD_TRANSACTION_ERR_LOG};
 pub use bitcrypto::{dhash160, sha256, ChecksumType};
+use bitcrypto::{dhash256, ripemd160};
 use chain::constants::SEQUENCE_FINAL;
-use chain::{BlockHeader, OutPoint, RawBlockHeader, TransactionOutput};
+use chain::{OutPoint, TransactionOutput};
 use common::executor::Timer;
 use common::jsonrpc_client::JsonRpcErrorType;
-use common::log::{debug, error, info, warn};
-use common::mm_metrics::MetricsArc;
+use common::log::{error, warn};
 use common::{now_ms, one_hundred, ten_f64};
-use crypto::{Bip32DerPathOps, Bip44Chain, Bip44DerPathError, Bip44DerivationPath, RpcDerivationPath};
+use crypto::{Bip32DerPathOps, Bip44Chain, RpcDerivationPath, StandardHDPath, StandardHDPathError};
 use futures::compat::Future01CompatExt;
 use futures::future::{FutureExt, TryFutureExt};
 use futures01::future::Either;
@@ -40,26 +44,24 @@ use rpc::v1::types::{Bytes as BytesJson, ToTxHash, TransactionInputEnum, H256 as
 use script::{Builder, Opcode, Script, ScriptAddress, TransactionInputSigner, UnsignedTransactionInput};
 use secp256k1::{PublicKey, Signature};
 use serde_json::{self as json};
-use serialization::{deserialize, serialize, serialize_list, serialize_with_flags, CoinVariant, CompactInteger,
-                    Serializable, Stream, SERIALIZE_TRANSACTION_WITNESS};
-use spv_validation::helpers_validation::validate_headers;
-use spv_validation::helpers_validation::SPVError;
-use spv_validation::spv_proof::{SPVProof, TRY_SPV_PROOF_INTERVAL};
+use serialization::{deserialize, serialize, serialize_with_flags, CoinVariant, CompactInteger, Serializable, Stream,
+                    SERIALIZE_TRANSACTION_WITNESS};
 use std::cmp::Ordering;
 use std::collections::hash_map::{Entry, HashMap};
 use std::str::FromStr;
 use std::sync::atomic::Ordering as AtomicOrdering;
-use utxo_block_header_storage::BlockHeaderStorageOps;
 use utxo_signer::with_key_pair::p2sh_spend;
 use utxo_signer::UtxoSignerOps;
 
 pub use chain::Transaction as UtxoTx;
 
+pub mod utxo_tx_history_v2_common;
+
 pub const DEFAULT_FEE_VOUT: usize = 0;
 pub const DEFAULT_SWAP_TX_SPEND_SIZE: u64 = 305;
 pub const DEFAULT_SWAP_VOUT: usize = 0;
+pub const DEFAULT_SWAP_VIN: usize = 0;
 const MIN_BTC_TRADING_VOL: &str = "0.00777";
-pub const NO_TX_ERROR_CODE: &str = "'code': -5";
 
 macro_rules! true_or {
     ($cond: expr, $etype: expr) => {
@@ -102,14 +104,22 @@ pub async fn get_tx_fee(coin: &UtxoCoinFields) -> UtxoRpcResult<ActualTxFee> {
     }
 }
 
-pub fn derive_address<T: UtxoCommonOps>(
+fn derive_address_with_cache<T>(
     coin: &T,
     hd_account: &UtxoHDAccount,
-    chain: Bip44Chain,
-    address_id: u32,
-) -> MmResult<HDAddress<Address, Public>, AddressDerivingError> {
-    let change_child = chain.to_child_number();
-    let address_id_child = ChildNumber::from(address_id);
+    hd_addresses_cache: &mut HashMap<HDAddressId, UtxoHDAddress>,
+    hd_address_id: HDAddressId,
+) -> AddressDerivingResult<UtxoHDAddress>
+where
+    T: UtxoCommonOps,
+{
+    // Check if the given HD address has been derived already.
+    if let Some(hd_address) = hd_addresses_cache.get(&hd_address_id) {
+        return Ok(hd_address.clone());
+    }
+
+    let change_child = hd_address_id.chain.to_child_number();
+    let address_id_child = ChildNumber::from(hd_address_id.address_id);
 
     let derived_pubkey = hd_account
         .extended_pubkey
@@ -121,11 +131,113 @@ pub fn derive_address<T: UtxoCommonOps>(
     let mut derivation_path = hd_account.account_derivation_path.to_derivation_path();
     derivation_path.push(change_child);
     derivation_path.push(address_id_child);
-    Ok(HDAddress {
+
+    let hd_address = HDAddress {
         address,
         pubkey,
         derivation_path,
-    })
+    };
+
+    // Cache the derived `hd_address`.
+    hd_addresses_cache.insert(hd_address_id, hd_address.clone());
+    Ok(hd_address)
+}
+
+/// [`HDWalletCoinOps::derive_addresses`] native implementation.
+///
+/// # Important
+///
+/// The [`HDAddressesCache::cache`] mutex is locked once for the entire duration of this function.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn derive_addresses<T, Ids>(
+    coin: &T,
+    hd_account: &UtxoHDAccount,
+    address_ids: Ids,
+) -> AddressDerivingResult<Vec<UtxoHDAddress>>
+where
+    T: UtxoCommonOps,
+    Ids: Iterator<Item = HDAddressId>,
+{
+    let mut hd_addresses_cache = hd_account.derived_addresses.lock().await;
+    address_ids
+        .map(|hd_address_id| derive_address_with_cache(coin, hd_account, &mut hd_addresses_cache, hd_address_id))
+        .collect()
+}
+
+/// [`HDWalletCoinOps::derive_addresses`] WASM implementation.
+///
+/// # Important
+///
+/// This function locks [`HDAddressesCache::cache`] mutex at each iteration.
+///
+/// # Performance
+///
+/// Locking the [`HDAddressesCache::cache`] mutex at each iteration may significantly degrade performance.
+/// But this is required at least for now due the facts that:
+/// 1) mm2 runs in the same thread as `KomodoPlatform/air_dex` runs;
+/// 2) [`ExtendedPublicKey::derive_child`] is a synchronous operation, and it takes a long time.
+/// So we need to periodically invoke Javascript runtime to handle UI events and other asynchronous tasks.
+#[cfg(target_arch = "wasm32")]
+pub async fn derive_addresses<T, Ids>(
+    coin: &T,
+    hd_account: &UtxoHDAccount,
+    address_ids: Ids,
+) -> AddressDerivingResult<Vec<UtxoHDAddress>>
+where
+    T: UtxoCommonOps,
+    Ids: Iterator<Item = HDAddressId>,
+{
+    let mut result = Vec::new();
+    for hd_address_id in address_ids {
+        let mut hd_addresses_cache = hd_account.derived_addresses.lock().await;
+
+        let hd_address = derive_address_with_cache(coin, hd_account, &mut hd_addresses_cache, hd_address_id)?;
+        result.push(hd_address);
+    }
+
+    Ok(result)
+}
+
+pub async fn generate_and_confirm_new_address<Coin, ConfirmAddress>(
+    coin: &Coin,
+    hd_wallet: &Coin::HDWallet,
+    hd_account: &mut Coin::HDAccount,
+    chain: Bip44Chain,
+    confirm_address: &ConfirmAddress,
+) -> MmResult<HDAddress<Coin::Address, Coin::Pubkey>, NewAddressDeriveConfirmError>
+where
+    Coin: HDWalletCoinWithStorageOps<Address = Address, HDWallet = UtxoHDWallet, HDAccount = UtxoHDAccount>
+        + AsRef<UtxoCoinFields>
+        + Sync,
+    ConfirmAddress: HDConfirmAddress,
+{
+    use crate::hd_wallet::inner_impl;
+
+    let inner_impl::NewAddress {
+        address,
+        new_known_addresses_number,
+    } = inner_impl::generate_new_address_immutable(coin, hd_wallet, hd_account, chain).await?;
+
+    let trezor_coin = coin.as_ref().conf.trezor_coin.clone().or_mm_err(|| {
+        let ticker = &coin.as_ref().conf.ticker;
+        let error = format!("'{ticker}' coin must contain the 'trezor_coin' field in the coins config");
+        NewAddressDeriveConfirmError::DeriveError(NewAddressDerivingError::Internal(error))
+    })?;
+    let expected_address = address.address.to_string();
+    // Ask the user to confirm if the given `expected_address` is the same as on the HW display.
+    confirm_address
+        .confirm_utxo_address(trezor_coin, address.derivation_path.clone(), expected_address)
+        .await?;
+
+    let actual_known_addresses_number = hd_account.known_addresses_number(chain)?;
+    // Check if the actual `known_addresses_number` hasn't been changed while we waited for the user confirmation.
+    // If the actual value is greater than the new one, we don't need to update.
+    if actual_known_addresses_number < new_known_addresses_number {
+        coin.set_known_addresses_number(hd_wallet, hd_account, chain, new_known_addresses_number)
+            .await?;
+    }
+
+    Ok(address)
 }
 
 pub async fn create_new_account<'a, Coin, XPubExtractor>(
@@ -137,7 +249,7 @@ where
     Coin: ExtractExtendedPubkey<ExtendedPublicKey = Secp256k1ExtendedPublicKey>
         + HDWalletCoinWithStorageOps<HDWallet = UtxoHDWallet, HDAccount = UtxoHDAccount>
         + Sync,
-    XPubExtractor: HDXPubExtractor + Sync,
+    XPubExtractor: HDXPubExtractor,
 {
     const INIT_ACCOUNT_ID: u32 = 0;
     let new_account_id = hd_wallet
@@ -149,17 +261,16 @@ where
         .last()
         .map(|(account_id, _account)| *account_id + 1)
         .unwrap_or(INIT_ACCOUNT_ID);
-    if new_account_id >= ChildNumber::HARDENED_FLAG {
-        return MmError::err(NewAccountCreatingError::AccountLimitReached {
-            max_accounts_number: ChildNumber::HARDENED_FLAG,
-        });
+    let max_accounts_number = hd_wallet.account_limit();
+    if new_account_id >= max_accounts_number {
+        return MmError::err(NewAccountCreatingError::AccountLimitReached { max_accounts_number });
     }
 
     let account_child_hardened = true;
     let account_child = ChildNumber::new(new_account_id, account_child_hardened)
         .map_to_mm(|e| NewAccountCreatingError::Internal(e.to_string()))?;
 
-    let account_derivation_path: Bip44PathToAccount = hd_wallet.derivation_path.derive(account_child)?;
+    let account_derivation_path: StandardHDPathToAccount = hd_wallet.derivation_path.derive(account_child)?;
     let account_pubkey = coin
         .extract_extended_pubkey(xpub_extractor, account_derivation_path.to_derivation_path())
         .await?;
@@ -171,6 +282,7 @@ where
         // We don't know how many addresses are used by the user at this moment.
         external_addresses_number: 0,
         internal_addresses_number: 0,
+        derived_addresses: HDAddressesCache::default(),
     };
 
     let accounts = hd_wallet.accounts.lock().await;
@@ -203,10 +315,9 @@ pub async fn set_known_addresses_number<T>(
 where
     T: HDWalletCoinWithStorageOps<HDWallet = UtxoHDWallet, HDAccount = UtxoHDAccount> + Sync,
 {
-    if new_known_addresses_number >= ChildNumber::HARDENED_FLAG {
-        return MmError::err(AccountUpdatingError::AddressLimitReached {
-            max_addresses_number: ChildNumber::HARDENED_FLAG,
-        });
+    let max_addresses_number = hd_wallet.address_limit();
+    if new_known_addresses_number >= max_addresses_number {
+        return MmError::err(AccountUpdatingError::AddressLimitReached { max_addresses_number });
     }
     match chain {
         Bip44Chain::External => {
@@ -288,29 +399,37 @@ where
         .mm_err(|e| BalanceError::Internal(e.to_string()))?;
 
     let mut unused_addresses_counter = 0;
-    while checking_address_id < ChildNumber::HARDENED_FLAG && unused_addresses_counter < gap_limit {
+    let max_addresses_number = hd_wallet.address_limit();
+    while checking_address_id < max_addresses_number && unused_addresses_counter <= gap_limit {
         let HDAddress {
             address: checking_address,
             derivation_path: checking_address_der_path,
             ..
-        } = coin.derive_address(hd_account, chain, checking_address_id)?;
+        } = coin.derive_address(hd_account, chain, checking_address_id).await?;
 
         match coin.is_address_used(&checking_address, address_scanner).await? {
             // We found a non-empty address, so we have to fill up the balance list
             // with zeros starting from `last_non_empty_address_id = checking_address_id - unused_addresses_counter`.
             AddressBalanceStatus::Used(non_empty_balance) => {
                 let last_non_empty_address_id = checking_address_id - unused_addresses_counter;
-                for empty_address_id in last_non_empty_address_id..checking_address_id {
-                    let empty_address = coin.derive_address(hd_account, chain, empty_address_id)?;
 
-                    balances.push(HDAddressBalance {
-                        address: empty_address.address.to_string(),
-                        derivation_path: RpcDerivationPath(empty_address.derivation_path),
-                        chain,
-                        balance: CoinBalance::default(),
-                    });
-                }
+                // First, derive all empty addresses and put it into `balances` with default balance.
+                let address_ids = (last_non_empty_address_id..checking_address_id)
+                    .into_iter()
+                    .map(|address_id| HDAddressId { chain, address_id });
+                let empty_addresses =
+                    coin.derive_addresses(hd_account, address_ids)
+                        .await?
+                        .into_iter()
+                        .map(|empty_address| HDAddressBalance {
+                            address: empty_address.address.to_string(),
+                            derivation_path: RpcDerivationPath(empty_address.derivation_path),
+                            chain,
+                            balance: CoinBalance::default(),
+                        });
+                balances.extend(empty_addresses);
 
+                // Then push this non-empty address.
                 balances.push(HDAddressBalance {
                     address: checking_address.to_string(),
                     derivation_path: RpcDerivationPath(checking_address_der_path),
@@ -367,7 +486,7 @@ where
 
 pub async fn load_hd_accounts_from_storage(
     hd_wallet_storage: &HDWalletCoinStorage,
-    derivation_path: &Bip44PathToCoin,
+    derivation_path: &StandardHDPathToCoin,
 ) -> HDWalletStorageResult<HDAccountsMap<UtxoHDAccount>> {
     let accounts = hd_wallet_storage.load_all_accounts().await?;
     let res: HDWalletStorageResult<HDAccountsMap<UtxoHDAccount>> = accounts
@@ -459,17 +578,25 @@ where
 {
     let trezor_coin = conf
         .trezor_coin
+        .clone()
         .or_mm_err(|| HDExtractPubkeyError::CoinDoesntSupportTrezor)?;
     let xpub = xpub_extractor.extract_utxo_xpub(trezor_coin, derivation_path).await?;
-    Secp256k1ExtendedPublicKey::from_str(&xpub).map_to_mm(HDExtractPubkeyError::InvalidXpub)
+    Secp256k1ExtendedPublicKey::from_str(&xpub).map_to_mm(|e| HDExtractPubkeyError::InvalidXpub(e.to_string()))
 }
 
 /// returns the fee required to be paid for HTLC spend transaction
-pub async fn get_htlc_spend_fee<T: UtxoCommonOps>(coin: &T, tx_size: u64) -> UtxoRpcResult<u64> {
+pub async fn get_htlc_spend_fee<T: UtxoCommonOps>(
+    coin: &T,
+    tx_size: u64,
+    stage: &FeeApproxStage,
+) -> UtxoRpcResult<u64> {
     let coin_fee = coin.get_tx_fee().await?;
     let mut fee = match coin_fee {
         // atomic swap payment spend transaction is slightly more than 300 bytes in average as of now
-        ActualTxFee::Dynamic(fee_per_kb) => (fee_per_kb * tx_size) / KILO_BYTE,
+        ActualTxFee::Dynamic(fee_per_kb) => {
+            let fee_per_kb = increase_dynamic_fee_by_stage(&coin, fee_per_kb, stage);
+            (fee_per_kb * tx_size) / KILO_BYTE
+        },
         // return satoshis here as swap spend transaction size is always less than 1 kb
         ActualTxFee::FixedPerKb(satoshis) => {
             let tx_size_kb = if tx_size % KILO_BYTE == 0 {
@@ -538,44 +665,49 @@ where
     coin.my_spendable_balance()
 }
 
-pub fn address_from_str_unchecked(coin: &UtxoCoinFields, address: &str) -> Result<Address, String> {
-    if let Ok(legacy) = Address::from_str(address) {
-        return Ok(legacy);
-    }
+pub fn address_from_str_unchecked(coin: &UtxoCoinFields, address: &str) -> MmResult<Address, AddrFromStrError> {
+    let mut errors = Vec::with_capacity(3);
 
-    if let Ok(segwit) = Address::from_segwitaddress(
+    match Address::from_str(address) {
+        Ok(legacy) => return Ok(legacy),
+        Err(e) => errors.push(e.to_string()),
+    };
+
+    match Address::from_segwitaddress(
         address,
         coin.conf.checksum_type,
         coin.conf.pub_addr_prefix,
         coin.conf.pub_t_addr_prefix,
     ) {
-        return Ok(segwit);
+        Ok(segwit) => return Ok(segwit),
+        Err(e) => errors.push(e),
     }
 
-    if let Ok(cashaddress) = Address::from_cashaddress(
+    match Address::from_cashaddress(
         address,
         coin.conf.checksum_type,
         coin.conf.pub_addr_prefix,
         coin.conf.p2sh_addr_prefix,
         coin.conf.pub_t_addr_prefix,
     ) {
-        return Ok(cashaddress);
+        Ok(cashaddress) => return Ok(cashaddress),
+        Err(e) => errors.push(e),
     }
 
-    return ERR!("Invalid address: {}", address);
+    MmError::err(AddrFromStrError::CannotDetermineFormat(errors))
 }
 
 pub fn my_public_key(coin: &UtxoCoinFields) -> Result<&Public, MmError<UnexpectedDerivationMethod>> {
     match coin.priv_key_policy {
         PrivKeyPolicy::KeyPair(ref key_pair) => Ok(key_pair.public()),
         // Hardware Wallets requires BIP39/BIP44 derivation path to extract a public key.
-        PrivKeyPolicy::Trezor => MmError::err(UnexpectedDerivationMethod::IguanaPrivKeyUnavailable),
+        PrivKeyPolicy::Trezor => MmError::err(UnexpectedDerivationMethod::ExpectedSingleAddress),
     }
 }
 
-pub fn checked_address_from_str<T: UtxoCommonOps>(coin: &T, address: &str) -> Result<Address, String> {
-    let addr = try_s!(address_from_str_unchecked(coin.as_ref(), address));
-    try_s!(check_withdraw_address_supported(coin, &addr));
+pub fn checked_address_from_str<T: UtxoCommonOps>(coin: &T, address: &str) -> MmResult<Address, AddrFromStrError> {
+    let addr = address_from_str_unchecked(coin.as_ref(), address)?;
+    check_withdraw_address_supported(coin, &addr)?;
     Ok(addr)
 }
 
@@ -635,7 +767,7 @@ impl<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> UtxoTxBuilder<'a, T> {
         UtxoTxBuilder {
             tx: coin.as_ref().transaction_preimage(),
             coin,
-            from: coin.as_ref().derivation_method.iguana().cloned(),
+            from: coin.as_ref().derivation_method.single_addr().cloned(),
             available_inputs: vec![],
             fee_policy: FeePolicy::SendExact,
             fee: None,
@@ -965,6 +1097,9 @@ pub struct P2SHSpendingTxInput<'a> {
 }
 
 pub async fn p2sh_spending_tx<T: UtxoCommonOps>(coin: &T, input: P2SHSpendingTxInput<'_>) -> Result<UtxoTx, String> {
+    if input.prev_transaction.outputs.is_empty() {
+        return ERR!("Transaction doesn't have any output");
+    }
     let lock_time = try_s!(coin.p2sh_tx_locktime(input.lock_time).await);
     let n_time = if coin.as_ref().conf.is_pos {
         Some((now_ms() / 1000) as u32)
@@ -1137,26 +1272,42 @@ pub fn send_maker_spends_taker_payment<T: UtxoCommonOps + SwapOps>(
     time_lock: u32,
     taker_pub: &[u8],
     secret: &[u8],
+    secret_hash: &[u8],
     swap_unique_data: &[u8],
 ) -> TransactionFut {
-    let my_address = try_tx_fus!(coin.as_ref().derivation_method.iguana_or_err()).clone();
+    let my_address = try_tx_fus!(coin.as_ref().derivation_method.single_addr_or_err()).clone();
     let mut prev_transaction: UtxoTx = try_tx_fus!(deserialize(taker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_transaction.tx_hash_algo = coin.as_ref().tx_hash_algo;
+    drop_mutability!(prev_transaction);
+    if prev_transaction.outputs.is_empty() {
+        return try_tx_fus!(TX_PLAIN_ERR!("Transaction doesn't have any output"));
+    }
 
     let key_pair = coin.derive_htlc_key_pair(swap_unique_data);
     let script_data = Builder::default()
         .push_data(secret)
         .push_opcode(Opcode::OP_0)
         .into_script();
+
     let redeem_script = payment_script(
         time_lock,
-        &*dhash160(secret),
+        secret_hash,
         &try_tx_fus!(Public::from_slice(taker_pub)),
         key_pair.public(),
     )
     .into();
     let fut = async move {
-        let fee = try_tx_s!(coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE).await);
+        let fee = try_tx_s!(
+            coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE, &FeeApproxStage::WithoutApprox)
+                .await
+        );
+        if fee >= prev_transaction.outputs[0].value {
+            return TX_PLAIN_ERR!(
+                "HTLC spend fee {} is greater than transaction output {}",
+                fee,
+                prev_transaction.outputs[0].value
+            );
+        }
         let script_pubkey = output_script(&my_address, ScriptType::P2PKH).to_bytes();
         let output = TransactionOutput {
             value: prev_transaction.outputs[0].value - fee,
@@ -1182,17 +1333,188 @@ pub fn send_maker_spends_taker_payment<T: UtxoCommonOps + SwapOps>(
     Box::new(fut.boxed().compat())
 }
 
+pub fn send_maker_payment_spend_preimage<T: UtxoCommonOps + SwapOps>(
+    coin: &T,
+    input: SendMakerPaymentSpendPreimageInput,
+) -> TransactionFut {
+    let mut transaction: UtxoTx = try_tx_fus!(deserialize(input.preimage).map_err(|e| ERRL!("{:?}", e)));
+    if transaction.inputs.is_empty() {
+        return try_tx_fus!(TX_PLAIN_ERR!("Transaction doesn't have any input"));
+    }
+    let script = Script::from(transaction.inputs[DEFAULT_SWAP_VIN].script_sig.clone());
+    let mut instructions = script.iter();
+
+    let instruction_1 = try_tx_fus!(try_tx_fus!(instructions.next().ok_or("Instruction not found")));
+    let instruction_2 = try_tx_fus!(try_tx_fus!(instructions.next().ok_or("Instruction not found")));
+
+    let script_sig = try_tx_fus!(instruction_1
+        .data
+        .ok_or("No script signature in the taker spends maker payment preimage"));
+    let redeem_script = try_tx_fus!(instruction_2
+        .data
+        .ok_or("No redeem script in the taker spends maker payment preimage"));
+    let script_data = Builder::default()
+        .push_data(input.secret)
+        .push_opcode(Opcode::OP_0)
+        .into_script();
+
+    let mut resulting_script = Builder::default().push_data(script_sig).into_bytes();
+    resulting_script.extend_from_slice(&script_data);
+    let redeem_part = Builder::default().push_data(redeem_script).into_bytes();
+    resulting_script.extend_from_slice(&redeem_part);
+
+    transaction.inputs[DEFAULT_SWAP_VIN].script_sig = resulting_script;
+
+    let coin = coin.clone();
+    let fut = async move {
+        let tx_fut = coin.as_ref().rpc_client.send_transaction(&transaction).compat();
+        try_tx_s!(tx_fut.await, transaction);
+
+        Ok(transaction.into())
+    };
+
+    Box::new(fut.boxed().compat())
+}
+
+pub fn create_maker_payment_spend_preimage<T: UtxoCommonOps + SwapOps>(
+    coin: &T,
+    maker_payment_tx: &[u8],
+    time_lock: u32,
+    maker_pub: &[u8],
+    secret_hash: &[u8],
+    swap_unique_data: &[u8],
+) -> TransactionFut {
+    let my_address = try_tx_fus!(coin.as_ref().derivation_method.single_addr_or_err()).clone();
+    let mut prev_transaction: UtxoTx = try_tx_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
+    prev_transaction.tx_hash_algo = coin.as_ref().tx_hash_algo;
+    drop_mutability!(prev_transaction);
+    if prev_transaction.outputs.is_empty() {
+        return try_tx_fus!(TX_PLAIN_ERR!("Transaction doesn't have any output"));
+    }
+
+    let key_pair = coin.derive_htlc_key_pair(swap_unique_data);
+
+    let script_data = Builder::default().into_script();
+    let redeem_script = payment_script(
+        time_lock,
+        secret_hash,
+        &try_tx_fus!(Public::from_slice(maker_pub)),
+        key_pair.public(),
+    )
+    .into();
+    let coin = coin.clone();
+    let fut = async move {
+        let fee = try_tx_s!(
+            coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE, &FeeApproxStage::WatcherPreimage)
+                .await
+        );
+
+        if fee >= prev_transaction.outputs[0].value {
+            return TX_PLAIN_ERR!(
+                "HTLC spend fee {} is greater than transaction output {}",
+                fee,
+                prev_transaction.outputs[0].value
+            );
+        }
+        let script_pubkey = output_script(&my_address, ScriptType::P2PKH).to_bytes();
+        let output = TransactionOutput {
+            value: prev_transaction.outputs[0].value - fee,
+            script_pubkey,
+        };
+
+        let input = P2SHSpendingTxInput {
+            prev_transaction,
+            redeem_script,
+            outputs: vec![output],
+            script_data,
+            sequence: SEQUENCE_FINAL,
+            lock_time: time_lock,
+            keypair: &key_pair,
+        };
+        let transaction = try_tx_s!(coin.p2sh_spending_tx(input).await);
+
+        Ok(transaction.into())
+    };
+    Box::new(fut.boxed().compat())
+}
+
+pub fn create_taker_payment_refund_preimage<T: UtxoCommonOps + SwapOps>(
+    coin: &T,
+    taker_payment_tx: &[u8],
+    time_lock: u32,
+    maker_pub: &[u8],
+    secret_hash: &[u8],
+    swap_unique_data: &[u8],
+) -> TransactionFut {
+    let coin = coin.clone();
+    let my_address = try_tx_fus!(coin.as_ref().derivation_method.single_addr_or_err()).clone();
+    let mut prev_transaction: UtxoTx =
+        try_tx_fus!(deserialize(taker_payment_tx).map_err(|e| TransactionErr::Plain(format!("{:?}", e))));
+    prev_transaction.tx_hash_algo = coin.as_ref().tx_hash_algo;
+    drop_mutability!(prev_transaction);
+    if prev_transaction.outputs.is_empty() {
+        return try_tx_fus!(TX_PLAIN_ERR!("Transaction doesn't have any output"));
+    }
+
+    let key_pair = coin.derive_htlc_key_pair(swap_unique_data);
+    let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
+    let redeem_script = payment_script(
+        time_lock,
+        secret_hash,
+        key_pair.public(),
+        &try_tx_fus!(Public::from_slice(maker_pub)),
+    )
+    .into();
+    let fut = async move {
+        let fee = try_tx_s!(
+            coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE, &FeeApproxStage::WatcherPreimage)
+                .await
+        );
+        if fee >= prev_transaction.outputs[0].value {
+            return TX_PLAIN_ERR!(
+                "HTLC spend fee {} is greater than transaction output {}",
+                fee,
+                prev_transaction.outputs[0].value
+            );
+        }
+        let script_pubkey = output_script(&my_address, ScriptType::P2PKH).to_bytes();
+        let output = TransactionOutput {
+            value: prev_transaction.outputs[0].value - fee,
+            script_pubkey,
+        };
+
+        let input = P2SHSpendingTxInput {
+            prev_transaction,
+            redeem_script,
+            outputs: vec![output],
+            script_data,
+            sequence: SEQUENCE_FINAL - 1,
+            lock_time: time_lock,
+            keypair: &key_pair,
+        };
+        let transaction = try_tx_s!(coin.p2sh_spending_tx(input).await);
+
+        Ok(transaction.into())
+    };
+    Box::new(fut.boxed().compat())
+}
+
 pub fn send_taker_spends_maker_payment<T: UtxoCommonOps + SwapOps>(
     coin: T,
     maker_payment_tx: &[u8],
     time_lock: u32,
     maker_pub: &[u8],
     secret: &[u8],
+    secret_hash: &[u8],
     swap_unique_data: &[u8],
 ) -> TransactionFut {
-    let my_address = try_tx_fus!(coin.as_ref().derivation_method.iguana_or_err()).clone();
+    let my_address = try_tx_fus!(coin.as_ref().derivation_method.single_addr_or_err()).clone();
     let mut prev_transaction: UtxoTx = try_tx_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_transaction.tx_hash_algo = coin.as_ref().tx_hash_algo;
+    drop_mutability!(prev_transaction);
+    if prev_transaction.outputs.is_empty() {
+        return try_tx_fus!(TX_PLAIN_ERR!("Transaction doesn't have any output"));
+    }
 
     let key_pair = coin.derive_htlc_key_pair(swap_unique_data);
 
@@ -1202,13 +1524,23 @@ pub fn send_taker_spends_maker_payment<T: UtxoCommonOps + SwapOps>(
         .into_script();
     let redeem_script = payment_script(
         time_lock,
-        &*dhash160(secret),
+        secret_hash,
         &try_tx_fus!(Public::from_slice(maker_pub)),
         key_pair.public(),
     )
     .into();
     let fut = async move {
-        let fee = try_tx_s!(coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE).await);
+        let fee = try_tx_s!(
+            coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE, &FeeApproxStage::WithoutApprox)
+                .await
+        );
+        if fee >= prev_transaction.outputs[0].value {
+            return TX_PLAIN_ERR!(
+                "HTLC spend fee {} is greater than transaction output {}",
+                fee,
+                prev_transaction.outputs[0].value
+            );
+        }
         let script_pubkey = output_script(&my_address, ScriptType::P2PKH).to_bytes();
         let output = TransactionOutput {
             value: prev_transaction.outputs[0].value - fee,
@@ -1242,10 +1574,14 @@ pub fn send_taker_refunds_payment<T: UtxoCommonOps + SwapOps>(
     secret_hash: &[u8],
     swap_unique_data: &[u8],
 ) -> TransactionFut {
-    let my_address = try_tx_fus!(coin.as_ref().derivation_method.iguana_or_err()).clone();
+    let my_address = try_tx_fus!(coin.as_ref().derivation_method.single_addr_or_err()).clone();
     let mut prev_transaction: UtxoTx =
         try_tx_fus!(deserialize(taker_payment_tx).map_err(|e| TransactionErr::Plain(format!("{:?}", e))));
     prev_transaction.tx_hash_algo = coin.as_ref().tx_hash_algo;
+    drop_mutability!(prev_transaction);
+    if prev_transaction.outputs.is_empty() {
+        return try_tx_fus!(TX_PLAIN_ERR!("Transaction doesn't have any output"));
+    }
 
     let key_pair = coin.derive_htlc_key_pair(swap_unique_data);
     let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
@@ -1257,7 +1593,17 @@ pub fn send_taker_refunds_payment<T: UtxoCommonOps + SwapOps>(
     )
     .into();
     let fut = async move {
-        let fee = try_tx_s!(coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE).await);
+        let fee = try_tx_s!(
+            coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE, &FeeApproxStage::WithoutApprox)
+                .await
+        );
+        if fee >= prev_transaction.outputs[0].value {
+            return TX_PLAIN_ERR!(
+                "HTLC spend fee {} is greater than transaction output {}",
+                fee,
+                prev_transaction.outputs[0].value
+            );
+        }
         let script_pubkey = output_script(&my_address, ScriptType::P2PKH).to_bytes();
         let output = TransactionOutput {
             value: prev_transaction.outputs[0].value - fee,
@@ -1283,6 +1629,25 @@ pub fn send_taker_refunds_payment<T: UtxoCommonOps + SwapOps>(
     Box::new(fut.boxed().compat())
 }
 
+pub fn send_taker_payment_refund_preimage<T: UtxoCommonOps + SwapOps>(
+    coin: &T,
+    watcher_refunds_payment_args: SendWatcherRefundsPaymentArgs,
+) -> TransactionFut {
+    let coin = coin.clone();
+    let transaction: UtxoTx = try_tx_fus!(
+        deserialize(watcher_refunds_payment_args.payment_tx).map_err(|e| TransactionErr::Plain(format!("{:?}", e)))
+    );
+
+    let fut = async move {
+        let tx_fut = coin.as_ref().rpc_client.send_transaction(&transaction).compat();
+        try_tx_s!(tx_fut.await, transaction);
+
+        Ok(transaction.into())
+    };
+
+    Box::new(fut.boxed().compat())
+}
+
 pub fn send_maker_refunds_payment<T: UtxoCommonOps + SwapOps>(
     coin: T,
     maker_payment_tx: &[u8],
@@ -1291,9 +1656,13 @@ pub fn send_maker_refunds_payment<T: UtxoCommonOps + SwapOps>(
     secret_hash: &[u8],
     swap_unique_data: &[u8],
 ) -> TransactionFut {
-    let my_address = try_tx_fus!(coin.as_ref().derivation_method.iguana_or_err()).clone();
+    let my_address = try_tx_fus!(coin.as_ref().derivation_method.single_addr_or_err()).clone();
     let mut prev_transaction: UtxoTx = try_tx_fus!(deserialize(maker_payment_tx).map_err(|e| ERRL!("{:?}", e)));
     prev_transaction.tx_hash_algo = coin.as_ref().tx_hash_algo;
+    drop_mutability!(prev_transaction);
+    if prev_transaction.outputs.is_empty() {
+        return try_tx_fus!(TX_PLAIN_ERR!("Transaction doesn't have any output"));
+    }
 
     let key_pair = coin.derive_htlc_key_pair(swap_unique_data);
     let script_data = Builder::default().push_opcode(Opcode::OP_1).into_script();
@@ -1305,7 +1674,17 @@ pub fn send_maker_refunds_payment<T: UtxoCommonOps + SwapOps>(
     )
     .into();
     let fut = async move {
-        let fee = try_tx_s!(coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE).await);
+        let fee = try_tx_s!(
+            coin.get_htlc_spend_fee(DEFAULT_SWAP_TX_SPEND_SIZE, &FeeApproxStage::WithoutApprox)
+                .await
+        );
+        if fee >= prev_transaction.outputs[0].value {
+            return TX_PLAIN_ERR!(
+                "HTLC spend fee {} is greater than transaction output {}",
+                fee,
+                prev_transaction.outputs[0].value
+            );
+        }
         let script_pubkey = output_script(&my_address, ScriptType::P2PKH).to_bytes();
         let output = TransactionOutput {
             value: prev_transaction.outputs[0].value - fee,
@@ -1399,13 +1778,21 @@ where
     }
 }
 
-pub fn check_all_inputs_signed_by_pub(tx: &UtxoTx, expected_pub: &[u8]) -> Result<bool, String> {
+pub fn check_all_inputs_signed_by_pub(tx: &[u8], expected_pub: &[u8]) -> Result<bool, MmError<ValidatePaymentError>> {
+    let tx: UtxoTx = deserialize(tx)?;
+    check_all_utxo_inputs_signed_by_pub(&tx, expected_pub)
+}
+
+pub fn check_all_utxo_inputs_signed_by_pub(
+    tx: &UtxoTx,
+    expected_pub: &[u8],
+) -> Result<bool, MmError<ValidatePaymentError>> {
     for input in &tx.inputs {
         let pubkey = if input.has_witness() {
-            try_s!(pubkey_from_witness_script(&input.script_witness))
+            pubkey_from_witness_script(&input.script_witness).map_to_mm(ValidatePaymentError::TxDeserializationError)?
         } else {
             let script: Script = input.script_sig.clone().into();
-            try_s!(pubkey_from_script_sig(&script))
+            pubkey_from_script_sig(&script).map_to_mm(ValidatePaymentError::TxDeserializationError)?
         };
         if *pubkey != expected_pub {
             return Ok(false);
@@ -1413,6 +1800,100 @@ pub fn check_all_inputs_signed_by_pub(tx: &UtxoTx, expected_pub: &[u8]) -> Resul
     }
 
     Ok(true)
+}
+
+pub fn watcher_validate_taker_fee<T: UtxoCommonOps>(
+    coin: &T,
+    input: WatcherValidateTakerFeeInput,
+    output_index: usize,
+) -> ValidatePaymentFut<()> {
+    let coin = coin.clone();
+    let sender_pubkey = input.sender_pubkey;
+    let taker_fee_hash = input.taker_fee_hash;
+    let min_block_number = input.min_block_number;
+    let lock_duration = input.lock_duration;
+    let fee_addr = input.fee_addr.to_vec();
+
+    let fut = async move {
+        let mut attempts = 0;
+        loop {
+            let tx_from_rpc = match coin
+                .as_ref()
+                .rpc_client
+                .get_verbose_transaction(&H256Json::from(taker_fee_hash.as_slice()))
+                .compat()
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    if attempts > 2 {
+                        return MmError::err(ValidatePaymentError::from(e.into_inner()));
+                    };
+                    attempts += 1;
+                    error!("Error getting tx {:?} from rpc: {:?}", taker_fee_hash, e);
+                    Timer::sleep(10.).await;
+                    continue;
+                },
+            };
+
+            let taker_fee_tx: UtxoTx = deserialize(tx_from_rpc.hex.0.as_slice())?;
+            let inputs_signed_by_pub = check_all_utxo_inputs_signed_by_pub(&taker_fee_tx, &sender_pubkey)?;
+            if !inputs_signed_by_pub {
+                return MmError::err(ValidatePaymentError::WrongPaymentTx(format!(
+                    "{}: Taker fee does not belong to the verified public key",
+                    INVALID_SENDER_ERR_LOG
+                )));
+            }
+
+            let tx_confirmed_before_block = is_tx_confirmed_before_block(&coin, &tx_from_rpc, min_block_number)
+                .await
+                .map_to_mm(ValidatePaymentError::InternalError)?;
+            if tx_confirmed_before_block {
+                return MmError::err(ValidatePaymentError::WrongPaymentTx(format!(
+                    "{}: Fee tx {:?} confirmed before min_block {}",
+                    EARLY_CONFIRMATION_ERR_LOG, taker_fee_tx, min_block_number
+                )));
+            }
+
+            if (now_ms() / 1000) as u32 - taker_fee_tx.lock_time > lock_duration as u32 {
+                return MmError::err(ValidatePaymentError::WrongPaymentTx(format!(
+                    "{}: Taker fee {:?} is too old",
+                    OLD_TRANSACTION_ERR_LOG, taker_fee_tx
+                )));
+            }
+
+            let address = address_from_raw_pubkey(
+                &fee_addr,
+                coin.as_ref().conf.pub_addr_prefix,
+                coin.as_ref().conf.pub_t_addr_prefix,
+                coin.as_ref().conf.checksum_type,
+                coin.as_ref().conf.bech32_hrp.clone(),
+                coin.addr_format().clone(),
+            )
+            .map_to_mm(ValidatePaymentError::TxDeserializationError)?;
+
+            match taker_fee_tx.outputs.get(output_index) {
+                Some(out) => {
+                    let expected_script_pubkey = Builder::build_p2pkh(&address.hash).to_bytes();
+                    if out.script_pubkey != expected_script_pubkey {
+                        return MmError::err(ValidatePaymentError::WrongPaymentTx(format!(
+                            "{}: Provided dex fee tx output script_pubkey doesn't match expected {:?} {:?}",
+                            INVALID_RECEIVER_ERR_LOG, out.script_pubkey, expected_script_pubkey
+                        )));
+                    }
+                },
+                None => {
+                    return MmError::err(ValidatePaymentError::WrongPaymentTx(format!(
+                        "Provided dex fee tx {:?} does not have output {}",
+                        taker_fee_tx, output_index
+                    )))
+                },
+            }
+
+            return Ok(());
+        }
+    };
+    Box::new(fut.boxed().compat())
 }
 
 pub fn validate_fee<T: UtxoCommonOps>(
@@ -1434,7 +1915,7 @@ pub fn validate_fee<T: UtxoCommonOps>(
         coin.addr_format().clone(),
     ));
 
-    if !try_fus!(check_all_inputs_signed_by_pub(&tx, sender_pubkey)) {
+    if !try_fus!(check_all_utxo_inputs_signed_by_pub(&tx, sender_pubkey)) {
         return Box::new(futures01::future::err(ERRL!("The dex fee was sent from wrong address")));
     }
     let fut = async move {
@@ -1494,16 +1975,19 @@ pub fn validate_fee<T: UtxoCommonOps>(
 pub fn validate_maker_payment<T: UtxoCommonOps + SwapOps>(
     coin: &T,
     input: ValidatePaymentInput,
-) -> Box<dyn Future<Item = (), Error = String> + Send> {
-    let mut tx: UtxoTx = try_fus!(deserialize(input.payment_tx.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+) -> ValidatePaymentFut<()> {
+    let mut tx: UtxoTx = try_f!(deserialize(input.payment_tx.as_slice()));
     tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
 
     let htlc_keypair = coin.derive_htlc_key_pair(&input.unique_swap_data);
+    let other_pub =
+        &try_f!(Public::from_slice(&input.other_pub)
+            .map_to_mm(|err| ValidatePaymentError::InvalidParameter(err.to_string())));
     validate_payment(
         coin.clone(),
         tx,
         DEFAULT_SWAP_VOUT,
-        &try_fus!(Public::from_slice(&input.other_pub)),
+        other_pub,
         htlc_keypair.public(),
         &input.secret_hash,
         input.amount,
@@ -1513,19 +1997,99 @@ pub fn validate_maker_payment<T: UtxoCommonOps + SwapOps>(
     )
 }
 
+pub fn watcher_validate_taker_payment<T: UtxoCommonOps + SwapOps>(
+    coin: &T,
+    input: WatcherValidatePaymentInput,
+) -> ValidatePaymentFut<()> {
+    let taker_payment_tx: UtxoTx = try_f!(deserialize(input.payment_tx.as_slice()));
+    let taker_payment_refund_preimage: UtxoTx = try_f!(deserialize(input.taker_payment_refund_preimage.as_slice()));
+    let taker_pub = &try_f!(
+        Public::from_slice(&input.taker_pub).map_err(|err| ValidatePaymentError::InvalidParameter(err.to_string()))
+    );
+    let maker_pub = &try_f!(
+        Public::from_slice(&input.maker_pub).map_err(|err| ValidatePaymentError::InvalidParameter(err.to_string()))
+    );
+    let expected_redeem = payment_script(input.time_lock, &input.secret_hash, taker_pub, maker_pub);
+    let coin = coin.clone();
+
+    let fut = async move {
+        let inputs_signed_by_pub = check_all_utxo_inputs_signed_by_pub(&taker_payment_tx, &input.taker_pub)?;
+        if !inputs_signed_by_pub {
+            return MmError::err(ValidatePaymentError::WrongPaymentTx(
+                "Taker payment does not belong to the verified public key".to_string(),
+            ));
+        }
+
+        let taker_payment_locking_script = match taker_payment_tx.outputs.get(DEFAULT_SWAP_VOUT) {
+            Some(output) => output.script_pubkey.clone(),
+            None => {
+                return MmError::err(ValidatePaymentError::WrongPaymentTx(
+                    "Payment tx has no outputs".to_string(),
+                ))
+            },
+        };
+
+        if taker_payment_locking_script != Builder::build_p2sh(&dhash160(&expected_redeem).into()).to_bytes() {
+            return MmError::err(ValidatePaymentError::WrongPaymentTx(format!(
+                "Payment tx locking script {:?} doesn't match expected",
+                taker_payment_locking_script
+            )));
+        }
+
+        let script_sig = match taker_payment_refund_preimage.inputs.get(DEFAULT_SWAP_VIN) {
+            Some(input) => Script::from(input.script_sig.clone()),
+            None => {
+                return MmError::err(ValidatePaymentError::WrongPaymentTx(
+                    "Taker payment refund tx has no inputs".to_string(),
+                ))
+            },
+        };
+
+        let instruction = script_sig
+            .iter()
+            .last()
+            .or_mm_err(|| ValidatePaymentError::WrongPaymentTx(String::from("Instruction not found")))?
+            .map_to_mm(|err| ValidatePaymentError::WrongPaymentTx(err.to_string()))?;
+
+        let redeem_script = instruction.data.or_mm_err(|| {
+            ValidatePaymentError::WrongPaymentTx(String::from("No redeem script in the taker payment refund preimage"))
+        })?;
+
+        if expected_redeem.as_slice() != redeem_script {
+            return MmError::err(ValidatePaymentError::WrongPaymentTx(
+                "Taker payment tx locking script doesn't match with taker payment refund redeem script".to_string(),
+            ));
+        }
+
+        if let UtxoRpcClientEnum::Electrum(client) = &coin.as_ref().rpc_client {
+            if coin.as_ref().conf.spv_conf.is_some() && input.confirmations != 0 {
+                client
+                    .validate_spv_proof(&taker_payment_tx, input.try_spv_proof_until)
+                    .await?;
+            }
+        }
+        Ok(())
+    };
+    Box::new(fut.boxed().compat())
+}
+
 pub fn validate_taker_payment<T: UtxoCommonOps + SwapOps>(
     coin: &T,
     input: ValidatePaymentInput,
-) -> Box<dyn Future<Item = (), Error = String> + Send> {
-    let mut tx: UtxoTx = try_fus!(deserialize(input.payment_tx.as_slice()).map_err(|e| ERRL!("{:?}", e)));
+) -> ValidatePaymentFut<()> {
+    let mut tx: UtxoTx = try_f!(deserialize(input.payment_tx.as_slice()));
     tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
 
     let htlc_keypair = coin.derive_htlc_key_pair(&input.unique_swap_data);
+    let other_pub =
+        &try_f!(Public::from_slice(&input.other_pub)
+            .map_to_mm(|err| ValidatePaymentError::InvalidParameter(err.to_string())));
+
     validate_payment(
         coin.clone(),
         tx,
         DEFAULT_SWAP_VOUT,
-        &try_fus!(Public::from_slice(&input.other_pub)),
+        other_pub,
         htlc_keypair.public(),
         &input.secret_hash,
         input.amount,
@@ -1594,6 +2158,24 @@ pub fn check_if_my_payment_sent<T: UtxoCommonOps + SwapOps>(
         }
     };
     Box::new(fut.boxed().compat())
+}
+
+pub async fn watcher_search_for_swap_tx_spend<T: AsRef<UtxoCoinFields> + SwapOps>(
+    coin: &T,
+    input: WatcherSearchForSwapTxSpendInput<'_>,
+    output_index: usize,
+) -> Result<Option<FoundSwapTxSpend>, String> {
+    search_for_swap_output_spend(
+        coin.as_ref(),
+        input.time_lock,
+        &try_s!(Public::from_slice(input.taker_pub)),
+        &try_s!(Public::from_slice(input.maker_pub)),
+        input.secret_hash,
+        input.tx,
+        output_index,
+        input.search_from_block,
+    )
+    .await
 }
 
 pub async fn search_for_swap_tx_spend_my<T: AsRef<UtxoCoinFields> + SwapOps>(
@@ -1668,11 +2250,16 @@ pub fn extract_secret(secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, St
             },
         };
 
-        let actual_secret_hash = &*dhash160(&secret);
-        if actual_secret_hash != secret_hash {
+        let expected_secret_hash = if secret_hash.len() == 32 {
+            ripemd160(secret_hash)
+        } else {
+            H160::from(secret_hash)
+        };
+        let actual_secret_hash = dhash160(&secret);
+        if actual_secret_hash != expected_secret_hash {
             warn!(
-                "Invalid 'dhash160(secret)' {:?}, expected {:?}",
-                actual_secret_hash, secret_hash
+                "Invalid secret hash {:?}, expected {:?}",
+                actual_secret_hash, expected_secret_hash
             );
             continue;
         }
@@ -1681,10 +2268,14 @@ pub fn extract_secret(secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, St
     ERR!("Couldn't extract secret")
 }
 
-pub fn my_address<T: UtxoCommonOps>(coin: &T) -> Result<String, String> {
+pub fn my_address<T: UtxoCommonOps>(coin: &T) -> MmResult<String, MyAddressError> {
     match coin.as_ref().derivation_method {
-        DerivationMethod::Iguana(ref my_address) => my_address.display_address(),
-        DerivationMethod::HDWallet(_) => ERR!("'my_address' is deprecated for HD wallets"),
+        DerivationMethod::SingleAddress(ref my_address) => {
+            my_address.display_address().map_to_mm(MyAddressError::InternalError)
+        },
+        DerivationMethod::HDWallet(_) => MmError::err(MyAddressError::UnexpectedDerivationMethod(
+            "'my_address' is deprecated for HD wallets".to_string(),
+        )),
     }
 }
 
@@ -1718,7 +2309,7 @@ pub fn verify_message<T: UtxoCommonOps>(
     let message_hash = sign_message_hash(coin.as_ref(), message).ok_or(VerificationError::PrefixNotFound)?;
     let signature = CompactSignature::from(base64::decode(signature_base64)?);
     let recovered_pubkey = Public::recover_compact(&H256::from(message_hash), &signature)?;
-    let received_address = checked_address_from_str(coin, address).map_err(VerificationError::AddressDecodingError)?;
+    let received_address = checked_address_from_str(coin, address)?;
     Ok(AddressHashEnum::from(recovered_pubkey.address_hash()) == received_address.hash)
 }
 
@@ -1729,7 +2320,7 @@ where
     let my_address = try_f!(coin
         .as_ref()
         .derivation_method
-        .iguana_or_err()
+        .single_addr_or_err()
         .mm_err(BalanceError::from))
     .clone();
     let fut = async move { address_balance(&coin, &my_address).await };
@@ -1786,6 +2377,7 @@ pub fn wait_for_output_spend(
     output_index: usize,
     from_block: u64,
     wait_until: u64,
+    check_every: f64,
 ) -> TransactionFut {
     let mut tx: UtxoTx = try_tx_fus!(deserialize(tx_bytes).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.tx_hash_algo;
@@ -1820,14 +2412,24 @@ pub fn wait_for_output_spend(
                     output_index,
                 );
             }
-            Timer::sleep(10.).await;
+            Timer::sleep(check_every).await;
         }
     };
     Box::new(fut.boxed().compat())
 }
 
-pub fn tx_enum_from_bytes(coin: &UtxoCoinFields, bytes: &[u8]) -> Result<TransactionEnum, String> {
-    let mut transaction: UtxoTx = try_s!(deserialize(bytes).map_err(|err| format!("{:?}", err)));
+pub fn tx_enum_from_bytes(coin: &UtxoCoinFields, bytes: &[u8]) -> Result<TransactionEnum, MmError<TxMarshalingErr>> {
+    let mut transaction: UtxoTx = deserialize(bytes).map_to_mm(|e| TxMarshalingErr::InvalidInput(e.to_string()))?;
+
+    let serialized_length = transaction.tx_hex().len();
+    if bytes.len() != serialized_length {
+        return MmError::err(TxMarshalingErr::CrossCheckFailed(format!(
+            "Expected '{}' lenght of the serialized transaction, found '{}'",
+            bytes.len(),
+            serialized_length
+        )));
+    }
+
     transaction.tx_hash_algo = coin.tx_hash_algo;
     Ok(transaction.into())
 }
@@ -1868,6 +2470,16 @@ pub async fn get_raw_transaction(coin: &UtxoCoinFields, req: RawTransactionReque
     Ok(RawTransactionRes { tx_hex: hex })
 }
 
+pub async fn get_tx_hex_by_hash(coin: &UtxoCoinFields, tx_hash: Vec<u8>) -> RawTransactionResult {
+    let hex = coin
+        .rpc_client
+        .get_transaction_bytes(&H256Json::from(tx_hash.as_slice()))
+        .compat()
+        .await
+        .map_err(|e| RawTransactionError::Transport(e.to_string()))?;
+    Ok(RawTransactionRes { tx_hex: hex })
+}
+
 pub async fn withdraw<T>(coin: T, req: WithdrawRequest) -> WithdrawResult
 where
     T: UtxoCommonOps + GetUtxoListOps + MarketCoinOps,
@@ -1901,11 +2513,12 @@ where
         + UtxoCommonOps,
 {
     match coin.derivation_method() {
-        DerivationMethod::Iguana(my_address) => get_withdraw_iguana_sender(coin, req, my_address),
+        DerivationMethod::SingleAddress(my_address) => get_withdraw_iguana_sender(coin, req, my_address),
         DerivationMethod::HDWallet(hd_wallet) => get_withdraw_hd_sender(coin, req, hd_wallet).await,
     }
 }
 
+#[allow(clippy::result_large_err)]
 pub fn get_withdraw_iguana_sender<T: UtxoCommonOps>(
     coin: &T,
     req: &WithdrawRequest,
@@ -1931,17 +2544,17 @@ pub async fn get_withdraw_hd_sender<T>(
     hd_wallet: &T::HDWallet,
 ) -> MmResult<WithdrawSenderAddress<Address, Public>, WithdrawError>
 where
-    T: HDWalletCoinOps<Address = Address, Pubkey = Public>,
+    T: HDWalletCoinOps<Address = Address, Pubkey = Public> + Sync,
 {
-    let HDAddressId {
+    let HDAccountAddressId {
         account_id,
         chain,
         address_id,
     } = match req.from.clone().or_mm_err(|| WithdrawError::FromAddressNotFound)? {
         WithdrawFrom::AddressId(id) => id,
         WithdrawFrom::DerivationPath { derivation_path } => {
-            let derivation_path = Bip44DerivationPath::from_str(&derivation_path)
-                .map_to_mm(Bip44DerPathError::from)
+            let derivation_path = StandardHDPath::from_str(&derivation_path)
+                .map_to_mm(StandardHDPathError::from)
                 .mm_err(|e| WithdrawError::UnexpectedFromAddress(e.to_string()))?;
             let coin_type = derivation_path.coin_type();
             let expected_coin_type = hd_wallet.coin_type();
@@ -1952,7 +2565,7 @@ where
                 );
                 return MmError::err(WithdrawError::UnexpectedFromAddress(error));
             }
-            HDAddressId::from(derivation_path)
+            HDAccountAddressId::from(derivation_path)
         },
     };
 
@@ -1960,7 +2573,7 @@ where
         .get_account(account_id)
         .await
         .or_mm_err(|| WithdrawError::UnknownAccount { account_id })?;
-    let hd_address = coin.derive_address(&hd_account, chain, address_id)?;
+    let hd_address = coin.derive_address(&hd_account, chain, address_id).await?;
 
     let is_address_activated = hd_account
         .is_address_activated(chain, address_id)
@@ -2009,7 +2622,7 @@ pub fn validate_address<T: UtxoCommonOps>(coin: &T, address: &str) -> ValidateAd
         Err(e) => {
             return ValidateAddressResult {
                 is_valid: false,
-                reason: Some(e),
+                reason: Some(e.to_string()),
             }
         },
     };
@@ -2033,11 +2646,85 @@ pub fn validate_address<T: UtxoCommonOps>(coin: &T, address: &str) -> ValidateAd
     }
 }
 
+// Quick fix for null valued coin fields in fee details of old tx history entries
+#[cfg(not(target_arch = "wasm32"))]
+async fn tx_history_migration_1<T>(coin: &T, ctx: &MmArc)
+where
+    T: UtxoStandardOps + UtxoCommonOps + MmCoin + MarketCoinOps,
+{
+    const MIGRATION_NUMBER: u64 = 1;
+    let history = match coin.load_history_from_file(ctx).compat().await {
+        Ok(history) => history,
+        Err(e) => {
+            log_tag!(
+                ctx,
+                "",
+                "tx_history",
+                "coin" => coin.as_ref().conf.ticker;
+                fmt = "Error {} on 'load_history_from_file', stop the history loop", e
+            );
+            return;
+        },
+    };
+
+    let mut updated = false;
+    let to_write: Vec<TransactionDetails> = history
+        .into_iter()
+        .filter_map(|mut tx| match tx.fee_details {
+            Some(TxFeeDetails::Utxo(ref mut fee_details)) => {
+                if fee_details.coin.is_none() {
+                    fee_details.coin = Some(String::from(&tx.coin));
+                    updated = true;
+                }
+                Some(tx)
+            },
+            Some(_) => None,
+            None => Some(tx),
+        })
+        .collect();
+
+    if updated {
+        if let Err(e) = coin.save_history_to_file(ctx, to_write).compat().await {
+            log_tag!(
+                ctx,
+                "",
+                "tx_history",
+                "coin" => coin.as_ref().conf.ticker;
+                fmt = "Error {} on 'save_history_to_file'", e
+            );
+            return;
+        };
+    }
+    if let Err(e) = coin.update_migration_file(ctx, MIGRATION_NUMBER).compat().await {
+        log_tag!(
+            ctx,
+            "",
+            "tx_history",
+            "coin" => coin.as_ref().conf.ticker;
+            fmt = "Error {} on 'update_migration_file'", e
+        );
+    };
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn migrate_tx_history<T>(coin: &T, ctx: &MmArc)
+where
+    T: UtxoStandardOps + UtxoCommonOps + MmCoin + MarketCoinOps,
+{
+    let current_migration = coin.get_tx_history_migration(ctx).compat().await.unwrap_or(0);
+    if current_migration < 1 {
+        tx_history_migration_1(coin, ctx).await;
+    }
+}
+
 #[allow(clippy::cognitive_complexity)]
 pub async fn process_history_loop<T>(coin: T, ctx: MmArc)
 where
     T: UtxoStandardOps + UtxoCommonOps + MmCoin + MarketCoinOps,
 {
+    #[cfg(not(target_arch = "wasm32"))]
+    migrate_tx_history(&coin, &ctx).await;
+
     let mut my_balance: Option<CoinBalance> = None;
     let history = match coin.load_history_from_file(&ctx).compat().await {
         Ok(history) => history,
@@ -2145,7 +2832,7 @@ where
         history_map.retain(|hash, _| requested_ids.contains(hash));
 
         if history_map.len() < history_length {
-            let to_write: Vec<TransactionDetails> = history_map.iter().map(|(_, value)| value.clone()).collect();
+            let to_write: Vec<TransactionDetails> = history_map.values().cloned().collect();
             if let Err(e) = coin.save_history_to_file(&ctx, to_write).compat().await {
                 log_tag!(
                     ctx,
@@ -2222,7 +2909,7 @@ where
                 },
             }
             if updated {
-                let to_write: Vec<TransactionDetails> = history_map.iter().map(|(_, value)| value.clone()).collect();
+                let to_write: Vec<TransactionDetails> = history_map.values().cloned().collect();
                 if let Err(e) = coin.save_history_to_file(&ctx, to_write).compat().await {
                     log_tag!(
                         ctx,
@@ -2309,7 +2996,7 @@ where
                 .collect()
         },
         UtxoRpcClientEnum::Electrum(client) => {
-            let my_address = match coin.as_ref().derivation_method.iguana_or_err() {
+            let my_address = match coin.as_ref().derivation_method.single_addr_or_err() {
                 Ok(my_address) => my_address,
                 Err(e) => return RequestTxHistoryResult::CriticalError(e.to_string()),
             };
@@ -2323,8 +3010,9 @@ where
                 Ok(value) => value,
                 Err(e) => match &e.error {
                     JsonRpcErrorType::InvalidRequest(e)
+                    | JsonRpcErrorType::Parse(_, e)
                     | JsonRpcErrorType::Transport(e)
-                    | JsonRpcErrorType::Parse(_, e) => {
+                    | JsonRpcErrorType::Internal(e) => {
                         return RequestTxHistoryResult::Retry {
                             error: ERRL!("Error {} on scripthash_get_history", e),
                         };
@@ -2371,7 +3059,7 @@ pub async fn tx_details_by_hash<T: UtxoCommonOps>(
     let verbose_tx = try_s!(coin.as_ref().rpc_client.get_verbose_transaction(&hash).compat().await);
     let mut tx: UtxoTx = try_s!(deserialize(verbose_tx.hex.as_slice()).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.as_ref().tx_hash_algo;
-    let my_address = try_s!(coin.as_ref().derivation_method.iguana_or_err());
+    let my_address = try_s!(coin.as_ref().derivation_method.single_addr_or_err());
 
     input_transactions.insert(hash, HistoryUtxoTx {
         tx: tx.clone(),
@@ -2499,6 +3187,7 @@ pub async fn tx_details_by_hash<T: UtxoCommonOps>(
         timestamp: verbose_tx.time.into(),
         kmd_rewards,
         transaction_type: Default::default(),
+        memo: None,
     })
 }
 
@@ -2566,7 +3255,7 @@ where
         }));
     }
 
-    let my_address = &coin.my_address().map_to_mm(UtxoRpcError::Internal)?;
+    let my_address = &coin.my_address()?;
     let claimed_by_me = tx_details.from.iter().all(|from| from == my_address) && tx_details.to.contains(my_address);
 
     tx_details.kmd_rewards = Some(KmdRewardsDetails {
@@ -2657,7 +3346,7 @@ where
     let tx_fee = coin.get_tx_fee().await?;
     // [`FeePolicy::DeductFromOutput`] is used if the value is [`TradePreimageValue::UpperBound`] only
     let is_amount_upper_bound = matches!(fee_policy, FeePolicy::DeductFromOutput(_));
-    let my_address = coin.as_ref().derivation_method.iguana_or_err()?;
+    let my_address = coin.as_ref().derivation_method.single_addr_or_err()?;
 
     match tx_fee {
         // if it's a dynamic fee, we should generate a swap transaction to get an actual trade fee
@@ -2752,7 +3441,7 @@ where
 
     // `generate_swap_payment_outputs` may fail due to either invalid `other_pub` or a number conversation error
     let SwapPaymentOutputsResult { outputs, .. } =
-        generate_swap_payment_outputs(&coin, time_lock, my_pub, other_pub, secret_hash, amount)
+        generate_swap_payment_outputs(coin, time_lock, my_pub, other_pub, secret_hash, amount)
             .map_to_mm(TradePreimageError::InternalError)?;
     let gas_fee = None;
     let fee_amount = coin
@@ -2768,7 +3457,7 @@ where
 /// The fee to spend (receive) other payment is deducted from the trading amount so we should display it
 pub fn get_receiver_trade_fee<T: UtxoCommonOps>(coin: T) -> TradePreimageFut<TradeFee> {
     let fut = async move {
-        let amount_sat = get_htlc_spend_fee(&coin, DEFAULT_SWAP_TX_SPEND_SIZE).await?;
+        let amount_sat = get_htlc_spend_fee(&coin, DEFAULT_SWAP_TX_SPEND_SIZE, &FeeApproxStage::WithoutApprox).await?;
         let amount = big_decimal_from_sat_unsigned(amount_sat, coin.as_ref().decimals).into();
         Ok(TradeFee {
             coin: coin.as_ref().conf.ticker.clone(),
@@ -3031,6 +3720,10 @@ pub async fn get_verbose_transactions_from_cache_or_rpc(
 #[inline]
 pub fn swap_contract_address() -> Option<BytesJson> { None }
 
+/// Fallback swap contract address is not used by standard UTXO coins.
+#[inline]
+pub fn fallback_swap_contract() -> Option<BytesJson> { None }
+
 /// Convert satoshis to BigDecimal amount of coin units
 #[inline]
 pub fn big_decimal_from_sat(satoshis: i64, decimals: u8) -> BigDecimal {
@@ -3078,130 +3771,6 @@ pub fn address_from_pubkey(
     }
 }
 
-pub async fn validate_spv_proof<T: UtxoCommonOps>(
-    coin: T,
-    tx: UtxoTx,
-    try_spv_proof_until: u64,
-) -> Result<(), MmError<SPVError>> {
-    let client = match &coin.as_ref().rpc_client {
-        UtxoRpcClientEnum::Native(_) => return Ok(()),
-        UtxoRpcClientEnum::Electrum(electrum_client) => electrum_client,
-    };
-    if tx.outputs.is_empty() {
-        return MmError::err(SPVError::InvalidVout);
-    }
-
-    let (merkle_branch, block_header) = spv_proof_retry_pool(&coin, client, &tx, try_spv_proof_until).await?;
-    let raw_header = RawBlockHeader::new(block_header.raw().take())?;
-    let intermediate_nodes: Vec<H256> = merkle_branch
-        .merkle
-        .into_iter()
-        .map(|hash| hash.reversed().into())
-        .collect();
-
-    let proof = SPVProof {
-        tx_id: tx.hash(),
-        vin: serialize_list(&tx.inputs).take(),
-        vout: serialize_list(&tx.outputs).take(),
-        index: merkle_branch.pos as u64,
-        confirming_header: block_header,
-        raw_header,
-        intermediate_nodes,
-    };
-
-    proof.validate().map_err(MmError::new)
-}
-
-async fn spv_proof_retry_pool<T: UtxoCommonOps>(
-    coin: &T,
-    client: &ElectrumClient,
-    tx: &UtxoTx,
-    try_spv_proof_until: u64,
-) -> Result<(TxMerkleBranch, BlockHeader), MmError<SPVError>> {
-    let mut height: Option<u64> = None;
-    let mut merkle_branch: Option<TxMerkleBranch> = None;
-
-    loop {
-        if now_ms() / 1000 > try_spv_proof_until {
-            error!(
-                "Waited too long until {} for transaction {:?} to validate spv proof",
-                try_spv_proof_until,
-                tx.hash(),
-            );
-            return Err(SPVError::Timeout.into());
-        }
-
-        if height.is_none() {
-            match get_tx_height(tx, client).await {
-                Ok(h) => height = Some(h),
-                Err(e) => {
-                    debug!("`get_tx_height` returned an error {:?}", e);
-                    error!("{:?} for tx {:?}", SPVError::InvalidHeight, tx);
-                },
-            }
-        }
-
-        if height.is_some() && merkle_branch.is_none() {
-            match client
-                .blockchain_transaction_get_merkle(tx.hash().reversed().into(), height.unwrap())
-                .compat()
-                .await
-            {
-                Ok(m) => merkle_branch = Some(m),
-                Err(e) => {
-                    debug!("`blockchain_transaction_get_merkle` returned an error {:?}", e);
-                    error!(
-                        "{:?} by tx: {:?}, height: {}",
-                        SPVError::UnableToGetMerkle,
-                        H256Json::from(tx.hash().reversed()),
-                        height.unwrap()
-                    );
-                },
-            }
-        }
-
-        if height.is_some() && merkle_branch.is_some() {
-            match block_header_from_storage_or_rpc(&coin, height.unwrap(), &coin.as_ref().block_headers_storage, client)
-                .await
-            {
-                Ok(block_header) => {
-                    return Ok((merkle_branch.unwrap(), block_header));
-                },
-                Err(e) => {
-                    debug!("`block_header_from_storage_or_rpc` returned an error {:?}", e);
-                    error!(
-                        "{:?}, Received header likely not compatible with header format in mm2",
-                        SPVError::UnableToGetHeader
-                    );
-                },
-            }
-        }
-
-        error!(
-            "Failed spv proof validation for transaction {:?}, retrying in {} seconds.",
-            tx.hash(),
-            TRY_SPV_PROOF_INTERVAL,
-        );
-
-        Timer::sleep(TRY_SPV_PROOF_INTERVAL as f64).await;
-    }
-}
-
-pub async fn get_tx_height(tx: &UtxoTx, client: &ElectrumClient) -> Result<u64, MmError<GetTxHeightError>> {
-    for output in tx.outputs.clone() {
-        let script_pubkey_str = hex::encode(electrum_script_hash(&output.script_pubkey));
-        if let Ok(history) = client.scripthash_get_history(script_pubkey_str.as_str()).compat().await {
-            if let Some(item) = history
-                .into_iter()
-                .find(|item| item.tx_hash.reversed() == H256Json(*tx.hash()) && item.height > 0)
-            {
-                return Ok(item.height as u64);
-            }
-        }
-    }
-    MmError::err(GetTxHeightError::HeightNotFound)
-}
-
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(test, mockable)]
 pub fn validate_payment<T: UtxoCommonOps>(
@@ -3215,70 +3784,53 @@ pub fn validate_payment<T: UtxoCommonOps>(
     time_lock: u32,
     try_spv_proof_until: u64,
     confirmations: u64,
-) -> Box<dyn Future<Item = (), Error = String> + Send> {
-    let amount = try_fus!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
+) -> ValidatePaymentFut<()> {
+    let amount = try_f!(sat_from_big_decimal(&amount, coin.as_ref().decimals));
 
     let expected_redeem = payment_script(time_lock, priv_bn_hash, first_pub0, second_pub0);
     let fut = async move {
-        let mut attempts = 0;
-        loop {
-            let tx_from_rpc = match coin
-                .as_ref()
-                .rpc_client
-                .get_transaction_bytes(&tx.hash().reversed().into())
-                .compat()
-                .await
-            {
-                Ok(t) => t,
-                Err(e) => {
-                    if attempts > 2 {
-                        return ERR!(
-                            "Got error {:?} after 3 attempts of getting tx {:?} from RPC",
-                            e,
-                            tx.tx_hash()
-                        );
-                    };
-                    attempts += 1;
-                    error!("Error getting tx {:?} from rpc: {:?}", tx.tx_hash(), e);
-                    Timer::sleep(10.).await;
-                    continue;
-                },
-            };
-            if serialize(&tx).take() != tx_from_rpc.0
-                && serialize_with_flags(&tx, SERIALIZE_TRANSACTION_WITNESS).take() != tx_from_rpc.0
-            {
-                return ERR!(
-                    "Provided payment tx {:?} doesn't match tx data from rpc {:?}",
-                    tx,
-                    tx_from_rpc
-                );
-            }
+        let tx_hash = tx.tx_hash();
 
-            let expected_output = TransactionOutput {
-                value: amount,
-                script_pubkey: Builder::build_p2sh(&dhash160(&expected_redeem).into()).into(),
-            };
+        let tx_from_rpc = retry_on_err!(coin
+            .as_ref()
+            .rpc_client
+            .get_transaction_bytes(&tx.hash().reversed().into())
+            .compat())
+        .repeat_every_secs(10.)
+        .attempts(4)
+        .inspect_err(move |e| error!("Error getting tx {tx_hash:?} from rpc: {e:?}"))
+        .await
+        .map_err(|repeat_err| repeat_err.into_error().map(ValidatePaymentError::from))?;
 
-            let actual_output = tx.outputs.get(output_index);
-            if actual_output != Some(&expected_output) {
-                return ERR!(
-                    "Provided payment tx output doesn't match expected {:?} {:?}",
-                    actual_output,
-                    expected_output
-                );
-            }
-
-            if !coin.as_ref().conf.enable_spv_proof {
-                return Ok(());
-            }
-
-            return match confirmations {
-                0 => Ok(()),
-                _ => validate_spv_proof(coin, tx, try_spv_proof_until)
-                    .await
-                    .map_err(|e| format!("{:?}", e)),
-            };
+        if serialize(&tx).take() != tx_from_rpc.0
+            && serialize_with_flags(&tx, SERIALIZE_TRANSACTION_WITNESS).take() != tx_from_rpc.0
+        {
+            return MmError::err(ValidatePaymentError::WrongPaymentTx(format!(
+                "Provided payment tx {:?} doesn't match tx data from rpc {:?}",
+                tx, tx_from_rpc
+            )));
         }
+
+        let expected_output = TransactionOutput {
+            value: amount,
+            script_pubkey: Builder::build_p2sh(&dhash160(&expected_redeem).into()).into(),
+        };
+
+        let actual_output = tx.outputs.get(output_index);
+        if actual_output != Some(&expected_output) {
+            return MmError::err(ValidatePaymentError::WrongPaymentTx(format!(
+                "Provided payment tx output doesn't match expected {:?} {:?}",
+                actual_output, expected_output
+            )));
+        }
+
+        if let UtxoRpcClientEnum::Electrum(client) = &coin.as_ref().rpc_client {
+            if coin.as_ref().conf.spv_conf.is_some() && confirmations != 0 {
+                client.validate_spv_proof(&tx, try_spv_proof_until).await?;
+            }
+        }
+
+        Ok(())
     };
     Box::new(fut.boxed().compat())
 }
@@ -3296,6 +3848,10 @@ async fn search_for_swap_output_spend(
 ) -> Result<Option<FoundSwapTxSpend>, String> {
     let mut tx: UtxoTx = try_s!(deserialize(tx).map_err(|e| ERRL!("{:?}", e)));
     tx.tx_hash_algo = coin.tx_hash_algo;
+    drop_mutability!(tx);
+    if tx.outputs.is_empty() {
+        return ERR!("Transaction doesn't have any output");
+    }
     let script = payment_script(time_lock, secret_hash, first_pub, second_pub);
     let expected_script_pubkey = Builder::build_p2sh(&dhash160(&script).into()).to_bytes();
     if tx.outputs[0].script_pubkey != expected_script_pubkey {
@@ -3321,7 +3877,7 @@ async fn search_for_swap_output_spend(
         Some(spent_output_info) => {
             let mut tx = spent_output_info.spending_tx;
             tx.tx_hash_algo = coin.tx_hash_algo;
-            let script: Script = tx.inputs[0].script_sig.clone().into();
+            let script: Script = tx.inputs[DEFAULT_SWAP_VIN].script_sig.clone().into();
             if let Some(Ok(ref i)) = script.iter().nth(2) {
                 if i.opcode == Opcode::OP_0 {
                     return Ok(Some(FoundSwapTxSpend::Spent(tx.into())));
@@ -3406,8 +3962,7 @@ where
 }
 
 pub fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1: &Public) -> Script {
-    let builder = Builder::default();
-    builder
+    let mut builder = Builder::default()
         .push_opcode(Opcode::OP_IF)
         .push_bytes(&time_lock.to_le_bytes())
         .push_opcode(Opcode::OP_CHECKLOCKTIMEVERIFY)
@@ -3418,8 +3973,15 @@ pub fn payment_script(time_lock: u32, secret_hash: &[u8], pub_0: &Public, pub_1:
         .push_opcode(Opcode::OP_SIZE)
         .push_bytes(&[32])
         .push_opcode(Opcode::OP_EQUALVERIFY)
-        .push_opcode(Opcode::OP_HASH160)
-        .push_bytes(secret_hash)
+        .push_opcode(Opcode::OP_HASH160);
+
+    if secret_hash.len() == 32 {
+        builder = builder.push_bytes(ripemd160(secret_hash).as_slice());
+    } else {
+        builder = builder.push_bytes(secret_hash);
+    }
+
+    builder
         .push_opcode(Opcode::OP_EQUALVERIFY)
         .push_bytes(pub_1)
         .push_opcode(Opcode::OP_CHECKSIG)
@@ -3543,6 +4105,8 @@ where
         FeeApproxStage::WithoutApprox => return dynamic_fee,
         // Take into account that the dynamic fee may increase during the swap by [`UtxoCoinFields::tx_fee_volatility_percent`].
         FeeApproxStage::StartSwap => base_percent,
+        // Take into account that the dynamic fee may increase until the watcher can spend it [`UtxoCoinFields::tx_fee_volatility_percent`].
+        FeeApproxStage::WatcherPreimage => base_percent, //This needs discussion
         // Take into account that the dynamic fee may increase at each of the following stages up to [`UtxoCoinFields::tx_fee_volatility_percent`]:
         // - until a swap is started;
         // - during the swap.
@@ -3561,187 +4125,6 @@ fn increase_by_percent(num: u64, percent: f64) -> u64 {
     num + (percent.round() as u64)
 }
 
-pub async fn valid_block_header_from_storage<T>(
-    coin: &T,
-    height: u64,
-    storage: &BlockHeaderStorage,
-    client: &ElectrumClient,
-) -> Result<BlockHeader, MmError<GetBlockHeaderError>>
-where
-    T: AsRef<UtxoCoinFields>,
-{
-    match storage
-        .get_block_header(coin.as_ref().conf.ticker.as_str(), height)
-        .await?
-    {
-        None => {
-            let bytes = client.blockchain_block_header(height).compat().await?;
-            let header: BlockHeader = deserialize(bytes.0.as_slice())?;
-            let params = &storage.params;
-            let blocks_limit = params.blocks_limit_to_check;
-            let (headers_registry, headers) = client.retrieve_last_headers(blocks_limit, height).compat().await?;
-            match spv_validation::helpers_validation::validate_headers(
-                headers,
-                params.difficulty_check,
-                params.constant_difficulty,
-            ) {
-                Ok(_) => {
-                    storage
-                        .add_block_headers_to_storage(coin.as_ref().conf.ticker.as_str(), headers_registry)
-                        .await?;
-                    Ok(header)
-                },
-                Err(err) => MmError::err(GetBlockHeaderError::SPVError(err)),
-            }
-        },
-        Some(header) => Ok(header),
-    }
-}
-
-#[inline]
-pub async fn block_header_from_storage_or_rpc<T>(
-    coin: &T,
-    height: u64,
-    storage: &Option<BlockHeaderStorage>,
-    client: &ElectrumClient,
-) -> Result<BlockHeader, MmError<GetBlockHeaderError>>
-where
-    T: AsRef<UtxoCoinFields>,
-{
-    match storage {
-        Some(ref storage) => valid_block_header_from_storage(&coin, height, storage, client).await,
-        None => Ok(deserialize(
-            client.blockchain_block_header(height).compat().await?.as_slice(),
-        )?),
-    }
-}
-
-pub async fn block_header_utxo_loop<T: UtxoCommonOps>(weak: UtxoWeak, constructor: impl Fn(UtxoArc) -> T) {
-    {
-        let coin = match weak.upgrade() {
-            Some(arc) => constructor(arc),
-            None => return,
-        };
-        let ticker = coin.as_ref().conf.ticker.as_str();
-        let storage = match &coin.as_ref().block_headers_storage {
-            None => return,
-            Some(storage) => storage,
-        };
-        match storage.is_initialized_for(ticker).await {
-            Ok(true) => info!("Block Header Storage already initialized for {}", ticker),
-            Ok(false) => {
-                if let Err(e) = storage.init(ticker).await {
-                    error!(
-                        "Couldn't initiate storage - aborting the block_header_utxo_loop: {:?}",
-                        e
-                    );
-                    return;
-                }
-                info!("Block Header Storage successfully initialized for {}", ticker);
-            },
-            Err(_e) => return,
-        };
-    }
-    while let Some(arc) = weak.upgrade() {
-        let coin = constructor(arc);
-        let storage = match &coin.as_ref().block_headers_storage {
-            None => break,
-            Some(storage) => storage,
-        };
-        let params = storage.params.clone();
-        let (check_every, blocks_limit_to_check, difficulty_check, constant_difficulty) = (
-            params.check_every,
-            params.blocks_limit_to_check,
-            params.difficulty_check,
-            params.constant_difficulty,
-        );
-        let height =
-            ok_or_continue_after_sleep!(coin.as_ref().rpc_client.get_block_count().compat().await, check_every);
-        let client = match &coin.as_ref().rpc_client {
-            UtxoRpcClientEnum::Native(_) => break,
-            UtxoRpcClientEnum::Electrum(client) => client,
-        };
-        let (block_registry, block_headers) = ok_or_continue_after_sleep!(
-            client
-                .retrieve_last_headers(blocks_limit_to_check, height)
-                .compat()
-                .await,
-            check_every
-        );
-        ok_or_continue_after_sleep!(
-            validate_headers(block_headers, difficulty_check, constant_difficulty),
-            check_every
-        );
-
-        let ticker = coin.as_ref().conf.ticker.as_str();
-        ok_or_continue_after_sleep!(
-            storage.add_block_headers_to_storage(ticker, block_registry).await,
-            check_every
-        );
-        debug!("tick block_header_utxo_loop for {}", coin.as_ref().conf.ticker);
-        Timer::sleep(check_every).await;
-    }
-}
-
-pub async fn merge_utxo_loop<T>(
-    weak: UtxoWeak,
-    merge_at: usize,
-    check_every: f64,
-    max_merge_at_once: usize,
-    constructor: impl Fn(UtxoArc) -> T,
-) where
-    T: UtxoCommonOps + GetUtxoListOps,
-{
-    loop {
-        Timer::sleep(check_every).await;
-
-        let coin = match weak.upgrade() {
-            Some(arc) => constructor(arc),
-            None => break,
-        };
-
-        let my_address = match coin.as_ref().derivation_method {
-            DerivationMethod::Iguana(ref my_address) => my_address,
-            DerivationMethod::HDWallet(_) => {
-                warn!("'merge_utxo_loop' is currently not used for HD wallets");
-                return;
-            },
-        };
-
-        let ticker = &coin.as_ref().conf.ticker;
-        let (unspents, recently_spent) = match coin.get_unspent_ordered_list(my_address).await {
-            Ok((unspents, recently_spent)) => (unspents, recently_spent),
-            Err(e) => {
-                error!("Error {} on get_unspent_ordered_list of coin {}", e, ticker);
-                continue;
-            },
-        };
-        if unspents.len() >= merge_at {
-            let unspents: Vec<_> = unspents.into_iter().take(max_merge_at_once).collect();
-            info!("Trying to merge {} UTXOs of coin {}", unspents.len(), ticker);
-            let value = unspents.iter().fold(0, |sum, unspent| sum + unspent.value);
-            let script_pubkey = Builder::build_p2pkh(&my_address.hash).to_bytes();
-            let output = TransactionOutput { value, script_pubkey };
-            let merge_tx_fut = generate_and_send_tx(
-                &coin,
-                unspents,
-                None,
-                FeePolicy::DeductFromOutput(0),
-                recently_spent,
-                vec![output],
-            );
-            match merge_tx_fut.await {
-                Ok(tx) => info!(
-                    "UTXO merge successful for coin {}, tx_hash {:?}",
-                    ticker,
-                    tx.hash().reversed()
-                ),
-                Err(e) => error!("Error {:?} on UTXO merge attempt for coin {}", e, ticker),
-            }
-        }
-    }
-}
-
 pub async fn can_refund_htlc<T>(coin: &T, locktime: u64) -> Result<CanRefundHtlc, MmError<UtxoRpcError>>
 where
     T: UtxoCommonOps,
@@ -3749,7 +4132,7 @@ where
     let now = now_ms() / 1000;
     if now < locktime {
         let to_wait = locktime - now + 1;
-        return Ok(CanRefundHtlc::HaveToWait(to_wait.max(3600)));
+        return Ok(CanRefundHtlc::HaveToWait(to_wait.min(3600)));
     }
 
     let mtp = coin.get_current_mtp().await?;
@@ -3759,7 +4142,7 @@ where
         Ok(CanRefundHtlc::CanRefundNow)
     } else {
         let to_wait = (locktime - mtp + 1) as u64;
-        Ok(CanRefundHtlc::HaveToWait(to_wait.max(3600)))
+        Ok(CanRefundHtlc::HaveToWait(to_wait.min(3600)))
     }
 }
 
@@ -3777,7 +4160,7 @@ where
 
 pub fn addr_format(coin: &dyn AsRef<UtxoCoinFields>) -> &UtxoAddressFormat {
     match coin.as_ref().derivation_method {
-        DerivationMethod::Iguana(ref my_address) => &my_address.addr_format,
+        DerivationMethod::SingleAddress(ref my_address) => &my_address.addr_format,
         DerivationMethod::HDWallet(UtxoHDWallet { ref address_format, .. }) => address_format,
     }
 }
@@ -3789,7 +4172,7 @@ pub fn addr_format_for_standard_scripts(coin: &dyn AsRef<UtxoCoinFields>) -> Utx
     }
 }
 
-fn check_withdraw_address_supported<T>(coin: &T, addr: &Address) -> Result<(), MmError<UnsupportedAddr>>
+fn check_withdraw_address_supported<T>(coin: &T, addr: &Address) -> MmResult<(), UnsupportedAddr>
 where
     T: UtxoCommonOps,
 {
@@ -3847,11 +4230,24 @@ where
         .mm_err(From::from)
 }
 
+#[inline]
 pub fn derive_htlc_key_pair(coin: &UtxoCoinFields, _swap_unique_data: &[u8]) -> KeyPair {
     match coin.priv_key_policy {
         PrivKeyPolicy::KeyPair(k) => k,
         PrivKeyPolicy::Trezor => todo!(),
     }
+}
+
+#[inline]
+pub fn derive_htlc_pubkey(coin: &dyn SwapOps, swap_unique_data: &[u8]) -> Vec<u8> {
+    coin.derive_htlc_key_pair(swap_unique_data).public_slice().to_vec()
+}
+
+pub fn validate_other_pubkey(raw_pubkey: &[u8]) -> MmResult<(), ValidateOtherPubKeyErr> {
+    if let Err(err) = Public::from_slice(raw_pubkey) {
+        return MmError::err(ValidateOtherPubKeyErr::InvalidPubKey(err.to_string()));
+    };
+    Ok(())
 }
 
 /// Sorts and deduplicates the given `unspents` in ascending order.

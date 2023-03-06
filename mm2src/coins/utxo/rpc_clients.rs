@@ -1,26 +1,29 @@
 #![cfg_attr(target_arch = "wasm32", allow(unused_macros))]
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
-use crate::utxo::{output_script, sat_from_big_decimal};
+use crate::utxo::utxo_block_header_storage::BlockHeaderStorage;
+use crate::utxo::{output_script, sat_from_big_decimal, GetBlockHeaderError, GetConfirmedTxError, GetTxError,
+                  GetTxHeightError};
 use crate::{big_decimal_from_sat_unsigned, NumConversError, RpcTransportEventHandler, RpcTransportEventHandlerShared};
 use async_trait::async_trait;
 use chain::{BlockHeader, BlockHeaderBits, BlockHeaderNonce, OutPoint, Transaction as UtxoTx};
-use common::custom_futures::{select_ok_sequential, FutureTimerExt};
+use common::custom_futures::{select_ok_sequential, timeout::FutureTimerExt};
 use common::custom_iter::{CollectInto, TryIntoGroupMap};
-use common::executor::{spawn, Timer};
+use common::executor::{abortable_queue, abortable_queue::AbortableQueue, AbortableSystem, SpawnFuture, Timer};
 use common::jsonrpc_client::{JsonRpcBatchClient, JsonRpcBatchResponse, JsonRpcClient, JsonRpcError, JsonRpcErrorType,
                              JsonRpcId, JsonRpcMultiClient, JsonRpcRemoteAddr, JsonRpcRequest, JsonRpcRequestEnum,
                              JsonRpcResponse, JsonRpcResponseEnum, JsonRpcResponseFut, RpcRes};
+use common::log::LogOnError;
 use common::log::{error, info, warn};
 use common::{median, now_float, now_ms, OrdRange};
 use derive_more::Display;
 use futures::channel::oneshot as async_oneshot;
 use futures::compat::{Future01CompatExt, Stream01CompatExt};
-use futures::future::{select as select_func, FutureExt, TryFutureExt};
+use futures::future::{FutureExt, TryFutureExt};
 use futures::lock::Mutex as AsyncMutex;
 use futures::{select, StreamExt};
 use futures01::future::select_ok;
-use futures01::sync::{mpsc, oneshot};
+use futures01::sync::mpsc;
 use futures01::{Future, Sink, Stream};
 use http::Uri;
 use itertools::Itertools;
@@ -31,11 +34,14 @@ use mm2_number::{BigDecimal, BigInt, MmNumber};
 #[cfg(test)] use mocktopus::macros::*;
 use rpc::v1::types::{Bytes as BytesJson, Transaction as RpcTransaction, H256 as H256Json};
 use serde_json::{self as json, Value as Json};
-use serialization::{coin_variant_by_ticker, deserialize, serialize, serialize_with_flags, CoinVariant, CompactInteger,
-                    Reader, SERIALIZE_TRANSACTION_WITNESS};
+use serialization::{deserialize, serialize, serialize_with_flags, CoinVariant, CompactInteger, Reader,
+                    SERIALIZE_TRANSACTION_WITNESS};
 use sha2::{Digest, Sha256};
+use spv_validation::helpers_validation::SPVError;
+use spv_validation::storage::BlockHeaderStorageOps;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::fmt;
 use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -63,11 +69,16 @@ cfg_native! {
     use webpki_roots::TLS_SERVER_ROOTS;
 }
 
+pub const NO_TX_ERROR_CODE: &str = "'code': -5";
+const RESPONSE_TOO_LARGE_CODE: i16 = -32600;
+const TX_NOT_FOUND_RETRIES: u8 = 10;
+
 pub type AddressesByLabelResult = HashMap<String, AddressPurpose>;
 pub type JsonRpcPendingRequestsShared = Arc<AsyncMutex<JsonRpcPendingRequests>>;
 pub type JsonRpcPendingRequests = HashMap<JsonRpcId, async_oneshot::Sender<JsonRpcResponseEnum>>;
 pub type UnspentMap = HashMap<Address, Vec<UnspentInfo>>;
 
+type ElectrumTxHistory = Vec<ElectrumTxHistoryItem>;
 type ElectrumScriptHash = String;
 type ScriptHashUnspents = Vec<ElectrumUnspent>;
 
@@ -139,6 +150,7 @@ impl UtxoRpcClientEnum {
         check_every: u64,
     ) -> Box<dyn Future<Item = (), Error = String> + Send> {
         let selfi = self.clone();
+        let mut tx_not_found_retries = TX_NOT_FOUND_RETRIES;
         let fut = async move {
             loop {
                 if now_ms() / 1000 > wait_until {
@@ -167,11 +179,29 @@ impl UtxoRpcClientEnum {
                         }
                     },
                     Err(e) => {
+                        if e.get_inner().is_tx_not_found_error() {
+                            if tx_not_found_retries == 0 {
+                                return ERR!(
+                                    "Tx {} was not found on chain after {} tries, error: {}",
+                                    tx_hash,
+                                    TX_NOT_FOUND_RETRIES,
+                                    e,
+                                );
+                            }
+                            error!(
+                                "Tx {} not found on chain, error: {}, retrying in {} seconds. Retries left: {}",
+                                tx_hash, e, check_every, tx_not_found_retries
+                            );
+                            tx_not_found_retries -= 1;
+                            Timer::sleep(check_every as f64).await;
+                            continue;
+                        };
+
                         if expiry_height > 0 {
                             let block = match selfi.get_block_count().compat().await {
                                 Ok(b) => b,
                                 Err(e) => {
-                                    error!("Error {} getting block number, retrying in 10 seconds", e);
+                                    error!("Error {} getting block number, retrying in {} seconds", e, check_every);
                                     Timer::sleep(check_every as f64).await;
                                     continue;
                                 },
@@ -182,8 +212,8 @@ impl UtxoRpcClientEnum {
                             }
                         }
                         error!(
-                            "Error {:?} getting the transaction {:?}, retrying in 10 seconds",
-                            e, tx_hash
+                            "Error {:?} getting the transaction {:?}, retrying in {} seconds",
+                            e, tx_hash, check_every
                         )
                     },
                 }
@@ -258,7 +288,9 @@ pub enum UtxoRpcError {
 impl From<JsonRpcError> for UtxoRpcError {
     fn from(e: JsonRpcError) -> Self {
         match e.error {
-            JsonRpcErrorType::InvalidRequest(_) => UtxoRpcError::Internal(e.to_string()),
+            JsonRpcErrorType::InvalidRequest(_) | JsonRpcErrorType::Internal(_) => {
+                UtxoRpcError::Internal(e.to_string())
+            },
             JsonRpcErrorType::Transport(_) => UtxoRpcError::Transport(e),
             JsonRpcErrorType::Parse(_, _) | JsonRpcErrorType::Response(_, _) => UtxoRpcError::ResponseParseError(e),
         }
@@ -271,6 +303,30 @@ impl From<serialization::Error> for UtxoRpcError {
 
 impl From<NumConversError> for UtxoRpcError {
     fn from(e: NumConversError) -> Self { UtxoRpcError::Internal(e.to_string()) }
+}
+
+impl UtxoRpcError {
+    pub fn is_tx_not_found_error(&self) -> bool {
+        if let UtxoRpcError::ResponseParseError(ref json_err) = self {
+            if let JsonRpcErrorType::Response(_, json) = &json_err.error {
+                return json["error"]["code"] == -5 // native compatible
+                    || json["message"].as_str().unwrap_or_default().contains(NO_TX_ERROR_CODE);
+                // electrum compatible;
+            }
+        };
+        false
+    }
+
+    pub fn is_response_too_large(&self) -> bool {
+        if let UtxoRpcError::ResponseParseError(ref json_err) = self {
+            if let JsonRpcErrorType::Response(_, json) = &json_err.error {
+                return json["code"] == RESPONSE_TOO_LARGE_CODE;
+            }
+        };
+        false
+    }
+
+    pub fn is_network_error(&self) -> bool { matches!(self, UtxoRpcError::Transport(_)) }
 }
 
 /// Common operations that both types of UTXO clients have but implement them differently
@@ -337,7 +393,25 @@ pub trait UtxoRpcClientOps: fmt::Debug + Send + Sync + 'static {
     ) -> UtxoRpcFut<u32>;
 
     /// Returns block time in seconds since epoch (Jan 1 1970 GMT).
-    async fn get_block_timestamp(&self, height: u64) -> Result<u64, MmError<UtxoRpcError>>;
+    async fn get_block_timestamp(&self, height: u64) -> Result<u64, MmError<GetBlockHeaderError>>;
+
+    /// Returns verbose transaction by the given `txid` if it's on-chain or None if it's not.
+    async fn get_tx_if_onchain(&self, tx_hash: &H256Json) -> Result<Option<UtxoTx>, MmError<GetTxError>> {
+        match self
+            .get_transaction_bytes(tx_hash)
+            .compat()
+            .await
+            .map_err(|e| e.into_inner())
+        {
+            Ok(bytes) => Ok(Some(deserialize(bytes.as_slice())?)),
+            Err(err) => {
+                if err.is_tx_not_found_error() {
+                    return Ok(None);
+                }
+                Err(err.into())
+            },
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -483,14 +557,14 @@ pub enum EstimateFeeMethod {
     SmartFee,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum BlockNonce {
     String(String),
     U64(u64),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct VerboseBlock {
     /// Block hash
     pub hash: H256Json,
@@ -578,7 +652,7 @@ impl Default for NativeClientImpl {
 pub struct NativeClient(pub Arc<NativeClientImpl>);
 impl Deref for NativeClient {
     type Target = NativeClientImpl;
-    fn deref(&self) -> &NativeClientImpl { &*self.0 }
+    fn deref(&self) -> &NativeClientImpl { &self.0 }
 }
 
 /// The trait provides methods to generate the JsonRpcClient instance info such as name of coin.
@@ -603,8 +677,8 @@ impl JsonRpcClient for NativeClientImpl {
 
     #[cfg(target_arch = "wasm32")]
     fn transport(&self, _request: JsonRpcRequestEnum) -> JsonRpcResponseFut {
-        Box::new(futures01::future::err(ERRL!(
-            "'NativeClientImpl' must be used in native mode only"
+        Box::new(futures01::future::err(JsonRpcErrorType::Internal(
+            "'NativeClientImpl' must be used in native mode only".to_string(),
         )))
     }
 
@@ -612,37 +686,37 @@ impl JsonRpcClient for NativeClientImpl {
     fn transport(&self, request: JsonRpcRequestEnum) -> JsonRpcResponseFut {
         use mm2_net::transport::slurp_req;
 
-        let request_body = try_fus!(json::to_string(&request));
+        let request_body =
+            try_f!(json::to_string(&request).map_err(|e| JsonRpcErrorType::InvalidRequest(e.to_string())));
         // measure now only body length, because the `hyper` crate doesn't allow to get total HTTP packet length
         self.event_handlers.on_outgoing_request(request_body.as_bytes());
 
         let uri = self.uri.clone();
 
-        let http_request = try_fus!(Request::builder()
+        let http_request = try_f!(Request::builder()
             .method("POST")
             .header(AUTHORIZATION, self.auth.clone())
             .uri(uri.clone())
-            .body(Vec::from(request_body)));
+            .body(Vec::from(request_body))
+            .map_err(|e| JsonRpcErrorType::InvalidRequest(e.to_string())));
 
         let event_handles = self.event_handlers.clone();
         Box::new(slurp_req(http_request).boxed().compat().then(
-            move |result| -> Result<(JsonRpcRemoteAddr, JsonRpcResponseEnum), String> {
-                let res = try_s!(result);
+            move |result| -> Result<(JsonRpcRemoteAddr, JsonRpcResponseEnum), JsonRpcErrorType> {
+                let res = result.map_err(|e| e.into_inner())?;
                 // measure now only body length, because the `hyper` crate doesn't allow to get total HTTP packet length
                 event_handles.on_incoming_response(&res.2);
 
-                let body = try_s!(std::str::from_utf8(&res.2));
+                let body =
+                    std::str::from_utf8(&res.2).map_err(|e| JsonRpcErrorType::parse_error(&uri, e.to_string()))?;
 
                 if res.0 != StatusCode::OK {
-                    return ERR!(
-                        "Rpc request {:?} failed with HTTP status code {}, response body: {}",
-                        request,
-                        res.0,
-                        body
-                    );
+                    let res_value = serde_json::from_slice(&res.2)
+                        .map_err(|e| JsonRpcErrorType::parse_error(&uri, e.to_string()))?;
+                    return Err(JsonRpcErrorType::Response(uri.into(), res_value));
                 }
 
-                let response = try_s!(json::from_str(body));
+                let response = json::from_str(body).map_err(|e| JsonRpcErrorType::parse_error(&uri, e.to_string()))?;
                 Ok((uri.into(), response))
             },
         ))
@@ -873,7 +947,7 @@ impl UtxoRpcClientOps for NativeClient {
         Box::new(fut.boxed().compat())
     }
 
-    async fn get_block_timestamp(&self, height: u64) -> Result<u64, MmError<UtxoRpcError>> {
+    async fn get_block_timestamp(&self, height: u64) -> Result<u64, MmError<GetBlockHeaderError>> {
         let block = self.get_block_by_height(height).await?;
         Ok(block.time as u64)
     }
@@ -1096,7 +1170,7 @@ impl NativeClientImpl {
 
     /// https://developer.bitcoin.org/reference/rpc/getblockheader.html
     pub fn get_block_header_bytes(&self, block_hash: H256Json) -> RpcRes<BytesJson> {
-        let verbose = 0;
+        let verbose = false;
         rpc_func!(self, "getblockheader", block_hash, verbose)
     }
 }
@@ -1226,6 +1300,14 @@ pub struct TxMerkleBranch {
     pub merkle: Vec<H256Json>,
     pub block_height: u64,
     pub pos: usize,
+}
+
+#[derive(Clone)]
+pub struct ConfirmedTransactionInfo {
+    pub tx: UtxoTx,
+    pub header: BlockHeader,
+    pub index: u64,
+    pub height: u64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1373,10 +1455,12 @@ fn addr_to_socket_addr(input: &str) -> Result<SocketAddr, String> {
 }
 
 /// Attempts to process the request (parse url, etc), build up the config and create new electrum connection
+/// The function takes `abortable_system` that will be used to spawn Electrum's related futures.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_electrum(
     req: &ElectrumRpcRequest,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
+    abortable_system: AbortableQueue,
 ) -> Result<ElectrumConnection, String> {
     let config = match req.protocol {
         ElectrumProtocol::TCP => ElectrumConfig::TCP,
@@ -1399,14 +1483,21 @@ pub fn spawn_electrum(
         },
     };
 
-    Ok(electrum_connect(req.url.clone(), config, event_handlers))
+    Ok(electrum_connect(
+        req.url.clone(),
+        config,
+        event_handlers,
+        abortable_system,
+    ))
 }
 
 /// Attempts to process the request (parse url, etc), build up the config and create new electrum connection
+/// The function takes `abortable_system` that will be used to spawn Electrum's related futures.
 #[cfg(target_arch = "wasm32")]
 pub fn spawn_electrum(
     req: &ElectrumRpcRequest,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
+    abortable_system: AbortableQueue,
 ) -> Result<ElectrumConnection, String> {
     let mut url = req.url.clone();
     let uri: Uri = try_s!(req.url.parse());
@@ -1434,10 +1525,9 @@ pub fn spawn_electrum(
         },
     };
 
-    Ok(electrum_connect(url, config, event_handlers))
+    Ok(electrum_connect(url, config, event_handlers, abortable_system))
 }
 
-#[derive(Debug)]
 /// Represents the active Electrum connection to selected address
 pub struct ElectrumConnection {
     /// The client connected to this SocketAddr
@@ -1447,28 +1537,25 @@ pub struct ElectrumConnection {
     config: ElectrumConfig,
     /// The Sender forwarding requests to writing part of underlying stream
     tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
-    /// The Sender used to shutdown the background connection loop when ElectrumConnection is dropped
-    shutdown_tx: Option<oneshot::Sender<()>>,
     /// Responses are stored here
     responses: JsonRpcPendingRequestsShared,
     /// Selected protocol version. The value is initialized after the server.version RPC call.
     protocol_version: AsyncMutex<Option<f32>>,
+    /// This spawner is used to spawn Electrum's related futures that should be aborted on coin deactivation.
+    /// and on [`MmArc::stop`].
+    /// This field is not used directly, but it holds all abort handles of futures spawned at `electrum_connect`.
+    ///
+    /// Please also note that this abortable system is a subsystem of [`ElectrumClientImpl::abortable_system`].
+    /// For more info see [`ElectrumClientImpl::add_server`].
+    _abortable_system: AbortableQueue,
 }
 
 impl ElectrumConnection {
     async fn is_connected(&self) -> bool { self.tx.lock().await.is_some() }
 
     async fn set_protocol_version(&self, version: f32) { self.protocol_version.lock().await.replace(version); }
-}
 
-impl Drop for ElectrumConnection {
-    fn drop(&mut self) {
-        if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            if shutdown_tx.send(()).is_err() {
-                warn!("electrum_connection_drop] Warning, shutdown_tx already closed");
-            }
-        }
-    }
+    async fn reset_protocol_version(&self) { *self.protocol_version.lock().await = None; }
 }
 
 #[derive(Debug)]
@@ -1539,52 +1626,61 @@ pub struct ElectrumClientImpl {
     protocol_version: OrdRange<f32>,
     get_balance_concurrent_map: ConcurrentRequestMap<String, ElectrumBalance>,
     list_unspent_concurrent_map: ConcurrentRequestMap<String, Vec<ElectrumUnspent>>,
+    block_headers_storage: BlockHeaderStorage,
+    /// This spawner is used to spawn Electrum's related futures that should be aborted on coin deactivation,
+    /// and on [`MmArc::stop`].
+    ///
+    /// Please also note that this abortable system is a subsystem of [`UtxoCoinFields::abortable_system`].
+    abortable_system: AbortableQueue,
+    negotiate_version: bool,
 }
 
 async fn electrum_request_multi(
     client: ElectrumClient,
     request: JsonRpcRequestEnum,
-) -> Result<(JsonRpcRemoteAddr, JsonRpcResponseEnum), String> {
+) -> Result<(JsonRpcRemoteAddr, JsonRpcResponseEnum), JsonRpcErrorType> {
     let mut futures = vec![];
     let connections = client.connections.lock().await;
     for (i, connection) in connections.iter().enumerate() {
+        if client.negotiate_version && connection.protocol_version.lock().await.is_none() {
+            continue;
+        }
+
         let connection_addr = connection.addr.clone();
-        match &*connection.tx.lock().await {
-            Some(tx) => {
-                let fut = electrum_request(
-                    request.clone(),
-                    tx.clone(),
-                    connection.responses.clone(),
-                    ELECTRUM_TIMEOUT / (connections.len() - i) as u64,
-                )
-                .map(|response| (JsonRpcRemoteAddr(connection_addr), response));
-                futures.push(fut)
-            },
-            None => (),
+        let json = json::to_string(&request).map_err(|e| JsonRpcErrorType::InvalidRequest(e.to_string()))?;
+        if let Some(tx) = &*connection.tx.lock().await {
+            let fut = electrum_request(
+                json,
+                request.rpc_id(),
+                tx.clone(),
+                connection.responses.clone(),
+                ELECTRUM_TIMEOUT / (connections.len() - i) as u64,
+            )
+            .map(|response| (JsonRpcRemoteAddr(connection_addr), response));
+            futures.push(fut)
         }
     }
     drop(connections);
+
     if futures.is_empty() {
-        return ERR!("All electrums are currently disconnected");
+        return Err(JsonRpcErrorType::Transport(
+            "All electrums are currently disconnected".to_string(),
+        ));
     }
 
-    match request {
-        JsonRpcRequestEnum::Single(single) if single.method == "server.ping" => {
+    if let JsonRpcRequestEnum::Single(single) = &request {
+        if single.method == "server.ping" {
             // server.ping must be sent to all servers to keep all connections alive
-            return select_ok(futures)
-                .map(|(result, _)| result)
-                .map_err(|e| ERRL!("{:?}", e))
-                .compat()
-                .await;
-        },
-        _ => (),
+            return select_ok(futures).map(|(result, _)| result).compat().await;
+        }
     }
 
     let (res, no_of_failed_requests) = select_ok_sequential(futures)
         .compat()
         .await
-        .map_err(|e| ERRL!("{:?}", e))?;
+        .map_err(|e| JsonRpcErrorType::Transport(format!("{:?}", e)))?;
     client.rotate_servers(no_of_failed_requests).await;
+
     Ok(res)
 }
 
@@ -1592,35 +1688,41 @@ async fn electrum_request_to(
     client: ElectrumClient,
     request: JsonRpcRequestEnum,
     to_addr: String,
-) -> Result<(JsonRpcRemoteAddr, JsonRpcResponseEnum), String> {
+) -> Result<(JsonRpcRemoteAddr, JsonRpcResponseEnum), JsonRpcErrorType> {
     let (tx, responses) = {
         let connections = client.connections.lock().await;
         let connection = connections
             .iter()
             .find(|c| c.addr == to_addr)
-            .ok_or(ERRL!("Unknown destination address {}", to_addr))?;
+            .ok_or_else(|| JsonRpcErrorType::Internal(format!("Unknown destination address {}", to_addr)))?;
         let responses = connection.responses.clone();
         let tx = {
             match &*connection.tx.lock().await {
                 Some(tx) => tx.clone(),
-                None => return ERR!("Connection {} is not established yet", to_addr),
+                None => {
+                    return Err(JsonRpcErrorType::Transport(format!(
+                        "Connection {} is not established yet",
+                        to_addr
+                    )))
+                },
             }
         };
         (tx, responses)
     };
-
-    let response = try_s!(
-        electrum_request(request.clone(), tx, responses, ELECTRUM_TIMEOUT)
-            .compat()
-            .await
-    );
+    let json = json::to_string(&request).map_err(|err| JsonRpcErrorType::InvalidRequest(err.to_string()))?;
+    let response = electrum_request(json, request.rpc_id(), tx, responses, ELECTRUM_TIMEOUT)
+        .compat()
+        .await?;
     Ok((JsonRpcRemoteAddr(to_addr.to_owned()), response))
 }
 
 impl ElectrumClientImpl {
+    pub fn spawner(&self) -> abortable_queue::WeakSpawner { self.abortable_system.weak_spawner() }
+
     /// Create an Electrum connection and spawn a green thread actor to handle it.
     pub async fn add_server(&self, req: &ElectrumRpcRequest) -> Result<(), String> {
-        let connection = try_s!(spawn_electrum(req, self.event_handlers.clone()));
+        let subsystem = try_s!(self.abortable_system.create_subsystem());
+        let connection = try_s!(spawn_electrum(req, self.event_handlers.clone(), subsystem));
         self.connections.lock().await.push(connection);
         Ok(())
     }
@@ -1677,15 +1779,29 @@ impl ElectrumClientImpl {
         Ok(())
     }
 
+    /// Reset the protocol version for the specified server.
+    pub async fn reset_protocol_version(&self, server_addr: &str) -> Result<(), String> {
+        let connections = self.connections.lock().await;
+        let con = connections
+            .iter()
+            .find(|con| con.addr == server_addr)
+            .ok_or(ERRL!("Unknown electrum address {}", server_addr))?;
+        con.reset_protocol_version().await;
+        Ok(())
+    }
+
     /// Get available protocol versions.
     pub fn protocol_version(&self) -> &OrdRange<f32> { &self.protocol_version }
+
+    /// Get block headers storage.
+    pub fn block_headers_storage(&self) -> &BlockHeaderStorage { &self.block_headers_storage }
 }
 
 #[derive(Clone, Debug)]
 pub struct ElectrumClient(pub Arc<ElectrumClientImpl>);
 impl Deref for ElectrumClient {
     type Target = ElectrumClientImpl;
-    fn deref(&self) -> &ElectrumClientImpl { &*self.0 }
+    fn deref(&self) -> &ElectrumClientImpl { &self.0 }
 }
 
 const BLOCKCHAIN_HEADERS_SUB_ID: &str = "blockchain.headers.subscribe";
@@ -1777,8 +1893,20 @@ impl ElectrumClient {
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-get-history
-    pub fn scripthash_get_history(&self, hash: &str) -> RpcRes<Vec<ElectrumTxHistoryItem>> {
+    pub fn scripthash_get_history(&self, hash: &str) -> RpcRes<ElectrumTxHistory> {
         rpc_func!(self, "blockchain.scripthash.get_history", hash)
+    }
+
+    /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-get-history
+    /// Requests history of the `hashes` in a batch and returns them in the same order they were requested.
+    pub fn scripthash_get_history_batch<I>(&self, hashes: I) -> RpcRes<Vec<ElectrumTxHistory>>
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let requests = hashes
+            .into_iter()
+            .map(|hash| rpc_req!(self, "blockchain.scripthash.get_history", hash));
+        self.batch_rpc(requests)
     }
 
     /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-gethistory
@@ -1837,19 +1965,121 @@ impl ElectrumClient {
         rpc_func!(self, "blockchain.block.headers", start_height, count)
     }
 
-    pub fn retrieve_last_headers(
+    /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-get-merkle
+    pub fn blockchain_transaction_get_merkle(&self, txid: H256Json, height: u64) -> RpcRes<TxMerkleBranch> {
+        rpc_func!(self, "blockchain.transaction.get_merkle", txid, height)
+    }
+
+    // get_tx_height_from_rpc is costly since it loops through history after requesting the whole history of the script pubkey
+    // This method should always be used if the block headers are saved to the DB
+    async fn get_tx_height_from_storage(&self, tx: &UtxoTx) -> Result<u64, MmError<GetTxHeightError>> {
+        let tx_hash = tx.hash().reversed();
+        let blockhash = self.get_verbose_transaction(&tx_hash.into()).compat().await?.blockhash;
+        Ok(self
+            .block_headers_storage()
+            .get_block_height_by_hash(blockhash.into())
+            .await?
+            .ok_or_else(|| {
+                GetTxHeightError::HeightNotFound(format!(
+                    "Transaction block header is not found in storage for {}",
+                    self.0.coin_ticker
+                ))
+            })?
+            .try_into()?)
+    }
+
+    // get_tx_height_from_storage is always preferred to be used instead of this, but if there is no headers in storage (storing headers is not enabled)
+    // this function can be used instead
+    async fn get_tx_height_from_rpc(&self, tx: &UtxoTx) -> Result<u64, GetTxHeightError> {
+        for output in tx.outputs.clone() {
+            let script_pubkey_str = hex::encode(electrum_script_hash(&output.script_pubkey));
+            if let Ok(history) = self.scripthash_get_history(script_pubkey_str.as_str()).compat().await {
+                if let Some(item) = history
+                    .into_iter()
+                    .find(|item| item.tx_hash.reversed() == H256Json(*tx.hash()) && item.height > 0)
+                {
+                    return Ok(item.height as u64);
+                }
+            }
+        }
+        Err(GetTxHeightError::HeightNotFound(format!(
+            "Couldn't find height through electrum for {}",
+            self.coin_ticker
+        )))
+    }
+
+    async fn block_header_from_storage(&self, height: u64) -> Result<BlockHeader, MmError<GetBlockHeaderError>> {
+        self.block_headers_storage()
+            .get_block_header(height)
+            .await?
+            .ok_or_else(|| {
+                GetBlockHeaderError::Internal(format!("Header not found in storage for {}", self.coin_ticker)).into()
+            })
+    }
+
+    async fn block_header_from_storage_or_rpc(&self, height: u64) -> Result<BlockHeader, MmError<GetBlockHeaderError>> {
+        match self.block_header_from_storage(height).await {
+            Ok(h) => Ok(h),
+            Err(_) => Ok(deserialize(
+                self.blockchain_block_header(height).compat().await?.as_slice(),
+            )?),
+        }
+    }
+
+    pub async fn get_confirmed_tx_info_from_rpc(
         &self,
-        blocks_limit_to_check: NonZeroU64,
-        block_height: u64,
-    ) -> UtxoRpcFut<(HashMap<u64, BlockHeader>, Vec<BlockHeader>)> {
+        tx: &UtxoTx,
+    ) -> Result<ConfirmedTransactionInfo, GetConfirmedTxError> {
+        let height = self.get_tx_height_from_rpc(tx).await?;
+
+        let merkle_branch = self
+            .blockchain_transaction_get_merkle(tx.hash().reversed().into(), height)
+            .compat()
+            .await?;
+
+        let header = deserialize(self.blockchain_block_header(height).compat().await?.as_slice())?;
+
+        Ok(ConfirmedTransactionInfo {
+            tx: tx.clone(),
+            header,
+            index: merkle_branch.pos as u64,
+            height,
+        })
+    }
+
+    pub async fn get_merkle_and_validated_header(
+        &self,
+        tx: &UtxoTx,
+    ) -> Result<(TxMerkleBranch, BlockHeader, u64), MmError<SPVError>> {
+        let height = self.get_tx_height_from_storage(tx).await?;
+
+        let merkle_branch = self
+            .blockchain_transaction_get_merkle(tx.hash().reversed().into(), height)
+            .compat()
+            .await
+            .map_to_mm(|err| SPVError::UnableToGetMerkle {
+                coin: self.coin_ticker.clone(),
+                err: err.to_string(),
+            })?;
+
+        let header = self.block_header_from_storage(height).await?;
+
+        Ok((merkle_branch, header, height))
+    }
+}
+
+#[cfg_attr(test, mockable)]
+impl ElectrumClient {
+    pub fn retrieve_headers(&self, from: u64, to: u64) -> UtxoRpcFut<(HashMap<u64, BlockHeader>, Vec<BlockHeader>)> {
         let coin_name = self.coin_ticker.clone();
-        let (from, count) = {
-            let from = if block_height < blocks_limit_to_check.get() {
-                0
-            } else {
-                block_height - blocks_limit_to_check.get()
-            };
-            (from, blocks_limit_to_check)
+        if from == 0 || to < from {
+            return Box::new(futures01::future::err(
+                UtxoRpcError::Internal("Invalid values for from/to parameters".to_string()).into(),
+            ));
+        }
+        let count: NonZeroU64 = match (to - from + 1).try_into() {
+            Ok(c) => c,
+            Err(e) => return Box::new(futures01::future::err(UtxoRpcError::Internal(e.to_string()).into())),
         };
         Box::new(
             self.blockchain_block_headers(from, count)
@@ -1862,8 +2092,9 @@ impl ElectrumClient {
                         let len = CompactInteger::from(headers.count);
                         let mut serialized = serialize(&len).take();
                         serialized.extend(headers.hex.0.into_iter());
-                        let coin_variant = coin_variant_by_ticker(&coin_name);
-                        let mut reader = Reader::new_with_coin_variant(serialized.as_slice(), coin_variant);
+                        drop_mutability!(serialized);
+                        let mut reader =
+                            Reader::new_with_coin_variant(serialized.as_slice(), coin_name.as_str().into());
                         let maybe_block_headers = reader.read_list::<BlockHeader>();
                         let block_headers = match maybe_block_headers {
                             Ok(headers) => headers,
@@ -1880,11 +2111,6 @@ impl ElectrumClient {
                     Ok((block_registry, block_headers))
                 }),
         )
-    }
-
-    /// https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-transaction-get-merkle
-    pub fn blockchain_transaction_get_merkle(&self, txid: H256Json, height: u64) -> RpcRes<TxMerkleBranch> {
-        rpc_func!(self, "blockchain.transaction.get_merkle", txid, height)
     }
 }
 
@@ -2107,17 +2333,20 @@ impl UtxoRpcClientOps for ElectrumClient {
         )
     }
 
-    async fn get_block_timestamp(&self, height: u64) -> Result<u64, MmError<UtxoRpcError>> {
-        let header_bytes = self.blockchain_block_header(height).compat().await?;
-        let header: BlockHeader =
-            deserialize(header_bytes.0.as_slice()).map_to_mm(|e| UtxoRpcError::InvalidResponse(format!("{:?}", e)))?;
-        Ok(header.time as u64)
+    async fn get_block_timestamp(&self, height: u64) -> Result<u64, MmError<GetBlockHeaderError>> {
+        Ok(self.block_header_from_storage_or_rpc(height).await?.time as u64)
     }
 }
 
 #[cfg_attr(test, mockable)]
 impl ElectrumClientImpl {
-    pub fn new(coin_ticker: String, event_handlers: Vec<RpcTransportEventHandlerShared>) -> ElectrumClientImpl {
+    pub fn new(
+        coin_ticker: String,
+        event_handlers: Vec<RpcTransportEventHandlerShared>,
+        block_headers_storage: BlockHeaderStorage,
+        abortable_system: AbortableQueue,
+        negotiate_version: bool,
+    ) -> ElectrumClientImpl {
         let protocol_version = OrdRange::new(1.2, 1.4).unwrap();
         ElectrumClientImpl {
             coin_ticker,
@@ -2127,6 +2356,9 @@ impl ElectrumClientImpl {
             protocol_version,
             get_balance_concurrent_map: ConcurrentRequestMap::new(),
             list_unspent_concurrent_map: ConcurrentRequestMap::new(),
+            block_headers_storage,
+            abortable_system,
+            negotiate_version,
         }
     }
 
@@ -2135,10 +2367,18 @@ impl ElectrumClientImpl {
         coin_ticker: String,
         event_handlers: Vec<RpcTransportEventHandlerShared>,
         protocol_version: OrdRange<f32>,
+        block_headers_storage: BlockHeaderStorage,
+        abortable_system: AbortableQueue,
     ) -> ElectrumClientImpl {
         ElectrumClientImpl {
             protocol_version,
-            ..ElectrumClientImpl::new(coin_ticker, event_handlers)
+            ..ElectrumClientImpl::new(
+                coin_ticker,
+                event_handlers,
+                block_headers_storage,
+                abortable_system,
+                false,
+            )
         }
     }
 }
@@ -2333,12 +2573,13 @@ lazy_static! {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn connect_loop(
+async fn connect_loop<Spawner: SpawnFuture>(
     config: ElectrumConfig,
     addr: String,
     responses: JsonRpcPendingRequestsShared,
     connection_tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
+    _spawner: Spawner,
 ) -> Result<(), ()> {
     let delay = Arc::new(AtomicU64::new(0));
 
@@ -2436,6 +2677,7 @@ async fn connect_loop(
         macro_rules! reset_tx_and_continue {
             () => {
                 info!("{} connection dropped", addr);
+                event_handlers.on_disconnected(addr.clone()).error_log();
                 *connection_tx.lock().await = None;
                 increase_delay(&delay);
                 continue;
@@ -2451,12 +2693,13 @@ async fn connect_loop(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn connect_loop(
+async fn connect_loop<Spawner: SpawnFuture>(
     _config: ElectrumConfig,
     addr: String,
     responses: JsonRpcPendingRequestsShared,
     connection_tx: Arc<AsyncMutex<Option<mpsc::Sender<Vec<u8>>>>>,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
+    spawner: Spawner,
 ) -> Result<(), ()> {
     use std::sync::atomic::AtomicUsize;
 
@@ -2474,7 +2717,8 @@ async fn connect_loop(
         }
 
         let conn_idx = CONN_IDX.fetch_add(1, AtomicOrdering::Relaxed);
-        let (mut transport_tx, mut transport_rx) = try_loop!(ws_transport(conn_idx, &addr).await, addr, delay);
+        let (mut transport_tx, mut transport_rx) =
+            try_loop!(ws_transport(conn_idx, &addr, &spawner).await, addr, delay);
 
         info!("Electrum client connected to {}", addr);
         try_loop!(event_handlers.on_connected(addr.clone()), addr, delay);
@@ -2540,6 +2784,7 @@ async fn connect_loop(
             () => {
                 info!("{} connection dropped", addr);
                 *connection_tx.lock().await = None;
+                event_handlers.on_disconnected(addr.clone()).error_log();
                 increase_delay(&delay);
                 continue;
             };
@@ -2554,66 +2799,69 @@ async fn connect_loop(
 }
 
 /// Builds up the electrum connection, spawns endless loop that attempts to reconnect to the server
-/// in case of connection errors
+/// in case of connection errors.
+/// The function takes `abortable_system` that will be used to spawn Electrum's related futures.
 fn electrum_connect(
     addr: String,
     config: ElectrumConfig,
     event_handlers: Vec<RpcTransportEventHandlerShared>,
+    abortable_system: AbortableQueue,
 ) -> ElectrumConnection {
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let responses = Arc::new(AsyncMutex::new(JsonRpcPendingRequests::default()));
     let tx = Arc::new(AsyncMutex::new(None));
 
-    let connect_loop = connect_loop(
+    let spawner = abortable_system.weak_spawner();
+    let fut = connect_loop(
         config.clone(),
         addr.clone(),
         responses.clone(),
         tx.clone(),
         event_handlers,
-    );
+        spawner.clone(),
+    )
+    .then(|_| futures::future::ready(()));
 
-    let connect_loop = select_func(connect_loop.boxed(), shutdown_rx.compat());
-    spawn(connect_loop.map(|_| ()));
+    spawner.spawn(fut);
     ElectrumConnection {
         addr,
         config,
         tx,
-        shutdown_tx: Some(shutdown_tx),
         responses,
         protocol_version: AsyncMutex::new(None),
+        _abortable_system: abortable_system,
     }
 }
 
+/// # Important
+/// `electrum_request` should always return [`JsonRpcErrorType::Transport`] error.
 fn electrum_request(
-    request: JsonRpcRequestEnum,
+    mut req_json: String,
+    rpc_id: JsonRpcId,
     tx: mpsc::Sender<Vec<u8>>,
     responses: JsonRpcPendingRequestsShared,
     timeout: u64,
-) -> Box<dyn Future<Item = JsonRpcResponseEnum, Error = String> + Send + 'static> {
+) -> Box<dyn Future<Item = JsonRpcResponseEnum, Error = JsonRpcErrorType> + Send + 'static> {
     let send_fut = async move {
-        let mut json = try_s!(json::to_string(&request));
         #[cfg(not(target_arch = "wasm"))]
         {
             // Electrum request and responses must end with \n
             // https://electrumx.readthedocs.io/en/latest/protocol-basics.html#message-stream
-            json.push('\n');
+            req_json.push('\n');
         }
-
         let (req_tx, resp_rx) = async_oneshot::channel();
-        responses.lock().await.insert(request.rpc_id(), req_tx);
-        try_s!(tx.send(json.into_bytes()).compat().await);
-        let resps = try_s!(resp_rx.await);
+        responses.lock().await.insert(rpc_id, req_tx);
+        tx.send(req_json.into_bytes())
+            .compat()
+            .await
+            .map_err(|err| JsonRpcErrorType::Transport(err.to_string()))?;
+        let resps = resp_rx.await.map_err(|e| JsonRpcErrorType::Transport(e.to_string()))?;
         Ok(resps)
     };
     let send_fut = send_fut
         .boxed()
         .timeout(Duration::from_secs(timeout))
         .compat()
-        .then(|res| match res {
-            Ok(response) => response,
-            Err(timeout_error) => ERR!("{}", timeout_error),
-        })
-        .map_err(|e| ERRL!("{}", e));
+        .then(move |res| res.map_err(|err| JsonRpcErrorType::Transport(err.to_string()))?);
     Box::new(send_fut)
 }
 
