@@ -92,9 +92,11 @@ pub(crate) const TX_DEFAULT_MEMO: &str = "";
 const MAX_TIME_LOCK: i64 = 34560;
 const MIN_TIME_LOCK: i64 = 50;
 
+const ACCOUNT_SEQUENCE_ERR: &str = "incorrect account sequence";
+
 #[async_trait]
 pub trait TendermintCommons {
-    fn platform_denom(&self) -> String;
+    fn platform_denom(&self) -> &Denom;
 
     fn set_history_sync_state(&self, new_state: HistorySyncState);
 
@@ -392,7 +394,7 @@ impl From<DecodeError> for SearchForSwapTxSpendErr {
 
 #[async_trait]
 impl TendermintCommons for TendermintCoin {
-    fn platform_denom(&self) -> String { self.denom.to_string() }
+    fn platform_denom(&self) -> &Denom { &self.denom }
 
     fn set_history_sync_state(&self, new_state: HistorySyncState) {
         *self.history_sync_state.lock().unwrap() = new_state;
@@ -616,7 +618,7 @@ impl TendermintCoin {
             match self.send_raw_tx_bytes(&try_tx_s!(tx_raw.to_bytes())).compat().await {
                 Ok(tx_id) => break (tx_id, tx_raw),
                 Err(e) => {
-                    if e.contains("Wrong account sequence catched") {
+                    if e.contains(ACCOUNT_SEQUENCE_ERR) {
                         debug!("Got wrong account sequence, trying again.");
                         continue;
                     }
@@ -654,22 +656,17 @@ impl TendermintCoin {
 
             let raw_response = self.rpc_client().await?.perform(request).await?;
 
-            if raw_response
-                .response
-                .log
-                .to_string()
-                .contains("incorrect account sequence")
-            {
+            if raw_response.response.log.to_string().contains(ACCOUNT_SEQUENCE_ERR) {
                 debug!("Got wrong account sequence, trying again.");
                 continue;
             }
 
             match raw_response.response.code {
                 cosmrs::tendermint::abci::Code::Ok => {},
-                cosmrs::tendermint::abci::Code::Err(_) => {
+                cosmrs::tendermint::abci::Code::Err(ecode) => {
                     return MmError::err(TendermintCoinRpcError::InvalidResponse(format!(
-                        "Could not read gas_info. Invalid Response: {}",
-                        raw_response.response.log
+                        "Could not read gas_info. Error code: {} Message: {}",
+                        ecode, raw_response.response.log
                     )));
                 },
             };
@@ -690,7 +687,7 @@ impl TendermintCoin {
         let amount = ((gas.gas_used as f64 * 1.5) * self.gas_price()).ceil();
 
         let fee_amount = Coin {
-            denom: self.platform_denom().parse().expect("Platform denom parse can't fail"),
+            denom: self.platform_denom().clone(),
             amount: (amount as u64).into(),
         };
 
@@ -721,22 +718,17 @@ impl TendermintCoin {
 
             let raw_response = self.rpc_client().await?.perform(request).await?;
 
-            if raw_response
-                .response
-                .log
-                .to_string()
-                .contains("incorrect account sequence")
-            {
+            if raw_response.response.log.to_string().contains(ACCOUNT_SEQUENCE_ERR) {
                 debug!("Got wrong account sequence, trying again.");
                 continue;
             }
 
             match raw_response.response.code {
                 cosmrs::tendermint::abci::Code::Ok => {},
-                cosmrs::tendermint::abci::Code::Err(_) => {
+                cosmrs::tendermint::abci::Code::Err(ecode) => {
                     return MmError::err(TendermintCoinRpcError::InvalidResponse(format!(
-                        "Could not read gas_info. Invalid Response: {}",
-                        raw_response.response.log
+                        "Could not read gas_info. Error code: {} Message: {}",
+                        ecode, raw_response.response.log
                     )));
                 },
             };
@@ -1820,19 +1812,12 @@ impl MarketCoinOps for TendermintCoin {
                     .await
             );
 
-            if broadcast_res
-                .check_tx
-                .log
-                .to_string()
-                .contains("incorrect account sequence")
-                || broadcast_res
-                    .deliver_tx
-                    .log
-                    .to_string()
-                    .contains("incorrect account sequence")
+            if broadcast_res.check_tx.log.to_string().contains(ACCOUNT_SEQUENCE_ERR)
+                || broadcast_res.deliver_tx.log.to_string().contains(ACCOUNT_SEQUENCE_ERR)
             {
                 return ERR!(
-                    "Wrong account sequence catched. check_tx log: {}, deliver_tx log: {}",
+                    "{}. check_tx log: {}, deliver_tx log: {}",
+                    ACCOUNT_SEQUENCE_ERR,
                     broadcast_res.check_tx.log,
                     broadcast_res.deliver_tx.log
                 );
