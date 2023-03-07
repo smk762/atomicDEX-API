@@ -21,6 +21,8 @@
 //  Copyright © 2022 AtomicDEX. All rights reserved.
 //
 use super::eth::Action::{Call, Create};
+#[cfg(feature = "enable-nft-integration")]
+use crate::nft::nft_structs::{Chain, ContractType, TransactionNftDetails, WithdrawErc1155, WithdrawErc721};
 use async_trait::async_trait;
 use bitcrypto::{keccak256, ripemd160, sha256};
 use common::custom_futures::repeatable::{Ready, Retry};
@@ -97,7 +99,12 @@ pub use rlp;
 mod web3_transport;
 
 #[path = "eth/v2_activation.rs"] pub mod v2_activation;
-use v2_activation::build_address_and_priv_key_policy;
+#[cfg(feature = "enable-nft-integration")]
+use crate::nft::WithdrawNftResult;
+use crate::MyWalletAddress;
+#[cfg(feature = "enable-nft-integration")]
+use crate::{lp_coinfind_or_err, MmCoinEnum, TransactionType};
+use v2_activation::{build_address_and_priv_key_policy, EthActivationV2Error};
 
 mod nonce;
 use nonce::ParityNonce;
@@ -109,6 +116,8 @@ use nonce::ParityNonce;
 const SWAP_CONTRACT_ABI: &str = include_str!("eth/swap_contract_abi.json");
 /// https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20.md
 const ERC20_ABI: &str = include_str!("eth/erc20_abi.json");
+/// https://github.com/ethereum/EIPs/blob/master/EIPS/eip-721.md
+const ERC721_ABI: &str = include_str!("eth/erc721_abi.json");
 /// Payment states from etomic swap smart contract: https://github.com/artemii235/etomic-swap/blob/master/contracts/EtomicSwap.sol#L5
 pub const PAYMENT_STATE_UNINITIALIZED: u8 = 0;
 pub const PAYMENT_STATE_SENT: u8 = 1;
@@ -147,6 +156,7 @@ const GUI_AUTH_SIGNED_MESSAGE_LIFETIME_SEC: i64 = 90;
 lazy_static! {
     pub static ref SWAP_CONTRACT: Contract = Contract::load(SWAP_CONTRACT_ABI.as_bytes()).unwrap();
     pub static ref ERC20_CONTRACT: Contract = Contract::load(ERC20_ABI.as_bytes()).unwrap();
+    pub static ref ERC721_CONTRACT: Contract = Contract::load(ERC721_ABI.as_bytes()).unwrap();
 }
 
 pub type Web3RpcFut<T> = Box<dyn Future<Item = T, Error = MmError<Web3RpcError>> + Send>;
@@ -873,6 +883,124 @@ async fn withdraw_impl(coin: EthCoin, req: WithdrawRequest) -> WithdrawResult {
         kmd_rewards: None,
         transaction_type: Default::default(),
         memo: None,
+    })
+}
+
+#[cfg(feature = "enable-nft-integration")]
+pub async fn withdraw_erc1155(ctx: MmArc, req: WithdrawErc1155) -> WithdrawNftResult {
+    let ticker = match req.chain {
+        Chain::Bsc => "BNB",
+        Chain::Eth => "ETH",
+    };
+    let _coin = lp_coinfind_or_err(&ctx, ticker).await?;
+    unimplemented!()
+}
+
+#[cfg(feature = "enable-nft-integration")]
+pub async fn withdraw_erc721(ctx: MmArc, req: WithdrawErc721) -> WithdrawNftResult {
+    let ticker = match req.chain {
+        Chain::Bsc => "BNB",
+        Chain::Eth => "ETH",
+    };
+    let coin = lp_coinfind_or_err(&ctx, ticker).await?;
+    let eth_coin = match coin {
+        MmCoinEnum::EthCoin(eth_coin) => eth_coin,
+        _ => {
+            return MmError::err(WithdrawError::CoinDoesntSupportNftWithdraw {
+                coin: coin.ticker().to_owned(),
+            })
+        },
+    };
+    let from_addr = valid_addr_from_str(&req.from).map_to_mm(WithdrawError::InvalidAddress)?;
+    if eth_coin.my_address != from_addr {
+        return MmError::err(WithdrawError::AddressMismatchError {
+            my_address: eth_coin.my_address.to_string(),
+            from: req.from,
+        });
+    }
+    let to_addr = valid_addr_from_str(&req.to).map_to_mm(WithdrawError::InvalidAddress)?;
+    let token_addr = addr_from_str(&req.token_address).map_to_mm(WithdrawError::InvalidAddress)?;
+    let (eth_value, data, call_addr, fee_coin) = match eth_coin.coin_type {
+        EthCoinType::Eth => {
+            let function = ERC721_CONTRACT.function("safeTransferFrom")?;
+            let token_id_u256 = U256::from_dec_str(&req.token_id.to_string())
+                .map_err(|e| format!("{:?}", e))
+                .map_to_mm(NumConversError::new)?;
+            let data = function.encode_input(&[
+                Token::Address(from_addr),
+                Token::Address(to_addr),
+                Token::Uint(token_id_u256),
+            ])?;
+            (0.into(), data, token_addr, eth_coin.ticker())
+        },
+        EthCoinType::Erc20 { .. } => {
+            return MmError::err(WithdrawError::InternalError(
+                "Erc20 coin type doesnt support withdraw nft".to_owned(),
+            ))
+        },
+    };
+    let (gas, gas_price) = match req.fee {
+        Some(WithdrawFee::EthGas { gas_price, gas }) => {
+            let gas_price = wei_from_big_decimal(&gas_price, 9)?;
+            (gas.into(), gas_price)
+        },
+        Some(fee_policy) => {
+            let error = format!("Expected 'EthGas' fee type, found {:?}", fee_policy);
+            return MmError::err(WithdrawError::InvalidFeePolicy(error));
+        },
+        None => {
+            let gas_price = eth_coin.get_gas_price().compat().await?;
+            let estimate_gas_req = CallRequest {
+                value: Some(eth_value),
+                data: Some(data.clone().into()),
+                from: Some(eth_coin.my_address),
+                to: Some(call_addr),
+                gas: None,
+                // gas price must be supplied because some smart contracts base their
+                // logic on gas price, e.g. TUSD: https://github.com/KomodoPlatform/atomicDEX-API/issues/643
+                gas_price: Some(gas_price),
+                ..CallRequest::default()
+            };
+            // Note if the wallet's balance is insufficient to withdraw, then `estimate_gas` may fail with the `Exception` error.
+            // Ideally we should determine the case when we have the insufficient balance and return `WithdrawError::NotSufficientBalance`.
+            let gas_limit = eth_coin.estimate_gas(estimate_gas_req).compat().await?;
+            (gas_limit, gas_price)
+        },
+    };
+    let _nonce_lock = eth_coin.nonce_lock.lock().await;
+    let nonce = get_addr_nonce(eth_coin.my_address, eth_coin.web3_instances.clone())
+        .compat()
+        .timeout_secs(30.)
+        .await?
+        .map_to_mm(WithdrawError::Transport)?;
+
+    let tx = UnSignedEthTx {
+        nonce,
+        value: eth_value,
+        action: Action::Call(call_addr),
+        data,
+        gas,
+        gas_price,
+    };
+    let secret = eth_coin.priv_key_policy.key_pair_or_err()?.secret();
+    let signed = tx.sign(secret, eth_coin.chain_id);
+    let signed_bytes = rlp::encode(&signed);
+    let fee_details = EthTxFeeDetails::new(gas, gas_price, fee_coin)?;
+    Ok(TransactionNftDetails {
+        tx_hex: BytesJson::from(signed_bytes.to_vec()),
+        tx_hash: format!("{:02x}", signed.tx_hash()),
+        from: vec![req.from],
+        to: vec![req.to],
+        contract_type: ContractType::Erc721,
+        token_address: req.token_address,
+        token_id: req.token_id,
+        amount: 1.into(),
+        fee_details: Some(fee_details.into()),
+        coin: eth_coin.ticker.clone(),
+        block_height: 0,
+        timestamp: now_ms() / 1000,
+        internal_id: 0,
+        transaction_type: TransactionType::NftTransfer,
     })
 }
 
@@ -4761,4 +4889,38 @@ fn increase_gas_price_by_stage(gas_price: U256, level: &FeeApproxStage) -> U256 
             increase_by_percent_one_gwei(gas_price, GAS_PRICE_APPROXIMATION_PERCENT_ON_WATCHER_PREIMAGE)
         },
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, Display)]
+pub enum GetEthAddressError {
+    PrivKeyPolicyNotAllowed(PrivKeyPolicyNotAllowed),
+    EthActivationV2Error(EthActivationV2Error),
+    Internal(String),
+}
+
+impl From<PrivKeyPolicyNotAllowed> for GetEthAddressError {
+    fn from(e: PrivKeyPolicyNotAllowed) -> Self { GetEthAddressError::PrivKeyPolicyNotAllowed(e) }
+}
+
+impl From<EthActivationV2Error> for GetEthAddressError {
+    fn from(e: EthActivationV2Error) -> Self { GetEthAddressError::EthActivationV2Error(e) }
+}
+
+impl From<CryptoCtxError> for GetEthAddressError {
+    fn from(e: CryptoCtxError) -> Self { GetEthAddressError::Internal(e.to_string()) }
+}
+
+/// `get_eth_address` returns wallet address for coin with `ETH` protocol type.
+pub async fn get_eth_address(ctx: &MmArc, ticker: &str) -> MmResult<MyWalletAddress, GetEthAddressError> {
+    let priv_key_policy = PrivKeyBuildPolicy::detect_priv_key_policy(ctx)?;
+    // Convert `PrivKeyBuildPolicy` to `EthPrivKeyBuildPolicy` if it's possible.
+    let priv_key_policy = EthPrivKeyBuildPolicy::try_from(priv_key_policy)?;
+
+    let (my_address, ..) = build_address_and_priv_key_policy(&ctx.conf, priv_key_policy).await?;
+    let wallet_address = checksum_address(&format!("{:#02x}", my_address));
+
+    Ok(MyWalletAddress {
+        coin: ticker.to_owned(),
+        wallet_address,
+    })
 }

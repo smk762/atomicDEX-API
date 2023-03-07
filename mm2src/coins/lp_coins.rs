@@ -200,7 +200,7 @@ use coin_errors::{MyAddressError, ValidatePaymentError, ValidatePaymentFut};
 pub mod coins_tests;
 
 pub mod eth;
-use eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
+use eth::{eth_coin_from_conf_and_request, get_eth_address, EthCoin, EthTxFeeDetails, GetEthAddressError, SignedEthTx};
 
 pub mod hd_confirm_address;
 pub mod hd_pubkey;
@@ -254,6 +254,8 @@ use utxo::utxo_common::big_decimal_from_sat_unsigned;
 use utxo::utxo_standard::{utxo_standard_coin_with_policy, UtxoStandardCoin};
 use utxo::UtxoActivationParams;
 use utxo::{BlockchainNetwork, GenerateTxError, UtxoFeeDetails, UtxoTx};
+
+#[cfg(feature = "enable-nft-integration")] pub mod nft;
 
 #[cfg(not(target_arch = "wasm32"))] pub mod z_coin;
 #[cfg(not(target_arch = "wasm32"))] use z_coin::ZCoin;
@@ -331,6 +333,38 @@ impl From<CoinFindError> for RawTransactionError {
     }
 }
 
+#[derive(Debug, Deserialize, Display, EnumFromStringify, Serialize, SerializeErrorType)]
+#[serde(tag = "error_type", content = "error_data")]
+pub enum GetMyAddressError {
+    CoinsConfCheckError(String),
+    CoinIsNotSupported(String),
+    #[from_stringify("CryptoCtxError")]
+    #[display(fmt = "Internal error: {}", _0)]
+    Internal(String),
+    #[from_stringify("serde_json::Error")]
+    #[display(fmt = "Invalid request error error: {}", _0)]
+    InvalidRequest(String),
+    #[display(fmt = "Get Eth address error: {}", _0)]
+    GetEthAddressError(GetEthAddressError),
+}
+
+impl From<GetEthAddressError> for GetMyAddressError {
+    fn from(e: GetEthAddressError) -> Self { GetMyAddressError::GetEthAddressError(e) }
+}
+
+impl HttpStatusCode for GetMyAddressError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            GetMyAddressError::CoinsConfCheckError(_)
+            | GetMyAddressError::CoinIsNotSupported(_)
+            | GetMyAddressError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+            GetMyAddressError::Internal(_) | GetMyAddressError::GetEthAddressError(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct RawTransactionRequest {
     pub coin: String,
@@ -341,6 +375,17 @@ pub struct RawTransactionRequest {
 pub struct RawTransactionRes {
     /// Raw bytes of signed transaction in hexadecimal string, this should be return hexadecimal encoded signed transaction for get_raw_transaction
     pub tx_hex: BytesJson,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MyAddressReq {
+    coin: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MyWalletAddress {
+    coin: String,
+    wallet_address: String,
 }
 
 pub type SignatureResult<T> = Result<T, MmError<SignatureError>>;
@@ -361,7 +406,7 @@ pub enum TxHistoryError {
     InternalError(String),
 }
 
-#[derive(Clone, Debug, Display)]
+#[derive(Clone, Debug, Display, Deserialize)]
 pub enum PrivKeyPolicyNotAllowed {
     #[display(fmt = "Hardware Wallet is not supported")]
     HardwareWalletNotSupported,
@@ -1165,6 +1210,7 @@ pub enum TransactionType {
         msg_type: CustomTendermintMsgType,
         token_id: Option<BytesJson>,
     },
+    NftTransfer,
 }
 
 /// Transaction details
@@ -1730,6 +1776,12 @@ pub enum WithdrawError {
     #[from_stringify("NumConversError", "UnexpectedDerivationMethod", "PrivKeyPolicyNotAllowed")]
     #[display(fmt = "Internal error: {}", _0)]
     InternalError(String),
+    #[display(fmt = "{} coin doesn't support NFT withdrawing", coin)]
+    CoinDoesntSupportNftWithdraw { coin: String },
+    #[display(fmt = "My address {} and from address {} mismatch", my_address, from)]
+    AddressMismatchError { my_address: String, from: String },
+    #[display(fmt = "Contract type {} doesnt support 'withdraw_nft' yet", _0)]
+    ContractTypeDoesntSupportNftWithdrawing(String),
 }
 
 impl HttpStatusCode for WithdrawError {
@@ -1748,7 +1800,10 @@ impl HttpStatusCode for WithdrawError {
             | WithdrawError::FromAddressNotFound
             | WithdrawError::UnexpectedFromAddress(_)
             | WithdrawError::UnknownAccount { .. }
-            | WithdrawError::UnexpectedUserAction { .. } => StatusCode::BAD_REQUEST,
+            | WithdrawError::UnexpectedUserAction { .. }
+            | WithdrawError::CoinDoesntSupportNftWithdraw { .. }
+            | WithdrawError::AddressMismatchError { .. }
+            | WithdrawError::ContractTypeDoesntSupportNftWithdrawing(_) => StatusCode::BAD_REQUEST,
             WithdrawError::HwError(_) => StatusCode::GONE,
             #[cfg(target_arch = "wasm32")]
             WithdrawError::BroadcastExpected(_) => StatusCode::BAD_REQUEST,
@@ -1831,7 +1886,7 @@ impl WithdrawError {
     }
 }
 
-#[derive(Serialize, Display, Debug, EnumFromStringify, SerializeErrorType)]
+#[derive(Debug, Display, EnumFromStringify, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum SignatureError {
     #[display(fmt = "Invalid request: {}", _0)]
@@ -1856,7 +1911,7 @@ impl HttpStatusCode for SignatureError {
     }
 }
 
-#[derive(Serialize, Display, Debug, SerializeErrorType)]
+#[derive(Debug, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum VerificationError {
     #[display(fmt = "Invalid request: {}", _0)]
@@ -2478,7 +2533,7 @@ pub trait CoinWithDerivationMethod {
 }
 
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", content = "protocol_data")]
 pub enum CoinProtocol {
     UTXO,
@@ -2698,34 +2753,11 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
 
     let coins_en = coin_conf(ctx, ticker);
 
-    if coins_en.is_null() {
-        let warning = format!(
-            "Warning, coin {} is used without a corresponding configuration.",
-            ticker
-        );
-        ctx.log.log(
-            "😅",
-            #[allow(clippy::unnecessary_cast)]
-            &[&("coin" as &str), &ticker, &("no-conf" as &str)],
-            &warning,
-        );
-    }
-
-    if coins_en["mm2"].is_null() && req["mm2"].is_null() {
-        return ERR!(concat!(
-            "mm2 param is not set neither in coins config nor enable request, ",
-            "assuming that coin is not supported"
-        ));
-    }
+    coins_conf_check(ctx, &coins_en, ticker, Some(req))?;
 
     // The legacy electrum/enable RPCs don't support Hardware Wallet policy.
     let priv_key_policy = try_s!(PrivKeyBuildPolicy::detect_priv_key_policy(ctx));
 
-    if coins_en["protocol"].is_null() {
-        return ERR!(
-            r#""protocol" field is missing in coins file. The file format is deprecated, please execute ./mm2 update_config command to convert it or download a new one"#
-        );
-    }
     let protocol: CoinProtocol = try_s!(json::from_value(coins_en["protocol"].clone()));
 
     let coin: MmCoinEnum = match &protocol {
@@ -3595,4 +3627,60 @@ pub trait RpcCommonOps {
 
     /// Returns an alive RPC client or returns an error if no RPC endpoint is currently available.
     async fn get_live_client(&self) -> Result<Self::RpcClient, Self::Error>;
+}
+
+/// `get_my_address` function returns wallet address for necessary coin without its activation.
+/// Currently supports only coins with `ETH` protocol type.
+pub async fn get_my_address(ctx: MmArc, req: MyAddressReq) -> MmResult<MyWalletAddress, GetMyAddressError> {
+    let ticker = req.coin.as_str();
+    let coins_en = coin_conf(&ctx, ticker);
+    coins_conf_check(&ctx, &coins_en, ticker, None).map_to_mm(GetMyAddressError::CoinsConfCheckError)?;
+
+    let protocol: CoinProtocol = json::from_value(coins_en["protocol"].clone())?;
+
+    let my_address = match protocol {
+        CoinProtocol::ETH => get_eth_address(&ctx, ticker).await?,
+        _ => {
+            return MmError::err(GetMyAddressError::CoinIsNotSupported(format!(
+                "{} doesn't support get_my_address",
+                req.coin
+            )));
+        },
+    };
+
+    Ok(my_address)
+}
+
+fn coins_conf_check(ctx: &MmArc, coins_en: &Json, ticker: &str, req: Option<&Json>) -> Result<(), String> {
+    if coins_en.is_null() {
+        let warning = format!(
+            "Warning, coin {} is used without a corresponding configuration.",
+            ticker
+        );
+        ctx.log.log(
+            "😅",
+            #[allow(clippy::unnecessary_cast)]
+            &[&("coin" as &str), &ticker, &("no-conf" as &str)],
+            &warning,
+        );
+    }
+
+    if let Some(req) = req {
+        if coins_en["mm2"].is_null() && req["mm2"].is_null() {
+            return ERR!(concat!(
+                "mm2 param is not set neither in coins config nor enable request, assuming that coin is not supported"
+            ));
+        }
+    } else if coins_en["mm2"].is_null() {
+        return ERR!(concat!(
+            "mm2 param is not set in coins config, assuming that coin is not supported"
+        ));
+    }
+
+    if coins_en["protocol"].is_null() {
+        return ERR!(
+            r#""protocol" field is missing in coins file. The file format is deprecated, please execute ./mm2 update_config command to convert it or download a new one"#
+        );
+    }
+    Ok(())
 }
