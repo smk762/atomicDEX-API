@@ -5625,6 +5625,7 @@ pub enum OrderbookAddress {
 #[derive(Debug, Display)]
 enum OrderbookAddrErr {
     AddrFromPubkeyError(String),
+    #[cfg(all(feature = "enable-solana", not(target_arch = "wasm32")))]
     CoinIsNotSupported(String),
     DeserializationError(json::Error),
     InvalidPlatformCoinProtocol(String),
@@ -5696,7 +5697,7 @@ fn orderbook_address(
                 ))),
             }
         },
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(feature = "enable-solana", not(target_arch = "wasm32")))]
         CoinProtocol::SOLANA | CoinProtocol::SPLTOKEN { .. } => {
             MmError::err(OrderbookAddrErr::CoinIsNotSupported(coin.to_owned()))
         },
