@@ -458,7 +458,7 @@ dependencies = [
  "bitvec 0.18.5",
  "blake2s_simd",
  "byteorder 1.4.3",
- "crossbeam",
+ "crossbeam 0.7.3",
  "ff 0.8.0",
  "futures 0.1.29",
  "futures-cpupool",
@@ -1043,7 +1043,7 @@ dependencies = [
  "chain",
  "common",
  "cosmrs",
- "crossbeam",
+ "crossbeam 0.8.2",
  "crypto",
  "db_common",
  "derive_more",
@@ -1180,7 +1180,7 @@ dependencies = [
  "cc",
  "cfg-if 1.0.0",
  "chrono",
- "crossbeam",
+ "crossbeam 0.8.2",
  "crossterm",
  "findshlibs",
  "fnv",
@@ -1370,8 +1370,22 @@ dependencies = [
  "crossbeam-channel 0.4.4",
  "crossbeam-deque 0.7.4",
  "crossbeam-epoch 0.8.2",
- "crossbeam-queue",
+ "crossbeam-queue 0.2.3",
  "crossbeam-utils 0.7.2",
+]
+
+[[package]]
+name = "crossbeam"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2801af0d36612ae591caa9568261fddce32ce6e08a7275ea334a06a4ad021a2c"
+dependencies = [
+ "cfg-if 1.0.0",
+ "crossbeam-channel 0.5.1",
+ "crossbeam-deque 0.8.1",
+ "crossbeam-epoch 0.9.5",
+ "crossbeam-queue 0.3.8",
+ "crossbeam-utils 0.8.8",
 ]
 
 [[package]]
@@ -1453,6 +1467,16 @@ dependencies = [
  "cfg-if 0.1.10",
  "crossbeam-utils 0.7.2",
  "maybe-uninit",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1cfb3ea8a53f37c40dea2c7bedcbd88bdfae54f5e2175d6ecaff1c988353add"
+dependencies = [
+ "cfg-if 1.0.0",
+ "crossbeam-utils 0.8.8",
 ]
 
 [[package]]
@@ -4342,7 +4366,7 @@ dependencies = [
  "coins_activation",
  "common",
  "crc32fast",
- "crossbeam",
+ "crossbeam 0.8.2",
  "crypto",
  "db_common",
  "derive_more",
