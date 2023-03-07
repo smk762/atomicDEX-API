@@ -58,6 +58,7 @@ impl BlockHeaderStorage {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn into_inner(self) -> Box<dyn BlockHeaderStorageOps> { self.inner }
 }
 
