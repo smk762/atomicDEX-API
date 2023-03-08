@@ -1,4 +1,4 @@
-name: fmt, check, lint
+name: Code format & lint
 on:
   push:
     branches:
@@ -33,8 +33,5 @@ jobs:
     - name: fmt check
       run: cargo fmt -- --check
 
-    - name: build check
-      run: cargo check
-
     - name: code lint
-      run: cargo clippy -- --D warnings
+      run: cargo clippy --profile ci -- --D warnings
