@@ -24,12 +24,6 @@ jobs:
         rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal --component rustfmt clippy
         rustup default ${{ matrix.rust }}
         
-    - name: Turn off debug assertations
-      run: |
-        echo """
-        [profile.dev]
-        debug = false" >> .cargo/config.toml
-
     - name: fmt check
       run: cargo fmt -- --check
 
