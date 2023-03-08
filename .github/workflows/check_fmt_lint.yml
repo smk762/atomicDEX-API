@@ -10,7 +10,7 @@ on:
       - dev
 
 jobs:
-  x86-checks:
+  fmt-and-x86-lint:
     timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     strategy:
@@ -27,5 +27,22 @@ jobs:
     - name: fmt check
       run: cargo fmt -- --check
 
-    - name: code lint
+    - name: x86 code lint
       run: cargo clippy --profile ci -- --D warnings
+
+  wasm-lint:
+    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        rust: [nightly-2022-10-29]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install toolchain
+      run: |
+        rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal --component rustfmt clippy
+        rustup default ${{ matrix.rust }}
+        
+    - name: wasm code lint
+      run: cargo clippy --target wasm32-unknown-unknown --profile ci -- --D warnings
