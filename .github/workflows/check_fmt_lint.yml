@@ -1,4 +1,4 @@
-name: Check, Fmt, Lint
+name: fmt, check, lint
 on:
   push:
     branches:
@@ -10,63 +10,38 @@ on:
       - dev
 
 jobs:
-  fmt:
-    timeout-minutes: 15
+  x86-checks:
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         rust: [nightly-2022-10-29]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - uses: actions-rs/toolchain@v1
       with:
         profile: minimal
         toolchain: ${{ matrix.rust }}
         override: true
         components: rustfmt
-    - uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: --all -- --check
+    - name: Install toolchain
+      run: |
+        rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal --component rustfmt clippy
+        rustup default ${{ matrix.rust }}
+        
+    - name: Turn off debug assertations
+      run: |
+        mkdir -p .cargo
+        echo """
+        [profile.dev]
+        debug = false" >> .cargo/config.toml
 
-  check:
-    needs: fmt
-    timeout-minutes: 15
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [nightly-2022-10-29]
-    steps:
-    - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: ${{ matrix.rust }}
-        override: true
-    - uses: actions-rs/cargo@v1
-      with:
-        command: check
+    - name: fmt check
+      run: cargo fmt -- --check
 
-  lint:
-    needs: check
-    timeout-minutes: 15
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [nightly-2022-10-29]
-    steps:
-    - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: ${{ matrix.rust }}
-        override: true
-        components: clippy
-    - name: Run cargo clippy
-      uses: actions-rs/cargo@v1
-      with:
-        command: clippy
-        args: -- -D warnings
+    - name: build check
+      run: cargo check
+
+    - name: code lint
+      run: cargo clippy -- --D warnings
