@@ -171,7 +171,6 @@ impl TendermintToken {
                 .await
                 .map_to_mm(WithdrawError::Transport)?;
 
-            let account_info = platform.my_account_info().await?;
             let timeout_height = current_block + TIMEOUT_HEIGHT_DELTA;
 
             let fee_amount_u64 = platform
@@ -195,6 +194,7 @@ impl TendermintToken {
 
             let fee = Fee::from_amount_and_gas(fee_amount, IBC_GAS_LIMIT_DEFAULT);
 
+            let account_info = platform.my_account_info().await?;
             let tx_raw = platform
                 .any_to_signed_raw_tx(account_info, msg_transfer, fee, timeout_height, memo.clone())
                 .map_to_mm(|e| WithdrawError::InternalError(e.to_string()))?;
@@ -648,7 +648,6 @@ impl MmCoin for TendermintToken {
                 .await
                 .map_to_mm(WithdrawError::Transport)?;
 
-            let account_info = platform.my_account_info().await?;
             let timeout_height = current_block + TIMEOUT_HEIGHT_DELTA;
 
             let fee_amount_u64 = platform
@@ -672,6 +671,7 @@ impl MmCoin for TendermintToken {
 
             let fee = Fee::from_amount_and_gas(fee_amount, GAS_LIMIT_DEFAULT);
 
+            let account_info = platform.my_account_info().await?;
             let tx_raw = platform
                 .any_to_signed_raw_tx(account_info, msg_send, fee, timeout_height, memo.clone())
                 .map_to_mm(|e| WithdrawError::InternalError(e.to_string()))?;

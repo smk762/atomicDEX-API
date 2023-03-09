@@ -570,7 +570,6 @@ impl TendermintCoin {
                 .await
                 .map_to_mm(WithdrawError::Transport)?;
 
-            let account_info = coin.my_account_info().await?;
             let timeout_height = current_block + TIMEOUT_HEIGHT_DELTA;
             // >> END TX SIMULATION FOR FEE CALCULATION
 
@@ -621,6 +620,7 @@ impl TendermintCoin {
             .to_any()
             .map_to_mm(|e| WithdrawError::InternalError(e.to_string()))?;
 
+            let account_info = coin.my_account_info().await?;
             let tx_raw = coin
                 .any_to_signed_raw_tx(account_info, msg_transfer, fee, timeout_height, memo.clone())
                 .map_to_mm(|e| WithdrawError::InternalError(e.to_string()))?;
@@ -876,10 +876,9 @@ impl TendermintCoin {
                 .gen_simulated_tx(account_info, msg.clone(), timeout_height, memo.clone())
                 .map_to_mm(|e| TendermintCoinRpcError::InternalError(format!("{}", e)))?;
 
-            let request = SimulateRequest { tx_bytes, tx: None };
             let request = AbciRequest::new(
                 Some(path.clone()),
-                request.encode_to_vec().clone(),
+                SimulateRequest { tx_bytes, tx: None }.encode_to_vec(),
                 ABCI_REQUEST_HEIGHT,
                 ABCI_REQUEST_PROVE,
             );
@@ -938,10 +937,10 @@ impl TendermintCoin {
             let tx_bytes = self
                 .gen_simulated_tx(account_info, msg.clone(), timeout_height, memo.clone())
                 .map_to_mm(|e| TendermintCoinRpcError::InternalError(format!("{}", e)))?;
-            let request = SimulateRequest { tx_bytes, tx: None };
+
             let request = AbciRequest::new(
                 Some(path.clone()),
-                request.encode_to_vec(),
+                SimulateRequest { tx_bytes, tx: None }.encode_to_vec(),
                 ABCI_REQUEST_HEIGHT,
                 ABCI_REQUEST_PROVE,
             );
@@ -1828,8 +1827,6 @@ impl MmCoin for TendermintCoin {
                 .await
                 .map_to_mm(WithdrawError::Transport)?;
 
-            let account_info = coin.my_account_info().await?;
-
             let timeout_height = current_block + TIMEOUT_HEIGHT_DELTA;
             // >> END TX SIMULATION FOR FEE CALCULATION
 
@@ -1879,6 +1876,7 @@ impl MmCoin for TendermintCoin {
             .to_any()
             .map_to_mm(|e| WithdrawError::InternalError(e.to_string()))?;
 
+            let account_info = coin.my_account_info().await?;
             let tx_raw = coin
                 .any_to_signed_raw_tx(account_info, msg_send, fee, timeout_height, memo.clone())
                 .map_to_mm(|e| WithdrawError::InternalError(e.to_string()))?;
