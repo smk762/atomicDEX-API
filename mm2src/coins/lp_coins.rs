@@ -1794,6 +1794,8 @@ pub enum WithdrawError {
     AddressMismatchError { my_address: String, from: String },
     #[display(fmt = "Contract type {} doesnt support 'withdraw_nft' yet", _0)]
     ContractTypeDoesntSupportNftWithdrawing(String),
+    #[display(fmt = "Action not allowed for coin: {}", _0)]
+    ActionNotAllowed(String),
 }
 
 impl HttpStatusCode for WithdrawError {
@@ -1815,6 +1817,7 @@ impl HttpStatusCode for WithdrawError {
             | WithdrawError::UnexpectedUserAction { .. }
             | WithdrawError::CoinDoesntSupportNftWithdraw { .. }
             | WithdrawError::AddressMismatchError { .. }
+            | WithdrawError::ActionNotAllowed(_)
             | WithdrawError::ContractTypeDoesntSupportNftWithdrawing(_) => StatusCode::BAD_REQUEST,
             WithdrawError::HwError(_) => StatusCode::GONE,
             #[cfg(target_arch = "wasm32")]
