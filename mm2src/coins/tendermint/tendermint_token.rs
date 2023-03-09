@@ -1,6 +1,7 @@
+//! Module containing implementation for Tendermint Tokens. They include native assets + IBC
+
 use super::ibc::transfer_v1::MsgTransfer;
 use super::ibc::IBC_GAS_LIMIT_DEFAULT;
-/// Module containing implementation for Tendermint Tokens. They include native assets + IBC
 use super::{TendermintCoin, TendermintFeeDetails, GAS_LIMIT_DEFAULT, MIN_TX_SATOSHIS, TIMEOUT_HEIGHT_DELTA,
             TX_DEFAULT_MEMO};
 use crate::rpc_command::tendermint::IBCWithdrawRequest;
