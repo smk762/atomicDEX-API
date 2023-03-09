@@ -23,7 +23,7 @@ jobs:
       run: |
         rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal --component rustfmt clippy
         rustup default ${{ matrix.rust }}
-        
+
     - name: fmt check
       run: cargo fmt -- --check
 
@@ -44,6 +44,6 @@ jobs:
         rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal --component rustfmt clippy
         rustup default ${{ matrix.rust }}
         rustup target add wasm32-unknown-unknown
-        
+
     - name: wasm code lint
       run: cargo clippy --target wasm32-unknown-unknown --profile ci -- --D warnings
