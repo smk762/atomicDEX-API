@@ -444,7 +444,7 @@ impl SwapsContext {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub async fn swap_db(&self) -> InitDbResult<SwapDbLocked<'_>> { Ok(self.swap_db.get_or_initialize().await?) }
+    pub async fn swap_db(&self) -> InitDbResult<SwapDbLocked<'_>> { self.swap_db.get_or_initialize().await }
 }
 
 #[derive(Debug, Deserialize)]
