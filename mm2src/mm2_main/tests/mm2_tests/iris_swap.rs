@@ -23,7 +23,7 @@ fn start_swap_operation() {
         ("IRIS-NIMDA", "RICK"),
         ("USDC-IBC-IRIS", "tBNB"),
     ];
-    block_on(trade_base_rel_iris(&pairs, 1, 2, 0.01));
+    block_on(trade_base_rel_iris(&pairs, 1, 2, 0.008));
 }
 
 pub async fn trade_base_rel_iris(
