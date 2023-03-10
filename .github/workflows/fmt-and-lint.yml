@@ -1,4 +1,4 @@
-name: CI
+name: Format and Lint
 on:
   push:
     branches:

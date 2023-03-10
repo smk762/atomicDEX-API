@@ -1,0 +1,101 @@
+name: Build and Upload
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+env:
+ BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+ MANUAL_MM_VERSION: true
+
+jobs:
+  linux-x86:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [nightly-2022-10-29]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install toolchain
+      run: |
+        rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal
+        rustup default ${{ matrix.rust }}
+
+    - name: Build
+      run: |
+        VERSION=$BRANCH_NAME"_$(git rev-parse --short=7 HEAD)-Linux-CI"
+        rm -f ./MM_VERSION
+        echo $VERSION > ./MM_VERSION
+        cargo build --bin mm2 --profile ci
+
+  mac-x86:
+    timeout-minutes: 30
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        rust: [nightly-2022-10-29]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install toolchain
+      run: |
+        rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal
+        rustup default ${{ matrix.rust }}
+
+    - name: Build
+      run: |
+        VERSION=$BRANCH_NAME"_$(git rev-parse --short=7 HEAD)-Mac-CI"
+        rm -f ./MM_VERSION
+        echo $VERSION > ./MM_VERSION
+        cargo build --bin mm2 --profile ci --target x86_64-apple-darwin
+
+  win-x86:
+    timeout-minutes: 30
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        rust: [nightly-2022-10-29]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install toolchain
+      run: |
+        rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal
+        rustup default ${{ matrix.rust }}
+
+    - name: Build
+      run: |
+        $VERSION=$Env:BRANCH_NAME+"_$(git rev-parse --short=7 HEAD)-Win-CI"
+        if (test-path "./MM_VERSION") {
+          remove-item "./MM_VERSION"
+        }
+        echo $VERSION > ./MM_VERSION
+        cargo build --bin mm2 --profile ci
+
+  wasm:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [nightly-2022-10-29]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install toolchain
+      run: |
+        rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal
+        rustup default ${{ matrix.rust }}
+        rustup target add wasm32-unknown-unknown
+
+    - name: Install wasm-pack
+      run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+    - name: Build
+      run: |
+        VERSION=$BRANCH_NAME"_$(git rev-parse --short=7 HEAD)-Linux-Wasm-CI"
+        rm -f ./MM_VERSION
+        echo $VERSION > ./MM_VERSION
+        wasm-pack build mm2src/mm2_bin_lib --target web --out-dir wasm_build/deps/pkg/
