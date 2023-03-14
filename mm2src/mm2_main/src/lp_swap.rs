@@ -1831,7 +1831,7 @@ mod lp_swap_tests {
         UtxoActivationParams {
             mode: UtxoRpcMode::Electrum {
                 servers: electrums
-                    .into_iter()
+                    .iter()
                     .map(|url| ElectrumRpcRequest {
                         url: url.to_string(),
                         protocol: Default::default(),

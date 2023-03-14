@@ -1935,6 +1935,7 @@ impl<'a> MakerOrderBuilder<'a> {
     #[cfg(test)]
     fn build_unchecked(self) -> MakerOrder {
         let created_at = now_ms();
+        #[allow(clippy::or_fun_call)]
         MakerOrder {
             base: self.base_coin.ticker().to_owned(),
             rel: self.rel_coin.ticker().to_owned(),

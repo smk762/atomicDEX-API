@@ -268,9 +268,9 @@ fn test_tendermint_tx_history() {
         true,
     ));
 
-    if let Err(_) = block_on(mm.wait_for_log(60., |log| log.contains(TX_FINISHED_LOG))) {
+    if block_on(mm.wait_for_log(60., |log| log.contains(TX_FINISHED_LOG))).is_err() {
         println!("{}", mm.log_as_utf8().unwrap());
-        assert!(false, "Tx history didn't finish which is not expected");
+        panic!("Tx history didn't finish which is not expected");
     }
 
     // testing IRIS-TEST history

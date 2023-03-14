@@ -49,8 +49,7 @@ pub(crate) mod test_utils {
 
     fn to_test_case(val: &serde_json::Value) -> TestCase {
         let o = val.get("output");
-        let output: &serde_json::Value;
-        output = match o {
+        let output = match o {
             Some(v) => v,
             None => &serde_json::Value::Null,
         };
@@ -65,7 +64,7 @@ pub(crate) mod test_utils {
         let vals: &Vec<serde_json::Value> = fixtures.get(name).unwrap().as_array().unwrap();
         let mut cases = vec![];
         for i in vals {
-            cases.push(to_test_case(&i));
+            cases.push(to_test_case(i));
         }
         cases
     }

@@ -131,13 +131,12 @@ mod tests {
         let data: Vec<u8> = vec![u8x];
         let sequence_number = x;
 
-        let m = GossipsubMessage {
+        GossipsubMessage {
             source,
             data,
             sequence_number,
             topics,
-        };
-        m
+        }
     }
 
     #[test]
@@ -160,8 +159,8 @@ mod tests {
     fn test_put_get_one() {
         let mut mc = MessageCache::new_default(10, 15);
 
-        let topic1_hash = Topic::new("topic1".into()).no_hash().clone();
-        let topic2_hash = Topic::new("topic2".into()).no_hash().clone();
+        let topic1_hash = Topic::new("topic1".into()).no_hash();
+        let topic2_hash = Topic::new("topic2".into()).no_hash();
 
         let m = gen_testm(10, vec![topic1_hash, topic2_hash]);
 
@@ -171,13 +170,12 @@ mod tests {
 
         let fetched = mc.get(&(mc.msg_id)(&m));
 
-        assert_eq!(fetched.is_none(), false);
-        assert_eq!(fetched.is_some(), true);
+        assert!(fetched.is_some());
 
         // Make sure it is the same fetched message
         match fetched {
             Some(x) => assert_eq!(*x, m),
-            _ => assert!(false),
+            _ => panic!("expected {:?}", m),
         }
     }
 

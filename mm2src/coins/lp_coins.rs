@@ -19,6 +19,13 @@
 //  marketmaker
 //
 
+// `mockable` implementation uses these
+#![allow(
+    clippy::forget_ref,
+    clippy::forget_copy,
+    clippy::swap_ptr_to_ref,
+    clippy::forget_non_drop
+)]
 #![allow(uncommon_codepoints)]
 #![feature(integer_atomics)]
 #![feature(async_closure)]
