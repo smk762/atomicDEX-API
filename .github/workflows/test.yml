@@ -94,6 +94,8 @@ jobs:
         # Check the file content
         type $config
 
+        $Env:ProgramFiles\Docker\Docker\DockerCli.exe -SwitchDaemon .
+
         Restart-Service docker
         Get-Service docker
 
