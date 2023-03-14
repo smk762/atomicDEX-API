@@ -117,6 +117,9 @@ mod tests {
     }
 
     #[test]
+    // Since we are using shared CI runners,
+    // this test may fail due to rate limiting from Github.
+    #[cfg(not(profile = "ci"))]
     fn test_metadata_list_and_json_deserialization() {
         const REPO_OWNER: &str = "KomodoPlatform";
         const REPO_NAME: &str = "chain-registry";
