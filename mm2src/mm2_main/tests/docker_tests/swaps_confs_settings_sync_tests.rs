@@ -660,6 +660,7 @@ fn test_sell_taker_should_use_maker_confs_and_notas_for_taker_payment_if_maker_r
 }
 
 #[test]
+#[ignore] // https://github.com/KomodoPlatform/atomicDEX-API/issues/1712
 fn test_sell_taker_should_not_use_maker_confs_and_notas_for_taker_payment_if_maker_requires_more() {
     let maker_settings = OrderConfirmationsSettings {
         base_confs: 1,
