@@ -10,7 +10,7 @@ on:
       - dev
 
 jobs:
-  fmt-and-x86-lint:
+  fmt-and-x86-64-lint:
     timeout-minutes: 25
     runs-on: ${{ matrix.os }}
     strategy:
@@ -27,7 +27,7 @@ jobs:
     - name: fmt check
       run: cargo fmt -- --check
 
-    - name: x86 code lint
+    - name: x86-64 code lint
       run: cargo clippy --profile ci -- --D warnings
 
   wasm-lint:

@@ -28,6 +28,12 @@ impl RepositoryOperations for GithubClient {
         .await
         .map_err(|e| GitControllerError::HttpError(e.to_string()))?;
 
+        #[cfg(test)]
+        #[allow(unused_must_use)]
+        {
+            dbg!(serde_json::from_slice::<serde_json::Value>(&data_buffer));
+        }
+
         Ok(
             serde_json::from_slice(&data_buffer)
                 .map_err(|e| GitControllerError::DeserializationError(e.to_string()))?,
@@ -52,6 +58,12 @@ impl RepositoryOperations for GithubClient {
         )])
         .await
         .map_err(|e| GitControllerError::HttpError(e.to_string()))?;
+
+        #[cfg(test)]
+        #[allow(unused_must_use)]
+        {
+            dbg!(serde_json::from_slice::<serde_json::Value>(&data_buffer));
+        }
 
         Ok(
             serde_json::from_slice(&data_buffer)

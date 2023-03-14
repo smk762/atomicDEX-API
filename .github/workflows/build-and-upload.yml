@@ -14,7 +14,7 @@ env:
  MANUAL_MM_VERSION: true
 
 jobs:
-  linux-x86:
+  linux-x86-64:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     strategy:
@@ -34,7 +34,7 @@ jobs:
         echo $VERSION > ./MM_VERSION
         cargo build --bin mm2 --profile ci
 
-  mac-x86:
+  mac-x86-64:
     timeout-minutes: 30
     runs-on: macos-latest
     strategy:
@@ -54,7 +54,7 @@ jobs:
         echo $VERSION > ./MM_VERSION
         cargo build --bin mm2 --profile ci --target x86_64-apple-darwin
 
-  win-x86:
+  win-x86-64:
     timeout-minutes: 30
     runs-on: windows-latest
     strategy:

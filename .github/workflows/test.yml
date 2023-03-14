@@ -10,7 +10,7 @@ on:
       - dev
 
 jobs:
-  linux-x86:
+  linux-x86-64:
     timeout-minutes: 90
     runs-on: ubuntu-latest
     env:
@@ -34,7 +34,7 @@ jobs:
         # wget -O - https://raw.githubusercontent.com/KomodoPlatform/komodo/master/zcutil/fetch-params-alt.sh | bash
         cargo test --all --profile ci
 
-  mac-x86:
+  mac-x86-64:
     timeout-minutes: 90
     runs-on: macos-latest
     env:
@@ -58,7 +58,7 @@ jobs:
         # wget -O - https://raw.githubusercontent.com/KomodoPlatform/komodo/master/zcutil/fetch-params-alt.sh | bash
         cargo test --all --target x86_64-apple-darwin --profile ci
 
-  win-x86:
+  win-x86-64:
     timeout-minutes: 90
     runs-on: windows-latest
     env:
