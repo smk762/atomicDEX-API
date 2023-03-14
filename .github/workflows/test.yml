@@ -94,10 +94,10 @@ jobs:
         # Check the file content
         type $config
 
-        $Env:ProgramFiles\Docker\Docker\DockerCli.exe -SwitchDaemon .
-
         Restart-Service docker
         Get-Service docker
+
+        C:\ProgramFiles\Docker\Docker\DockerCli.exe -SwitchDaemon .
 
         cargo test --all --profile ci
 
