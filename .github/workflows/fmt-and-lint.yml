@@ -10,19 +10,18 @@ on:
       - dev
 
 jobs:
-  fmt-and-x86-64-lint:
+  x86-64:
     timeout-minutes: 25
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [nightly-2022-10-29]
     steps:
     - uses: actions/checkout@v3
     - name: Install toolchain
       run: |
-        rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal --component rustfmt clippy
-        rustup default ${{ matrix.rust }}
+        rustup toolchain install nightly-2022-10-29 --no-self-update --profile=minimal --component rustfmt clippy
+        rustup default nightly-2022-10-29
 
     - name: fmt check
       run: cargo fmt -- --check
@@ -30,19 +29,18 @@ jobs:
     - name: x86-64 code lint
       run: cargo clippy --profile ci -- --D warnings
 
-  wasm-lint:
+  wasm:
     timeout-minutes: 25
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest]
-        rust: [nightly-2022-10-29]
     steps:
     - uses: actions/checkout@v3
     - name: Install toolchain
       run: |
-        rustup toolchain install ${{ matrix.rust }} --no-self-update --profile=minimal --component rustfmt clippy
-        rustup default ${{ matrix.rust }}
+        rustup toolchain install nightly-2022-10-29 --no-self-update --profile=minimal --component rustfmt clippy
+        rustup default nightly-2022-10-29
         rustup target add wasm32-unknown-unknown
 
     - name: wasm code lint
