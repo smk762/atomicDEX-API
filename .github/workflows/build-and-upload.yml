@@ -124,8 +124,6 @@ jobs:
   android-aarch64:
     timeout-minutes: 30
     runs-on: ubuntu-latest
-    env:
-      CROSS_CONTAINER_OPTS: '--platform linux/amd64'
     strategy:
       matrix:
         rust: [nightly-2022-10-29]
@@ -152,8 +150,6 @@ jobs:
   android-armv7:
     timeout-minutes: 30
     runs-on: ubuntu-latest
-    env:
-      CROSS_CONTAINER_OPTS: '--platform linux/amd64'
     strategy:
       matrix:
         rust: [nightly-2022-10-29]
