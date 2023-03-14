@@ -124,10 +124,10 @@ pub const MORTY_ELECTRUM_ADDRS: &[&str] = &[
 ];
 pub const ZOMBIE_TICKER: &str = "ZOMBIE";
 pub const ARRR: &str = "ARRR";
-pub const ZOMBIE_ELECTRUMS: &[&str] = &["zombie.sirseven.me:10033"];
-pub const ZOMBIE_LIGHTWALLETD_URLS: &[&str] = &["http://zombie.sirseven.me:443"];
-pub const PIRATE_ELECTRUMS: &[&str] = &["pirate.sirseven.me:10032"];
-pub const PIRATE_LIGHTWALLETD_URLS: &[&str] = &["http://pirate.sirseven.me:443"];
+pub const ZOMBIE_ELECTRUMS: &[&str] = &["zombie.dragonhound.info:10033"];
+pub const ZOMBIE_LIGHTWALLETD_URLS: &[&str] = &["http://zombie.dragonhound.info:443"];
+pub const PIRATE_ELECTRUMS: &[&str] = &["pirate.dragonhound.info:10032"];
+pub const PIRATE_LIGHTWALLETD_URLS: &[&str] = &["http://pirate.dragonhound.info:443"];
 pub const DEFAULT_RPC_PASSWORD: &str = "pass";
 pub const QRC20_ELECTRUMS: &[&str] = &[
     "electrum1.cipig.net:10071",
@@ -2206,6 +2206,33 @@ pub async fn withdraw_v1(mm: &MarketMakerIt, coin: &str, to: &str, amount: &str)
         .unwrap();
     assert_eq!(request.0, StatusCode::OK, "'withdraw' failed: {}", request.1);
     json::from_str(&request.1).unwrap()
+}
+
+pub async fn ibc_withdraw(
+    mm: &MarketMakerIt,
+    source_channel: &str,
+    coin: &str,
+    to: &str,
+    amount: &str,
+) -> TransactionDetails {
+    let request = mm
+        .rpc(&json!({
+            "userpass": mm.userpass,
+            "method": "ibc_withdraw",
+            "mmrpc": "2.0",
+            "params": {
+                "ibc_source_channel": source_channel,
+                "coin": coin,
+                "to": to,
+                "amount": amount
+            }
+        }))
+        .await
+        .unwrap();
+    assert_eq!(request.0, StatusCode::OK, "'ibc_withdraw' failed: {}", request.1);
+
+    let json: Json = json::from_str(&request.1).unwrap();
+    json::from_value(json["result"].clone()).unwrap()
 }
 
 pub async fn withdraw_status(mm: &MarketMakerIt, task_id: u64) -> Json {
