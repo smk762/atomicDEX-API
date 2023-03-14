@@ -9,6 +9,9 @@ on:
       - main
       - dev
 
+env:
+ FROM_SHARED_RUNNER: true
+
 jobs:
   linux-x86-64:
     timeout-minutes: 90
