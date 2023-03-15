@@ -31,6 +31,18 @@ jobs:
         echo $VERSION > ./MM_VERSION
         cargo build --bin mm2 --profile ci
 
+    - name: Login to dockerhub
+      if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
+      run: docker login --username ${{ secrets.DOCKER_HUB_USERNAME }} --password ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}  docker.io
+
+    - name: Build and push container image
+      if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
+      run: |
+        CONTAINER_TAG="dev-$(git rev-parse --short=7 HEAD)"
+        docker build -t komodoofficial/atomicdexapi:"$CONTAINER_TAG" -t komodoofficial/atomicdexapi:dev-latest -f Dockerfile.dev-release .
+        docker push komodoofficial/atomicdexapi:"$CONTAINER_TAG"
+        docker push komodoofficial/atomicdexapi:dev-latest
+
   mac-x86-64:
     timeout-minutes: 30
     runs-on: macos-latest
@@ -151,3 +163,29 @@ jobs:
 
         export PATH=$PATH:/android-ndk/bin
         CC_armv7_linux_androideabi=armv7a-linux-androideabi21-clang CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=armv7a-linux-androideabi21-clang cargo rustc --target=armv7-linux-androideabi --lib --profile ci --crate-type=staticlib --package mm2_bin_lib
+
+  deployment-commitment:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
+    needs: linux-x86-64
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Activate SSH
+        uses: webfactory/ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.ATOMICDEX_DEPLOYMENTS_SSH }}
+
+      - name: Commitment
+        run: |
+          git clone git@github.com:KomodoPlatform/atomicdex-deployments.git
+          if [ -d "atomicdex-deployments/atomicDEX-API" ]; then
+            cd atomicdex-deployments/atomicDEX-API
+            sed -i "1s/^.*$/${GITHUB_SHA::9}/" .commit
+            git config --global user.email "linuxci@komodoplatform.com"
+            git config --global user.name "linuxci"
+            git add .commit
+            git commit -m "[atomicDEX-API] ${GITHUB_SHA::9} is committed for git & container registry"
+            git push
+          fi
