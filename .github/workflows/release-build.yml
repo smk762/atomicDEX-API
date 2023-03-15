@@ -1,13 +1,8 @@
-name: Build and Upload
+name: Release builds
 on:
   push:
     branches:
       - main
-      - dev
-  pull_request:
-    branches:
-      - main
-      - dev
 
 env:
  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
@@ -15,7 +10,7 @@ env:
 
 jobs:
   linux-x86-64:
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -26,25 +21,23 @@ jobs:
 
     - name: Build
       run: |
-        VERSION=$BRANCH_NAME"_$(git rev-parse --short=7 HEAD)-Linux-CI"
+        VERSION=$(git rev-parse --short=7 HEAD)
         rm -f ./MM_VERSION
         echo $VERSION > ./MM_VERSION
-        cargo build --bin mm2 --profile ci
+        cargo build --bin mm2 --release
 
     - name: Login to dockerhub
-      if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
       run: docker login --username ${{ secrets.DOCKER_HUB_USERNAME }} --password ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}  docker.io
 
     - name: Build and push container image
-      if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
       run: |
-        CONTAINER_TAG="dev-$(git rev-parse --short=7 HEAD)"
-        docker build -t komodoofficial/atomicdexapi:"$CONTAINER_TAG" -t komodoofficial/atomicdexapi:dev-latest -f Dockerfile.dev-release .
+        export CONTAINER_TAG=$(./target/release/mm2 --version | awk '{print $3}')
+        docker build -t komodoofficial/atomicdexapi:"$CONTAINER_TAG" -t komodoofficial/atomicdexapi:main-latest -f Dockerfile.release .
         docker push komodoofficial/atomicdexapi:"$CONTAINER_TAG"
-        docker push komodoofficial/atomicdexapi:dev-latest
+        docker push komodoofficial/atomicdexapi:main-latest
 
   mac-x86-64:
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v3
@@ -55,13 +48,13 @@ jobs:
 
     - name: Build
       run: |
-        VERSION=$BRANCH_NAME"_$(git rev-parse --short=7 HEAD)-Mac-CI"
+        VERSION=$(git rev-parse --short=7 HEAD)
         rm -f ./MM_VERSION
         echo $VERSION > ./MM_VERSION
-        cargo build --bin mm2 --profile ci --target x86_64-apple-darwin
+        cargo build --bin mm2 --release --target x86_64-apple-darwin
 
   win-x86-64:
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v3
@@ -72,15 +65,15 @@ jobs:
 
     - name: Build
       run: |
-        $VERSION=$Env:BRANCH_NAME+"_$(git rev-parse --short=7 HEAD)-Win-CI"
+        $VERSION="$(git rev-parse --short=7 HEAD)"
         if (test-path "./MM_VERSION") {
           remove-item "./MM_VERSION"
         }
         echo $VERSION > ./MM_VERSION
-        cargo build --bin mm2 --profile ci
+        cargo build --bin mm2 --release
 
   wasm:
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -95,13 +88,13 @@ jobs:
 
     - name: Build
       run: |
-        VERSION=$BRANCH_NAME"_$(git rev-parse --short=7 HEAD)-Linux-Wasm-CI"
+        VERSION=$(git rev-parse --short=7 HEAD)
         rm -f ./MM_VERSION
         echo $VERSION > ./MM_VERSION
-        wasm-pack build mm2src/mm2_bin_lib --target web --out-dir wasm_build/deps/pkg/
+        wasm-pack build --release mm2src/mm2_bin_lib --target web --out-dir wasm_build/deps/pkg/
 
   ios-aarch64:
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v3
@@ -113,13 +106,13 @@ jobs:
 
     - name: Build
       run: |
-        VERSION=$BRANCH_NAME"_$(git rev-parse --short=7 HEAD)-ios-aarch64-CI"
+        VERSION=$(git rev-parse --short=7 HEAD)
         rm -f ./MM_VERSION
         echo $VERSION > ./MM_VERSION
-        cargo rustc --target aarch64-apple-ios --lib --profile ci --package mm2_bin_lib --crate-type=staticlib
+        cargo rustc --target aarch64-apple-ios --lib --release --package mm2_bin_lib --crate-type=staticlib
 
   android-aarch64:
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -134,15 +127,15 @@ jobs:
 
     - name: Build
       run: |
-        VERSION=$BRANCH_NAME"_$(git rev-parse --short=7 HEAD)-android-aarch64-CI"
+        VERSION=$(git rev-parse --short=7 HEAD)
         rm -f ./MM_VERSION
         echo $VERSION > ./MM_VERSION
 
         export PATH=$PATH:/android-ndk/bin
-        CC_aarch64_linux_android=aarch64-linux-android21-clang CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=aarch64-linux-android21-clang cargo rustc --target=aarch64-linux-android --lib --profile ci --crate-type=staticlib --package mm2_bin_lib
+        CC_aarch64_linux_android=aarch64-linux-android21-clang CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=aarch64-linux-android21-clang cargo rustc --target=aarch64-linux-android --lib --release --crate-type=staticlib --package mm2_bin_lib
 
   android-armv7:
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
@@ -157,35 +150,9 @@ jobs:
 
     - name: Build
       run: |
-        VERSION=$BRANCH_NAME"_$(git rev-parse --short=7 HEAD)-android-armv7-CI"
+        VERSION=$(git rev-parse --short=7 HEAD)
         rm -f ./MM_VERSION
         echo $VERSION > ./MM_VERSION
 
         export PATH=$PATH:/android-ndk/bin
-        CC_armv7_linux_androideabi=armv7a-linux-androideabi21-clang CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=armv7a-linux-androideabi21-clang cargo rustc --target=armv7-linux-androideabi --lib --profile ci --crate-type=staticlib --package mm2_bin_lib
-
-  deployment-commitment:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
-    needs: linux-x86-64
-    timeout-minutes: 15
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-
-      - name: Activate SSH
-        uses: webfactory/ssh-agent@v0.5.4
-        with:
-          ssh-private-key: ${{ secrets.ATOMICDEX_DEPLOYMENTS_SSH }}
-
-      - name: Commitment
-        run: |
-          git clone git@github.com:KomodoPlatform/atomicdex-deployments.git
-          if [ -d "atomicdex-deployments/atomicDEX-API" ]; then
-            cd atomicdex-deployments/atomicDEX-API
-            sed -i "1s/^.*$/${GITHUB_SHA::9}/" .commit
-            git config --global user.email "linuxci@komodoplatform.com"
-            git config --global user.name "linuxci"
-            git add .commit
-            git commit -m "[atomicDEX-API] ${GITHUB_SHA::9} is committed for git & container registry"
-            git push
-          fi
+        CC_armv7_linux_androideabi=armv7a-linux-androideabi21-clang CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=armv7a-linux-androideabi21-clang cargo rustc --target=armv7-linux-androideabi --lib --release --crate-type=staticlib --package mm2_bin_lib
