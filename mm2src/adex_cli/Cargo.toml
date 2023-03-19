@@ -1,0 +1,21 @@
+[package]
+name = "adex"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "4.1", features = ["derive"] }
+common = { path = "../common" }
+derive_more = "0.99"
+fork = "0.1"
+inquire = "0.6"
+log = "0.4"
+log4rs = { version = "1.0", default-features = false, features = ["console_appender", "pattern_encoder"] }
+serde = "1.0"
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+sysinfo = "0.28"
+tokio = { version = "1.20" }
+hyper = { version = "0.14", features = ["http2", "client", "runtime", "tcp"] }
+hyper-tls = "0.5"
