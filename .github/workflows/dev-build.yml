@@ -29,6 +29,20 @@ jobs:
         echo $VERSION > ./MM_VERSION
         cargo build --bin mm2 --profile ci
 
+
+    - name: Activate SSH
+      uses: webfactory/ssh-agent@v0.5.4
+      with:
+        ssh-private-key: ${{ secrets.FILE_SERVER_SSH }}
+
+    - name: Upload build output
+      run: |
+        NAME="mm2_$(git rev-parse --short=7 HEAD)-Linux-CI.zip"
+        zip $NAME target/ci/mm2 -j
+        mkdir $BRANCH_NAME
+        mv $NAME ./$BRANCH_NAME/
+        scp -r ${{ secrets.FILE_SERVER_SCP }}  ./$BRANCH_NAME
+
     - name: Login to dockerhub
       if: github.event_name != 'pull_request'
       run: docker login --username ${{ secrets.DOCKER_HUB_USERNAME }} --password ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}  docker.io
