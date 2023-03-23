@@ -9,7 +9,6 @@ edition = "2021"
 clap = { version = "4.1", features = ["derive"] }
 common = { path = "../common" }
 derive_more = "0.99"
-fork = "0.1"
 inquire = "0.6"
 log = "0.4"
 log4rs = { version = "1.0", default-features = false, features = ["console_appender", "pattern_encoder"] }
@@ -19,3 +18,9 @@ sysinfo = "0.28"
 tokio = { version = "1.20" }
 hyper = { version = "0.14", features = ["http2", "client", "runtime", "tcp"] }
 hyper-tls = "0.5"
+
+[target.'cfg(not(windows))'.dependencies]
+fork = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+create_process_w = { version = "0.1.0", package = "CreateProcessW" }

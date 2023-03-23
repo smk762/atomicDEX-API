@@ -1,12 +1,12 @@
 ## Unreleased - 2023-##-##
 
-### **Features:**
+### Features:
 
 - `adex` command line utility was introduced that supplies commands: `init`, `start`, `stop`, `status` [#1682](https://github.com/KomodoPlatform/atomicDEX-API/issues/1682) 
 
 ## v1.0.1-beta - 2023-03-17
 
-### **Features:**
+### Features:
 
 - NFT integration `WIP` [#900](https://github.com/KomodoPlatform/atomicDEX-API/issues/900)
   - NFT integration PoC added. Includes ERC721 support for ETH and BSC [#1652](https://github.com/KomodoPlatform/atomicDEX-API/pull/1652)
@@ -26,7 +26,7 @@
     - If an invoice payment failed, retring paying the same invoice would cause the payment to not be updated to successful in the DB even if it were successful. A method to update the payment in the DB was added to fix this.
 - `mm2_git` crate was added to provide an abstraction layer on Git for doing query/parse operations over the repositories [#1636](https://github.com/KomodoPlatform/atomicDEX-API/pull/1636)
 
-### **Enhancements/Fixes:**
+### Enhancements/Fixes:
 
 - IndexedDB Cursor can now iterate over the items step-by-step [#1678](https://github.com/KomodoPlatform/atomicDEX-API/pull/1678)
 - Uuid lib was update from v0.7.4 to v1.2.2 in [#1655](https://github.com/KomodoPlatform/atomicDEX-API/pull/1655)
@@ -42,7 +42,7 @@
 
 ## v1.0.0-beta - 2023-03-08
 
-### **Features:**
+### Features:
 
 - ARRR integration [#927](https://github.com/KomodoPlatform/atomicDEX-API/issues/927):
   - Zcoin native mode support was added [#1438](https://github.com/KomodoPlatform/atomicDEX-API/pull/1438)
@@ -95,7 +95,7 @@
   - Extract address's public key using `eth_singTypedDataV4` [#1674](https://github.com/KomodoPlatform/atomicDEX-API/pull/1674)
   - Perform swaps with coins activated with MetaMask [#1674](https://github.com/KomodoPlatform/atomicDEX-API/pull/1674)
   
-### **Enhancements/Fixes:**
+### Enhancements/Fixes:
 
 - Update `rust-web3` crate [#1674](https://github.com/KomodoPlatform/atomicDEX-API/pull/1674)
 - Custom enum from stringify derive macro to derive From implementations for enums  [#1502](https://github.com/KomodoPlatform/atomicDEX-API/pull/1502)
