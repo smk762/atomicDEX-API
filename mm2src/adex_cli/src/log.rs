@@ -4,7 +4,7 @@ use log4rs::{append::console::ConsoleAppender,
              encode::pattern::PatternEncoder,
              Config};
 
-const REDUCED_LOG_FORMAT: &str = "{l}: {m}{n}";
+const REDUCED_LOG_FORMAT: &str = "{m}{n}";
 
 pub fn init_logging() {
     let stdout = ConsoleAppender::builder()

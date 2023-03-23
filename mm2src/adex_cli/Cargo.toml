@@ -23,4 +23,4 @@ hyper-tls = "0.5"
 fork = "0.1"
 
 [target.'cfg(windows)'.dependencies]
-create_process_w = { version = "0.1.0", package = "CreateProcessW" }
+winapi = { version = "0.3.3", features = ["processthreadsapi", "winnt"] }
