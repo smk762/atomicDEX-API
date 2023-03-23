@@ -30,6 +30,7 @@
 - `OperationFailure::Other` error was expanded. New error variants were matched with `HwRpcError`, so error type will be `HwError`, not `InternalError` [#1719](https://github.com/KomodoPlatform/atomicDEX-API/pull/1719)
 - RPC calls for evm chains was reduced in `wait_for_confirmations` function in [#1724](https://github.com/KomodoPlatform/atomicDEX-API/pull/1724)
 - A possible endless loop in evm `wait_for_htlc_tx_spend` was fixed in [#1724](https://github.com/KomodoPlatform/atomicDEX-API/pull/1724)
+- Wait time for taker fee validation was increased from 30 to 60 seconds in [#1730](https://github.com/KomodoPlatform/atomicDEX-API/pull/1730) to give the fee tx more time to appear in most nodes mempools.
 
 
 ## v1.0.0-beta - 2023-03-08
