@@ -1,7 +1,6 @@
 use common::log::{error, info};
 use derive_more::Display;
-use hyper::{body::Bytes, client::Client, Uri};
-use hyper_tls::HttpsConnector;
+use mm2_net::transport::slurp_url;
 
 use super::helpers::rewrite_data_file;
 
@@ -21,7 +20,11 @@ pub async fn init_coins(coins_file: &str) -> Result<(), ()> {
         CoinSet::Empty => EMPTY_COIN_SET_DATA,
         CoinSet::Full => {
             info!("Getting coin set from: {FULL_COIN_SET_ADDRESS}");
-            get_coins_from_remote(FULL_COIN_SET_ADDRESS).await?.to_vec()
+            let (_status_code, _headers, data) = slurp_url(FULL_COIN_SET_ADDRESS).await.map_err(|error| {
+                error!("Failed to get coin set from: {FULL_COIN_SET_ADDRESS}, error: {error}");
+                ()
+            })?;
+            data
         },
     };
 
@@ -39,17 +42,5 @@ fn inquire_coin_set(coins_file: &str) -> Result<CoinSet, ()> {
     .prompt()
     .map_err(|error| {
         error!("Failed to select coin_set: {error}");
-    })
-}
-
-async fn get_coins_from_remote(address: &'static str) -> Result<Bytes, ()> {
-    let connector = HttpsConnector::new();
-    let client = Client::builder().build::<_, hyper::Body>(connector);
-    let coins_data = client.get(Uri::from_static(address)).await.map_err(|error| {
-        error!("Failed to get coins from {address}: {error}");
-    })?;
-
-    hyper::body::to_bytes(coins_data).await.map_err(|error| {
-        error!("Failed to get bytes from response: {error}");
     })
 }
