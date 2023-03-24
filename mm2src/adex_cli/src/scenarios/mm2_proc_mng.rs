@@ -87,7 +87,7 @@ pub fn start_process_impl(mm2_binary: PathBuf) {
 
     match daemon(true, true) {
         Ok(Fork::Child) => {
-            command.output().expect("failed to execute process");
+            command.output().expect("Failed to execute process");
         },
         Ok(Fork::Parent(pid)) => {
             info!("Successfully started: {program:?}, forked pid: {pid}");
@@ -98,16 +98,17 @@ pub fn start_process_impl(mm2_binary: PathBuf) {
 
 #[cfg(windows)]
 pub fn start_process_impl(mm2_binary: PathBuf) {
-    let program = mm2_binary.to_str();
-    if program.is_none() {
+    let Some(program) = mm2_binary.to_str() else {
         error!("Failed to cast mm2_binary to &str");
         return;
-    }
-    let program = CString::new(program.unwrap());
-    if let Err(error) = program {
-        error!("Failed to construct CString program path: {error}");
-        return;
-    }
+    };
+    let program = match CString::new(program) {
+        Ok(program) => program,
+        Err(error) => {
+            error!("Failed to construct CString program path: {error}");
+            return;
+        },
+    };
 
     let mut startup_info: STARTUPINFOA = unsafe { mem::zeroed() };
     startup_info.cb = size_of::<STARTUPINFOA>() as u32;
@@ -116,23 +117,21 @@ pub fn start_process_impl(mm2_binary: PathBuf) {
     let result = unsafe {
         CreateProcessA(
             null(),
-            program.unwrap().into_raw() as *mut i8,
+            program.into_raw() as *mut i8,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             0,
             0,
             std::ptr::null_mut(),
             std::ptr::null(),
-            &mut startup_info as &mut STARTUPINFOA,
-            &mut process_info as *mut PROCESS_INFORMATION,
+            &mut startup_info,
+            &mut process_info,
         )
     };
 
     match result {
         0 => error!("Failed to start: {MM2_BINARY}"),
-        _ => {
-            info!("Successfully started: {MM2_BINARY}");
-        },
+        _ => info!("Successfully started: {MM2_BINARY}"),
     }
 }
 

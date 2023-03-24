@@ -22,10 +22,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "adex"
+name = "adex-cli"
 version = "0.1.0"
 dependencies = [
- "clap 4.1.13",
+ "clap",
  "common",
  "derive_more",
  "env_logger 0.7.1",
@@ -162,9 +162,9 @@ dependencies = [
 
 [[package]]
 name = "ansi_term"
-version = "0.11.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee49baf6cb617b853aa8d93bf420db2383fab46d314482ca2803b40d5fde979b"
+checksum = "d52a9bb7ec0cf484c551830a7ce27bd20d67eac647e1befb56b0be4ee39a55d2"
 dependencies = [
  "winapi",
 ]
@@ -329,7 +329,7 @@ version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9b39be18770d11421cdb1b9947a45dd3f37e93092cbf377614828a319d5fee8"
 dependencies = [
- "hermit-abi 0.1.14",
+ "hermit-abi",
  "libc",
  "winapi",
 ]
@@ -994,53 +994,17 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "2.33.3"
+version = "2.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37e58ac78573c40708d45522f0d80fa2f01cc4f9b4e2bf749807255454312002"
+checksum = "a0610544180c38b88101fecf2dd634b174a62eef6946f84dfc6a7127512b381c"
 dependencies = [
  "ansi_term",
  "atty",
  "bitflags",
- "strsim 0.8.0",
+ "strsim",
  "textwrap",
  "unicode-width",
  "vec_map",
-]
-
-[[package]]
-name = "clap"
-version = "4.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c911b090850d79fc64fe9ea01e28e465f65e821e08813ced95bced72f7a8a9b"
-dependencies = [
- "bitflags",
- "clap_derive",
- "clap_lex",
- "is-terminal",
- "once_cell",
- "strsim 0.10.0",
- "termcolor",
-]
-
-[[package]]
-name = "clap_derive"
-version = "4.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a932373bab67b984c790ddf2c9ca295d8e3af3b7ef92de5a5bacdccdee4b09b"
-dependencies = [
- "heck",
- "proc-macro2 1.0.53",
- "quote 1.0.26",
- "syn 2.0.8",
-]
-
-[[package]]
-name = "clap_lex"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "033f6b7a4acb1f358c742aaca805c939ee73b4c6209ae4318ec7aca81c42e646"
-dependencies = [
- "os_str_bytes",
 ]
 
 [[package]]
@@ -2895,12 +2859,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hermit-abi"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fed44880c466736ef9a5c5b5facefb5ed0785676d0c02d612db14e54f0d84286"
-
-[[package]]
 name = "hex"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3336,18 +3294,6 @@ name = "ipnet"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47be2f14c678be2fdcab04ab1171db51b2762ce6f0a8ee87c8dd4a04ed216135"
-
-[[package]]
-name = "is-terminal"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8687c819457e979cc940d09cb16e42a1bf70aa6b60a549de6d3a62a0ee90c69e"
-dependencies = [
- "hermit-abi 0.3.1",
- "io-lifetimes",
- "rustix",
- "windows-sys 0.45.0",
-]
 
 [[package]]
 name = "itertools"
@@ -4896,7 +4842,7 @@ version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19e64526ebdee182341572e50e9ad03965aa510cd94427a4549448f285e957a1"
 dependencies = [
- "hermit-abi 0.1.14",
+ "hermit-abi",
  "libc",
 ]
 
@@ -4972,12 +4918,6 @@ checksum = "7940cf2ca942593318d07fcf2596cdca60a85c9e7fab408a5e21a4f9dcd40d87"
 dependencies = [
  "num-traits",
 ]
-
-[[package]]
-name = "os_str_bytes"
-version = "6.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ceedf44fb00f2d1984b0bc98102627ce622e083e49a5bacdb3e514fa4238e267"
 
 [[package]]
 name = "ouroboros"
@@ -6952,7 +6892,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8417a89c377728dbfbf1966b6493544f6e5e168ebc5bb444f3526481fae94e31"
 dependencies = [
  "chrono",
- "clap 2.33.3",
+ "clap",
  "rpassword",
  "solana-perf",
  "solana-remote-wallet",
@@ -6986,7 +6926,7 @@ dependencies = [
  "base64 0.13.0",
  "bincode",
  "bs58",
- "clap 2.33.3",
+ "clap",
  "indicatif",
  "jsonrpc-core",
  "log 0.4.14",
@@ -7043,7 +6983,7 @@ checksum = "7a11e1b6d5ce435bb3df95f2a970cd80500a8abf94ea87558c35fe0cce8456ab"
 dependencies = [
  "bincode",
  "byteorder 1.4.3",
- "clap 2.33.3",
+ "clap",
  "log 0.4.14",
  "serde",
  "serde_derive",
@@ -7132,7 +7072,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cb530af085d8aab563530ed39703096aa526249d350082823882fdd59cdf839"
 dependencies = [
  "bincode",
- "clap 2.33.3",
+ "clap",
  "log 0.4.14",
  "nix",
  "rand 0.7.3",
@@ -7772,12 +7712,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ea5119cdb4c55b55d432abb513a0429384878c15dde60cc77b1c99de1a95a6a"
 
 [[package]]
-name = "strsim"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
-
-[[package]]
 name = "subtle"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7838,17 +7772,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "syn"
-version = "2.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcc02725fd69ab9f26eab07fad303e2497fad6fb9eba4f96c4d1687bdf704ad9"
-dependencies = [
- "proc-macro2 1.0.53",
- "quote 1.0.26",
- "unicode-ident",
-]
-
-[[package]]
 name = "sync_wrapper"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7877,9 +7800,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.28.3"
+version = "0.28.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f69e0d827cce279e61c2f3399eb789271a8f136d8245edef70f06e3c9601a670"
+checksum = "b4c2f3ca6693feb29a89724516f016488e9aafc7f37264f898593ee4b942f31b"
 dependencies = [
  "cfg-if 1.0.0",
  "core-foundation-sys",

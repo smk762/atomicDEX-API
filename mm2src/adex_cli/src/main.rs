@@ -4,5 +4,5 @@ mod scenarios;
 
 fn main() {
     log::init_logging();
-    cli::Cli::execute();
+    cli::process_cli();
 }
