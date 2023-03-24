@@ -6,12 +6,14 @@ pub(crate) mod nft_structs;
 
 use crate::WithdrawError;
 use nft_errors::GetNftInfoError;
-use nft_structs::{Chain, Nft, NftList, NftListReq, NftMetadataReq, NftTransferHistory, NftTransferHistoryWrapper,
-                  NftTransfersReq, NftWrapper, NftsTransferHistoryList, TransactionNftDetails, WithdrawNftReq};
+use nft_structs::{Chain, ConvertChain, Nft, NftList, NftListReq, NftMetadataReq, NftTransferHistory,
+                  NftTransferHistoryWrapper, NftTransfersReq, NftWrapper, NftsTransferHistoryList,
+                  TransactionNftDetails, WithdrawNftReq};
 
-use crate::eth::{get_eth_address, withdraw_erc721};
+use crate::eth::{get_eth_address, withdraw_erc1155, withdraw_erc721};
 use common::{APPLICATION_JSON, X_API_KEY};
 use http::header::ACCEPT;
+use mm2_number::BigDecimal;
 use serde_json::Value as Json;
 
 /// url for moralis requests
@@ -23,7 +25,7 @@ const DIRECTION_BOTH_MORALIS: &str = "direction=both";
 
 pub type WithdrawNftResult = Result<TransactionNftDetails, MmError<WithdrawError>>;
 
-/// `get_nft_list` function returns list of NFTs on ETH or/and BNB chains owned by user.
+/// `get_nft_list` function returns list of NFTs on requested chains owned by user.
 pub async fn get_nft_list(ctx: MmArc, req: NftListReq) -> MmResult<NftList, GetNftInfoError> {
     let api_key = ctx.conf["api_key"]
         .as_str()
@@ -32,11 +34,8 @@ pub async fn get_nft_list(ctx: MmArc, req: NftListReq) -> MmResult<NftList, GetN
     let mut res_list = Vec::new();
 
     for chain in req.chains {
-        let (coin_str, chain_str) = match chain {
-            Chain::Bsc => ("BNB", "bsc"),
-            Chain::Eth => ("ETH", "eth"),
-        };
-        let my_address = get_eth_address(&ctx, coin_str).await?;
+        let (coin_str, chain_str) = chain.to_ticker_chain();
+        let my_address = get_eth_address(&ctx, &coin_str).await?;
         let uri_without_cursor = format!(
             "{}{}/nft?chain={}&{}",
             URL_MORALIS, my_address.wallet_address, chain_str, FORMAT_DECIMAL_MORALIS
@@ -83,10 +82,7 @@ pub async fn get_nft_list(ctx: MmArc, req: NftListReq) -> MmResult<NftList, GetN
         }
     }
     drop_mutability!(res_list);
-    let nft_list = NftList {
-        count: res_list.len() as u64,
-        nfts: res_list,
-    };
+    let nft_list = NftList { nfts: res_list };
     Ok(nft_list)
 }
 
@@ -94,13 +90,20 @@ pub async fn get_nft_list(ctx: MmArc, req: NftListReq) -> MmResult<NftList, GetN
 /// Current implementation sends request to Moralis.
 /// Later, after adding caching, metadata lookup can be performed using previously obtained NFTs info without
 /// sending new moralis request. The moralis request can be sent as a fallback, if the data was not found in the cache.
+///
+/// **Caution:** ERC-1155 token can have a total supply more than 1, which means there could be several owners
+/// of the same token. `get_nft_metadata` returns NFTs info with the most recent owner.
+/// **Dont** use this function to get specific info about owner address, amount etc, you will get info not related to my_address.
 pub async fn get_nft_metadata(ctx: MmArc, req: NftMetadataReq) -> MmResult<Nft, GetNftInfoError> {
     let api_key = ctx.conf["api_key"]
         .as_str()
         .ok_or_else(|| MmError::new(GetNftInfoError::ApiKeyError))?;
     let chain_str = match req.chain {
+        Chain::Avalanche => "avalanche",
         Chain::Bsc => "bsc",
         Chain::Eth => "eth",
+        Chain::Fantom => "fantom",
+        Chain::Polygon => "polygon",
     };
     let uri = format!(
         "{}nft/{}/{}?chain={}&{}",
@@ -129,7 +132,7 @@ pub async fn get_nft_metadata(ctx: MmArc, req: NftMetadataReq) -> MmResult<Nft, 
     Ok(nft_metadata)
 }
 
-/// `get_nft_transfers` function returns a transfer history of NFTs on ETH or/and BNb chains owned by user.
+/// `get_nft_transfers` function returns a transfer history of NFTs on requested chains owned by user.
 /// Currently doesnt support filters.
 pub async fn get_nft_transfers(ctx: MmArc, req: NftTransfersReq) -> MmResult<NftsTransferHistoryList, GetNftInfoError> {
     let api_key = ctx.conf["api_key"]
@@ -140,8 +143,11 @@ pub async fn get_nft_transfers(ctx: MmArc, req: NftTransfersReq) -> MmResult<Nft
 
     for chain in req.chains {
         let (coin_str, chain_str) = match chain {
+            Chain::Avalanche => ("AVAX", "avalanche"),
             Chain::Bsc => ("BNB", "bsc"),
             Chain::Eth => ("ETH", "eth"),
+            Chain::Fantom => ("FTM", "fantom"),
+            Chain::Polygon => ("MATIC", "polygon"),
         };
         let my_address = get_eth_address(&ctx, coin_str).await?;
         let uri_without_cursor = format!(
@@ -192,7 +198,6 @@ pub async fn get_nft_transfers(ctx: MmArc, req: NftTransfersReq) -> MmResult<Nft
     }
     drop_mutability!(res_list);
     let transfer_history_list = NftsTransferHistoryList {
-        count: res_list.len() as u64,
         transfer_history: res_list,
     };
     Ok(transfer_history_list)
@@ -201,12 +206,9 @@ pub async fn get_nft_transfers(ctx: MmArc, req: NftTransfersReq) -> MmResult<Nft
 /// `withdraw_nft` function generates, signs and returns a transaction that transfers NFT
 /// from my address to recipient's address.
 /// This method generates a raw transaction which should then be broadcast using `send_raw_transaction`.
-/// Currently support ERC721 withdrawing, ERC1155 support will be added later.
 pub async fn withdraw_nft(ctx: MmArc, req_type: WithdrawNftReq) -> WithdrawNftResult {
     match req_type {
-        WithdrawNftReq::WithdrawErc1155(_) => MmError::err(WithdrawError::ContractTypeDoesntSupportNftWithdrawing(
-            "ERC1155".to_owned(),
-        )),
+        WithdrawNftReq::WithdrawErc1155(erc1155_req) => withdraw_erc1155(ctx, erc1155_req).await,
         WithdrawNftReq::WithdrawErc721(erc721_req) => withdraw_erc721(ctx, erc721_req).await,
     }
 }
@@ -264,4 +266,22 @@ async fn send_moralis_request(uri: &str, api_key: &str) -> MmResult<Json, GetNft
 
     let response: Json = try_or!(serde_json::from_str(&response_str), InvalidResponse);
     Ok(response)
+}
+
+/// This function uses `get_nft_list` method to get the correct info about amount of specific NFT owned by my_address.
+pub(crate) async fn find_wallet_amount(
+    ctx: MmArc,
+    nft_list: NftListReq,
+    token_address_req: String,
+    token_id_req: BigDecimal,
+) -> MmResult<BigDecimal, GetNftInfoError> {
+    let nft_list = get_nft_list(ctx, nft_list).await?.nfts;
+    let nft = nft_list
+        .into_iter()
+        .find(|nft| nft.token_address == token_address_req && nft.token_id == token_id_req)
+        .ok_or_else(|| GetNftInfoError::TokenNotFoundInWallet {
+            token_address: token_address_req,
+            token_id: token_id_req.to_string(),
+        })?;
+    Ok(nft.amount)
 }
