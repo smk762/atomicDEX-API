@@ -9,9 +9,9 @@ edition = "2021"
 clap = { version = "4.1", features = ["derive"] }
 common = { path = "../common" }
 derive_more = "0.99"
+env_logger = "0.7.1"
 inquire = "0.6"
 log = "0.4"
-log4rs = { version = "1.0", default-features = false, features = ["console_appender", "pattern_encoder"] }
 serde = "1.0"
 serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 sysinfo = "0.28"
