@@ -5,9 +5,6 @@ use hyper_tls::HttpsConnector;
 
 use super::helpers::rewrite_data_file;
 
-const FULL_COIN_SET_ADDRESS: &str = "https://raw.githubusercontent.com/KomodoPlatform/coins/master/coins";
-const EMPTY_COIN_SET_DATA: &str = r"[]\n";
-
 #[derive(Clone, Copy, Debug, Display)]
 pub enum CoinSet {
     Empty,
@@ -16,16 +13,15 @@ pub enum CoinSet {
 
 #[tokio::main(flavor = "current_thread")]
 pub async fn init_coins(coins_file: &str) -> Result<(), ()> {
+    const FULL_COIN_SET_ADDRESS: &str = "https://raw.githubusercontent.com/KomodoPlatform/coins/master/coins";
+    const EMPTY_COIN_SET_DATA: Vec<u8> = Vec::new();
     let coin_set = inquire_coin_set(coins_file)?;
     info!("Start getting mm2 coins");
-
-    let bytes_got;
     let coins_data = match coin_set {
-        CoinSet::Empty => EMPTY_COIN_SET_DATA.as_bytes(),
+        CoinSet::Empty => EMPTY_COIN_SET_DATA,
         CoinSet::Full => {
             info!("Getting coin set from: {FULL_COIN_SET_ADDRESS}");
-            bytes_got = get_coins_from_remote(FULL_COIN_SET_ADDRESS).await?;
-            bytes_got.as_ref()
+            get_coins_from_remote(FULL_COIN_SET_ADDRESS).await?.to_vec()
         },
     };
 
