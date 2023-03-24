@@ -1,4 +1,3 @@
-use env_logger;
 use log::LevelFilter;
 use std::io::Write;
 

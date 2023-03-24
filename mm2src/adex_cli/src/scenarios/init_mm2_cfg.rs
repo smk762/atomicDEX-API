@@ -1,5 +1,6 @@
 use common::log::{error, info};
-use inquire::{validator::Validation, Confirm, CustomType, CustomUserError, Password, Text};
+use inquire::{validator::Validation, Confirm, CustomType, CustomUserError, Text};
+use passwords::PasswordGenerator;
 use serde::Serialize;
 use std::net::Ipv4Addr;
 use std::ops::Not;
@@ -72,8 +73,8 @@ impl Mm2Cfg {
         self.inquire_gui()?;
         self.inquire_net_id()?;
         self.inquire_passphrase()?;
-        self.inquire_rpc_password()?;
         self.inquire_allow_weak_password()?;
+        self.inquire_rpc_password()?;
         self.inquire_userhome()?;
         self.inquire_dbdir()?;
         self.inquire_rpcip()?;
@@ -138,8 +139,10 @@ impl Mm2Cfg {
     }
 
     fn inquire_passphrase(&mut self) -> Result<(), ()> {
-        self.passphrase = Password::new("What is the passphrase:")
-            .with_validator(Self::pwd_validator)
+        let default_password = Self::generate_password()?;
+        self.passphrase = Text::new("What is the passphrase:")
+            .with_default(default_password.as_str())
+            .with_placeholder(default_password.as_str())
             .with_help_message("Your passphrase; this is the source of each of your coins private keys. KEEP IT SAFE!")
             .prompt()
             .map_err(|error| {
@@ -150,15 +153,45 @@ impl Mm2Cfg {
     }
 
     fn inquire_rpc_password(&mut self) -> Result<(), ()> {
-        self.rpc_password = Password::new("What is the rpc_password:")
-            .with_validator(Self::pwd_validator)
+        let allow_weak_password = self.allow_weak_password;
+        let validator = move |password: &str| {
+            if let Some(false) = allow_weak_password {
+                match password_policy::password_policy(password) {
+                    Err(error) => Ok(Validation::Invalid(error.into())),
+                    Ok(_) => Ok(Validation::Valid),
+                }
+            } else {
+                Ok(Validation::Valid)
+            }
+        };
+        let default_password = Self::generate_password()?;
+
+        self.rpc_password = Text::new("What is the rpc_password:")
             .with_help_message("Your password for protected RPC methods (userpass)")
+            .with_validator(validator)
+            .with_default(default_password.as_str())
+            .with_placeholder(default_password.as_str())
             .prompt()
             .map_err(|error| {
                 error!("Failed to get rpc_password: {error}");
             })?
             .into();
         Ok(())
+    }
+
+    fn generate_password() -> Result<String, ()> {
+        let pg = PasswordGenerator {
+            length: 8,
+            numbers: true,
+            lowercase_letters: true,
+            uppercase_letters: true,
+            symbols: true,
+            spaces: false,
+            exclude_similar_characters: false,
+            strict: true,
+        };
+        pg.generate_one()
+            .map_err(|error| error!("Failed to generate password: {error}"))
     }
 
     fn inquire_allow_weak_password(&mut self) -> Result<(), ()> {
@@ -172,13 +205,6 @@ impl Mm2Cfg {
             })?
             .into();
         Ok(())
-    }
-
-    fn pwd_validator(pwd: &str) -> Result<Validation, CustomUserError> {
-        match password_policy::password_policy(pwd) {
-            Err(error) => Ok(Validation::Invalid(error.into())),
-            Ok(_) => Ok(Validation::Valid),
-        }
     }
 
     fn inquire_userhome(&mut self) -> Result<(), ()> {
