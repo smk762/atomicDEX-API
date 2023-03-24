@@ -4,14 +4,19 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
  MANUAL_MM_VERSION: true
+ JEMALLOC_SYS_WITH_MALLOC_CONF: 'background_thread:true,narenas:1,tcache:false,dirty_decay_ms:0,muzzy_decay_ms:0,metadata_thp:auto'
 
 jobs:
   linux-x86-64:
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-18.04
     steps:
     - uses: actions/checkout@v3
     - name: Install toolchain
@@ -188,7 +193,7 @@ jobs:
 
   wasm:
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-18.04
     steps:
     - uses: actions/checkout@v3
     - name: Install toolchain
@@ -276,7 +281,7 @@ jobs:
 
   android-aarch64:
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-18.04
     steps:
     - uses: actions/checkout@v3
     - name: Install toolchain
@@ -324,7 +329,7 @@ jobs:
 
   android-armv7:
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-18.04
     steps:
     - uses: actions/checkout@v3
     - name: Install toolchain
