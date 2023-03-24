@@ -12,11 +12,11 @@ derive_more = "0.99"
 env_logger = "0.7.1"
 inquire = "0.6"
 log = "0.4"
+mm2_net = { path = "../mm2_net" }
 serde = "1.0"
 serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 sysinfo = "0.28"
 tokio = { version = "1.20" }
-mm2_net = { path = "../mm2_net" }
 
 [target.'cfg(not(windows))'.dependencies]
 fork = "0.1"
