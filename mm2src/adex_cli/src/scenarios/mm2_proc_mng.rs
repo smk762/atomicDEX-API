@@ -1,4 +1,4 @@
-use log::{error, info};
+use common::log::{error, info};
 use std::path::PathBuf;
 use std::{env, u32};
 use sysinfo::{PidExt, ProcessExt, System, SystemExt};

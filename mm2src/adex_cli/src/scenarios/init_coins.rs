@@ -1,7 +1,7 @@
+use common::log::{error, info};
 use derive_more::Display;
 use hyper::{body::Bytes, client::Client, Uri};
 use hyper_tls::HttpsConnector;
-use log::{error, info};
 
 use super::helpers::rewrite_data_file;
 

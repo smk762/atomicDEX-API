@@ -1,5 +1,5 @@
+use common::log::{error, info};
 use inquire::{validator::Validation, Confirm, CustomType, CustomUserError, Password, Text};
-use log::{error, info};
 use serde::Serialize;
 use std::net::Ipv4Addr;
 use std::ops::Not;

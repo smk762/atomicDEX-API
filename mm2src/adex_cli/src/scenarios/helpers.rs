@@ -1,4 +1,4 @@
-use log::error;
+use common::log::error;
 use serde::Serialize;
 use std::fs::OpenOptions;
 use std::io::Write;

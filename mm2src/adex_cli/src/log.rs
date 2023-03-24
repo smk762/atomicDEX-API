@@ -1,4 +1,4 @@
-use log::LevelFilter;
+use common::log::LevelFilter;
 use log4rs::{append::console::ConsoleAppender,
              config::{Appender, Root},
              encode::pattern::PatternEncoder,
