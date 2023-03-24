@@ -3,8 +3,12 @@ use log::LevelFilter;
 use std::io::Write;
 
 pub fn init_logging() {
-    env_logger::builder()
-        .format(|buf, record| writeln!(buf, "{}", record.args()))
-        .filter_level(LevelFilter::Info)
-        .init();
+    let mut builder = env_logger::builder();
+    let level = std::env::var("RUST_LOG")
+        .map(|s| s.parse().unwrap_or(LevelFilter::Info))
+        .unwrap_or(LevelFilter::Info);
+    builder
+        .filter_level(level)
+        .format(|buf, record| writeln!(buf, "{}", record.args()));
+    builder.init();
 }
