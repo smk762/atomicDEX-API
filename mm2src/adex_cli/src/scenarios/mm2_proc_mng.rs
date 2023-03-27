@@ -174,7 +174,7 @@ pub fn stop_process() {
 }
 
 #[cfg(target_os = "macos")]
-pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>, log_file: &Option<String>) {
+pub fn start_process(_mm2_cfg_file: &Option<String>, _coins_file: &Option<String>, _log_file: &Option<String>) {
     unimplemented!();
 }
 
