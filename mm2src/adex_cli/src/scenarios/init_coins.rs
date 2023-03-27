@@ -13,11 +13,11 @@ pub enum CoinSet {
 #[tokio::main(flavor = "current_thread")]
 pub async fn init_coins(coins_file: &str) -> Result<(), ()> {
     const FULL_COIN_SET_ADDRESS: &str = "https://raw.githubusercontent.com/KomodoPlatform/coins/master/coins";
-    const EMPTY_COIN_SET_DATA: Vec<u8> = Vec::new();
+    const EMPTY_COIN_SET_DATA: &[u8] = b"[]\n";
     let coin_set = inquire_coin_set(coins_file)?;
     info!("Start getting mm2 coins");
     let coins_data = match coin_set {
-        CoinSet::Empty => EMPTY_COIN_SET_DATA,
+        CoinSet::Empty => Vec::<u8>::from(EMPTY_COIN_SET_DATA),
         CoinSet::Full => {
             info!("Getting coin set from: {FULL_COIN_SET_ADDRESS}");
             let (_status_code, _headers, data) = slurp_url(FULL_COIN_SET_ADDRESS).await.map_err(|error| {
