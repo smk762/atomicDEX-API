@@ -57,7 +57,7 @@ fn get_mm2_binary_path() -> Result<PathBuf, ()> {
     Ok(dir)
 }
 
-#[cfg(all(any(unix, windows), not(macos)))]
+#[cfg(all(any(unix, windows), not(target_os == "macos")))]
 pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>, log_file: &Option<String>) {
     let mm2_binary = match get_mm2_binary_path() {
         Err(_) => return,
@@ -79,7 +79,7 @@ pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>,
     start_process_impl(mm2_binary);
 }
 
-#[cfg(all(unix, not(macos)))]
+#[cfg(all(unix, not(target_os == "macos")))]
 pub fn start_process_impl(mm2_binary: PathBuf) {
     let mut command = Command::new(&mm2_binary);
     let program = mm2_binary
@@ -136,7 +136,7 @@ pub fn start_process_impl(mm2_binary: PathBuf) {
     }
 }
 
-#[cfg(all(unix, not(macos)))]
+#[cfg(all(unix, not(target_os == "macos")))]
 pub fn stop_process() {
     let pids = find_proc_by_name(MM2_BINARY);
     if pids.is_empty() {
@@ -173,12 +173,12 @@ pub fn stop_process() {
     }
 }
 
-#[cfg(macos)]
+#[cfg(target_os == "macos")]
 pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>, log_file: &Option<String>) {
     unimplemented!();
 }
 
-#[cfg(macos)]
+#[cfg(target_os == "macos")]
 pub fn stop_process() {
     unimplemented!();
 }
