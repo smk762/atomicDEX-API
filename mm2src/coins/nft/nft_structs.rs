@@ -19,8 +19,39 @@ pub struct NftMetadataReq {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub(crate) enum Chain {
+    Avalanche,
     Bsc,
     Eth,
+    Fantom,
+    Polygon,
+}
+
+pub(crate) trait ConvertChain {
+    fn to_ticker(&self) -> String;
+
+    fn to_ticker_chain(&self) -> (String, String);
+}
+
+impl ConvertChain for Chain {
+    fn to_ticker(&self) -> String {
+        match self {
+            Chain::Avalanche => "AVAX".to_owned(),
+            Chain::Bsc => "BNB".to_owned(),
+            Chain::Eth => "ETH".to_owned(),
+            Chain::Fantom => "FTM".to_owned(),
+            Chain::Polygon => "MATIC".to_owned(),
+        }
+    }
+
+    fn to_ticker_chain(&self) -> (String, String) {
+        match self {
+            Chain::Avalanche => ("AVAX".to_owned(), "avalanche".to_owned()),
+            Chain::Bsc => ("BNB".to_owned(), "bsc".to_owned()),
+            Chain::Eth => ("ETH".to_owned(), "eth".to_owned()),
+            Chain::Fantom => ("FTM".to_owned(), "fantom".to_owned()),
+            Chain::Polygon => ("MATIC".to_owned(), "polygon".to_owned()),
+        }
+    }
 }
 
 #[derive(Debug, Display)]
@@ -114,28 +145,24 @@ impl<T> std::ops::Deref for SerdeStringWrap<T> {
 
 #[derive(Debug, Serialize)]
 pub struct NftList {
-    pub(crate) count: u64,
     pub(crate) nfts: Vec<Nft>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Deserialize)]
 pub struct WithdrawErc1155 {
     pub(crate) chain: Chain,
-    from: String,
-    to: String,
-    token_address: String,
-    token_id: BigDecimal,
-    amount: BigDecimal,
+    pub(crate) to: String,
+    pub(crate) token_address: String,
+    pub(crate) token_id: BigDecimal,
+    pub(crate) amount: Option<BigDecimal>,
     #[serde(default)]
-    max: bool,
-    fee: Option<WithdrawFee>,
+    pub(crate) max: bool,
+    pub(crate) fee: Option<WithdrawFee>,
 }
 
 #[derive(Clone, Deserialize)]
 pub struct WithdrawErc721 {
     pub(crate) chain: Chain,
-    pub(crate) from: String,
     pub(crate) to: String,
     pub(crate) token_address: String,
     pub(crate) token_id: BigDecimal,
@@ -151,7 +178,7 @@ pub enum WithdrawNftReq {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TransactionNftDetails {
-    /// Raw bytes of signed transaction, this should be sent as is to `send_raw_transaction_bytes` RPC to broadcast the transaction
+    /// Raw bytes of signed transaction, this should be sent as is to `send_raw_transaction` RPC to broadcast the transaction
     pub(crate) tx_hex: BytesJson,
     pub(crate) tx_hash: String,
     /// NFTs are sent from these addresses
@@ -226,6 +253,5 @@ pub(crate) struct NftTransferHistoryWrapper {
 
 #[derive(Debug, Serialize)]
 pub struct NftsTransferHistoryList {
-    pub(crate) count: u64,
     pub(crate) transfer_history: Vec<NftTransferHistory>,
 }

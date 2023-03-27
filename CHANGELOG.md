@@ -10,6 +10,7 @@
 
 - NFT integration `WIP` [#900](https://github.com/KomodoPlatform/atomicDEX-API/issues/900)
   - NFT integration PoC added. Includes ERC721 support for ETH and BSC [#1652](https://github.com/KomodoPlatform/atomicDEX-API/pull/1652)
+  - Withdraw ERC1155 and EVM based chains support added for NFT PoC [#1704](https://github.com/KomodoPlatform/atomicDEX-API/pull/1704)
 - Swap watcher nodes [#1431](https://github.com/KomodoPlatform/atomicDEX-API/issues/1431)
   - Watcher rewards for ETH swaps were added [#1658](https://github.com/KomodoPlatform/atomicDEX-API/pull/1658)
 - Cosmos integration `WIP` [#1432](https://github.com/KomodoPlatform/atomicDEX-API/issues/1432)
@@ -39,7 +40,6 @@
 - CI/CD migrated from Azure to Github runners [#1699](https://github.com/KomodoPlatform/atomicDEX-API/pull/1699)
 - CI tests are much stabilized [#1699](https://github.com/KomodoPlatform/atomicDEX-API/pull/1699)
 - Integration and unit tests are seperated on CI stack [#1699](https://github.com/KomodoPlatform/atomicDEX-API/pull/1699)
-- Jemalloc configuration updated for optimization purposes [#1699](https://github.com/KomodoPlatform/atomicDEX-API/pull/1699)
 - Codebase is updated in linting rules at wasm and test stack [#1699](https://github.com/KomodoPlatform/atomicDEX-API/pull/1699)
 - `crossbeam` bumped to `0.8` from `0.7` [#1699](https://github.com/KomodoPlatform/atomicDEX-API/pull/1699)
 - Un-used/Unstable parts of mm2 excluded from build outputs which avoids mm2 runtime from potential UB [#1699](https://github.com/KomodoPlatform/atomicDEX-API/pull/1699)
