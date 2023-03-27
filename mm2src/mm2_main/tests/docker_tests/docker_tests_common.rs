@@ -1,5 +1,7 @@
 pub use common::{block_on, now_ms};
 pub use mm2_number::MmNumber;
+use mm2_test_helpers::for_tests::ETH_SEPOLIA_NODE;
+use mm2_test_helpers::for_tests::ETH_SEPOLIA_SWAP_CONTRACT;
 pub use mm2_test_helpers::for_tests::{check_my_swap_status, check_recent_swaps, check_stats_swap_status,
                                       enable_native_bch, mm_dump, MarketMakerIt, MAKER_ERROR_EVENTS,
                                       MAKER_SUCCESS_EVENTS, TAKER_ERROR_EVENTS, TAKER_SUCCESS_EVENTS};
@@ -20,7 +22,7 @@ use coins::utxo::utxo_common::send_outputs_from_my_address;
 use coins::utxo::utxo_standard::{utxo_standard_coin_with_priv_key, UtxoStandardCoin};
 use coins::utxo::{coin_daemon_data_dir, sat_from_big_decimal, zcash_params_path, UtxoActivationParams,
                   UtxoAddressFormat, UtxoCoinFields, UtxoCommonOps};
-use coins::{CoinProtocol, MarketCoinOps, PrivKeyBuildPolicy, Transaction};
+use coins::{CoinProtocol, ConfirmPaymentInput, MarketCoinOps, PrivKeyBuildPolicy, Transaction};
 use crypto::privkey::key_pair_from_seed;
 use crypto::Secp256k1Secret;
 use ethereum_types::H160 as H160Eth;
@@ -163,15 +165,16 @@ pub fn fill_eth(to_addr: &str) {
         .unwrap();
 }
 
-pub fn generate_eth_coin_with_random_privkey() -> EthCoin {
+// Generates an ethereum coin in the sepolia network with the given seed
+pub fn generate_eth_coin_with_seed(seed: &str) -> EthCoin {
     let req = json!({
         "method": "enable",
         "coin": "ETH",
-        "urls": ETH_DEV_NODES,
-        "swap_contract_address": ETH_DEV_SWAP_CONTRACT,
+        "urls": ETH_SEPOLIA_NODE,
+        "swap_contract_address": ETH_SEPOLIA_SWAP_CONTRACT,
     });
-    let priv_key = random_secp256k1_secret();
-    let priv_key_policy = PrivKeyBuildPolicy::IguanaPrivKey(priv_key);
+    let keypair = key_pair_from_seed(seed).unwrap();
+    let priv_key_policy = PrivKeyBuildPolicy::IguanaPrivKey(keypair.private().secret);
     block_on(eth_coin_from_conf_and_request(
         &MM_CTX,
         "ETH",
@@ -187,8 +190,8 @@ pub fn generate_jst_with_seed(seed: &str) -> EthCoin {
     let req = json!({
         "method": "enable",
         "coin": "JST",
-        "urls": ETH_DEV_NODES,
-        "swap_contract_address": ETH_DEV_SWAP_CONTRACT,
+        "urls": ETH_SEPOLIA_NODE,
+        "swap_contract_address": ETH_SEPOLIA_SWAP_CONTRACT,
     });
 
     let keypair = key_pair_from_seed(seed).unwrap();
@@ -200,7 +203,7 @@ pub fn generate_jst_with_seed(seed: &str) -> EthCoin {
         &req,
         CoinProtocol::ERC20 {
             platform: "ETH".into(),
-            contract_address: String::from("0x2b294F029Fde858b2c62184e8390591755521d8E"),
+            contract_address: String::from("0x948BF5172383F1Bc0Fdf3aBe0630b855694A5D2c"),
         },
         priv_key_policy,
     ))
@@ -274,10 +277,14 @@ impl BchDockerOps {
         let slp_genesis_tx = send_outputs_from_my_address(self.coin.clone(), bch_outputs)
             .wait()
             .unwrap();
-        self.coin
-            .wait_for_confirmations(&slp_genesis_tx.tx_hex(), 1, false, now_ms() / 1000 + 30, 1)
-            .wait()
-            .unwrap();
+        let confirm_payment_input = ConfirmPaymentInput {
+            payment_tx: slp_genesis_tx.tx_hex(),
+            confirmations: 1,
+            requires_nota: false,
+            wait_until: now_ms() / 1000 + 30,
+            check_every: 1,
+        };
+        self.coin.wait_for_confirmations(confirm_payment_input).wait().unwrap();
 
         let adex_slp = SlpToken::new(
             8,
@@ -289,10 +296,14 @@ impl BchDockerOps {
         .unwrap();
 
         let tx = block_on(adex_slp.send_slp_outputs(slp_outputs)).unwrap();
-        self.coin
-            .wait_for_confirmations(&tx.tx_hex(), 1, false, now_ms() / 1000 + 30, 1)
-            .wait()
-            .unwrap();
+        let confirm_payment_input = ConfirmPaymentInput {
+            payment_tx: tx.tx_hex(),
+            confirmations: 1,
+            requires_nota: false,
+            wait_until: now_ms() / 1000 + 30,
+            check_every: 1,
+        };
+        self.coin.wait_for_confirmations(confirm_payment_input).wait().unwrap();
         *SLP_TOKEN_OWNERS.lock().unwrap() = slp_privkeys;
         *SLP_TOKEN_ID.lock().unwrap() = slp_genesis_tx.tx_hash().as_slice().into();
     }
@@ -549,9 +560,14 @@ pub fn fill_qrc20_address(coin: &Qrc20Coin, amount: BigDecimal, timeout: u64) {
 
     let tx_bytes = client.get_transaction_bytes(&hash).wait().unwrap();
     log!("{:02x}", tx_bytes);
-    coin.wait_for_confirmations(&tx_bytes, 1, false, timeout, 1)
-        .wait()
-        .unwrap();
+    let confirm_payment_input = ConfirmPaymentInput {
+        payment_tx: tx_bytes.clone().0,
+        confirmations: 1,
+        requires_nota: false,
+        wait_until: timeout,
+        check_every: 1,
+    };
+    coin.wait_for_confirmations(confirm_payment_input).wait().unwrap();
 }
 
 /// Generate random privkey, create a QRC20 coin and fill it's address with the specified balance.
@@ -662,9 +678,14 @@ where
         client.import_address(address, address, false).wait().unwrap();
         let hash = client.send_to_address(address, &amount).wait().unwrap();
         let tx_bytes = client.get_transaction_bytes(&hash).wait().unwrap();
-        coin.wait_for_confirmations(&tx_bytes, 1, false, timeout, 1)
-            .wait()
-            .unwrap();
+        let confirm_payment_input = ConfirmPaymentInput {
+            payment_tx: tx_bytes.clone().0,
+            confirmations: 1,
+            requires_nota: false,
+            wait_until: timeout,
+            check_every: 1,
+        };
+        coin.wait_for_confirmations(confirm_payment_input).wait().unwrap();
         log!("{:02x}", tx_bytes);
         loop {
             let unspents = client

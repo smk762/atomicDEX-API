@@ -4,10 +4,9 @@ use common::PagingOptions;
 use derive_more::Display;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
+use uuid::Uuid;
 
 pub type MySwapsResult<T> = Result<T, MmError<MySwapsError>>;
-
-use uuid::Uuid;
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Debug, Display, PartialEq)]
@@ -23,7 +22,7 @@ pub enum MySwapsError {
     #[display(fmt = "'from_uuid' not found: {}", _0)]
     FromUuidNotFound(Uuid),
     #[display(fmt = "Error parsing uuid: {}", _0)]
-    UuidParse(uuid::parser::ParseError),
+    UuidParse(uuid::Error),
     #[display(fmt = "Unknown SQL error: {}", _0)]
     UnknownSqlError(String),
     #[display(fmt = "Internal error: {}", _0)]
@@ -201,37 +200,41 @@ mod wasm_impl {
             let items = match (&filter.my_coin, &filter.other_coin) {
                 (Some(my_coin), Some(other_coin)) => {
                     my_swaps_table
-                        .open_cursor("with_my_other_coins")
-                        .await?
+                        .cursor_builder()
                         .only("my_coin", my_coin)?
                         .only("other_coin", other_coin)?
                         .bound("started_at", from_timestamp, to_timestamp)
+                        .open_cursor("with_my_other_coins")
+                        .await?
                         .collect()
                         .await?
                 },
                 (Some(my_coin), None) => {
                     my_swaps_table
-                        .open_cursor("with_my_coin")
-                        .await?
+                        .cursor_builder()
                         .only("my_coin", my_coin)?
                         .bound("started_at", from_timestamp, to_timestamp)
+                        .open_cursor("with_my_coin")
+                        .await?
                         .collect()
                         .await?
                 },
                 (None, Some(other_coin)) => {
                     my_swaps_table
-                        .open_cursor("with_other_coin")
-                        .await?
+                        .cursor_builder()
                         .only("other_coin", other_coin)?
                         .bound("started_at", from_timestamp, to_timestamp)
+                        .open_cursor("with_other_coin")
+                        .await?
                         .collect()
                         .await?
                 },
                 (None, None) => {
                     my_swaps_table
+                        .cursor_builder()
+                        .bound("started_at", from_timestamp, to_timestamp)
                         .open_cursor("started_at")
                         .await?
-                        .bound("started_at", from_timestamp, to_timestamp)
                         .collect()
                         .await?
                 },
@@ -447,7 +450,7 @@ mod wasm_tests {
             // unknown UUID
             from_uuid: Some(from_uuid),
         };
-        let actual = take_according_to_paging_opts(uuids.clone(), &paging)
+        let actual = take_according_to_paging_opts(uuids, &paging)
             .expect_err("'take_according_to_paging_opts' must return an error");
         assert_eq!(actual.into_inner(), MySwapsError::FromUuidNotFound(from_uuid));
     }

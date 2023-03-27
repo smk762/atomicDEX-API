@@ -58,7 +58,7 @@ impl BlockHeaderStorage {
         })
     }
 
-    #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn into_inner(self) -> Box<dyn BlockHeaderStorageOps> { self.inner }
 }
 
@@ -108,7 +108,7 @@ impl BlockHeaderStorageOps for BlockHeaderStorage {
     async fn is_table_empty(&self) -> Result<(), BlockHeaderStorageError> { self.inner.is_table_empty().await }
 }
 
-#[cfg(test)]
+#[cfg(any(test, target_arch = "wasm32"))]
 mod block_headers_storage_tests {
     use super::*;
     use chain::BlockHeaderBits;
@@ -137,7 +137,7 @@ mod block_headers_storage_tests {
         let block_header: BlockHeader = "0000002076d41d3e4b0bfd4c0d3b30aa69fdff3ed35d85829efd04000000000000000000b386498b583390959d9bac72346986e3015e83ac0b54bc7747a11a494ac35c94bb3ce65a53fb45177f7e311c".into();
         headers.insert(520481, block_header);
         storage.add_block_headers_to_storage(headers).await.unwrap();
-        assert!(!storage.is_table_empty().await.is_ok());
+        assert!(storage.is_table_empty().await.is_err());
     }
 
     pub(crate) async fn test_get_block_header_impl(for_coin: &str) {
@@ -152,7 +152,7 @@ mod block_headers_storage_tests {
         headers.insert(520481, block_header);
 
         storage.add_block_headers_to_storage(headers).await.unwrap();
-        assert!(!storage.is_table_empty().await.is_ok());
+        assert!(storage.is_table_empty().await.is_err());
 
         let hex = storage.get_block_header_raw(520481).await.unwrap().unwrap();
         assert_eq!(hex, "0000002076d41d3e4b0bfd4c0d3b30aa69fdff3ed35d85829efd04000000000000000000b386498b583390959d9bac72346986e3015e83ac0b54bc7747a11a494ac35c94bb3ce65a53fb45177f7e311c".to_string());
@@ -189,7 +189,7 @@ mod block_headers_storage_tests {
         headers.insert(201593, block_header);
 
         storage.add_block_headers_to_storage(headers).await.unwrap();
-        assert!(!storage.is_table_empty().await.is_ok());
+        assert!(storage.is_table_empty().await.is_err());
 
         let actual_block_header = storage
             .get_last_block_header_with_non_max_bits(MAX_BITS_BTC)
@@ -222,7 +222,7 @@ mod block_headers_storage_tests {
         headers.insert(201593, block_header);
 
         storage.add_block_headers_to_storage(headers).await.unwrap();
-        assert!(!storage.is_table_empty().await.is_ok());
+        assert!(storage.is_table_empty().await.is_err());
 
         let last_block_height = storage.get_last_block_height().await.unwrap();
         assert_eq!(last_block_height.unwrap(), 201595);
@@ -250,7 +250,7 @@ mod block_headers_storage_tests {
         headers.insert(201593, block_header);
 
         storage.add_block_headers_to_storage(headers).await.unwrap();
-        assert!(!storage.is_table_empty().await.is_ok());
+        assert!(storage.is_table_empty().await.is_err());
 
         // Remove 2 headers from storage.
         storage.remove_headers_up_to_height(201594).await.unwrap();
@@ -313,7 +313,7 @@ mod native_tests {
     fn test_remove_headers_up_to_height() { block_on(test_remove_headers_up_to_height_impl(FOR_COIN_GET)) }
 }
 
-#[cfg(all(test, target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 mod wasm_test {
     use super::*;
     use crate::utxo::utxo_block_header_storage::block_headers_storage_tests::*;
@@ -323,7 +323,7 @@ mod wasm_test {
 
     wasm_bindgen_test_configure!(run_in_browser);
 
-    const FOR_COIN: &str = "RICK";
+    const FOR_COIN: &str = "tBTC";
 
     #[wasm_bindgen_test]
     async fn test_storage_init() {

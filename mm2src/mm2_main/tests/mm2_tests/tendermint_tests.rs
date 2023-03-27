@@ -1,12 +1,13 @@
 use common::block_on;
 use mm2_number::BigDecimal;
 use mm2_test_helpers::for_tests::{atom_testnet_conf, disable_coin, disable_coin_err, enable_tendermint,
-                                  enable_tendermint_token, get_tendermint_my_tx_history, iris_nimda_testnet_conf,
-                                  iris_testnet_conf, my_balance, send_raw_transaction, withdraw_v1, MarketMakerIt,
-                                  Mm2TestConf};
+                                  enable_tendermint_token, get_tendermint_my_tx_history, ibc_withdraw,
+                                  iris_nimda_testnet_conf, iris_testnet_conf, my_balance, send_raw_transaction,
+                                  withdraw_v1, MarketMakerIt, Mm2TestConf};
 use mm2_test_helpers::structs::{RpcV2Response, TendermintActivationResult, TransactionDetails};
 use serde_json::{self as json, json};
 
+const IRIS_TEST_SEED: &str = "iris test seed";
 const ATOM_TEST_BALANCE_SEED: &str = "atom test seed";
 const ATOM_TEST_WITHDRAW_SEED: &str = "atom test withdraw seed";
 const ATOM_TICKER: &str = "ATOM";
@@ -32,7 +33,7 @@ fn test_tendermint_activation_and_balance() {
 
     let result: RpcV2Response<TendermintActivationResult> = json::from_value(activation_result).unwrap();
     assert_eq!(result.result.address, expected_address);
-    let expected_balance: BigDecimal = "0.0959".parse().unwrap();
+    let expected_balance: BigDecimal = "8.0959".parse().unwrap();
     assert_eq!(result.result.balance.spendable, expected_balance);
 
     let my_balance = block_on(my_balance(&mm, ATOM_TICKER));
@@ -108,18 +109,56 @@ fn test_tendermint_withdraw() {
         "cosmos1w5h6wud7a8zpa539rc99ehgl9gwkad3wjsjq8v".to_owned()
     ]);
 
+    let tx_details = block_on(withdraw_v1(
+        &mm,
+        ATOM_TICKER,
+        "cosmos1w5h6wud7a8zpa539rc99ehgl9gwkad3wjsjq8v",
+        "0.1",
+    ));
     let send_raw_tx = block_on(send_raw_transaction(&mm, ATOM_TICKER, &tx_details.tx_hex));
     println!("Send raw tx {}", json::to_string(&send_raw_tx).unwrap());
 }
 
 #[test]
-fn test_tendermint_token_activation_and_withdraw() {
-    const TEST_SEED: &str = "iris test seed";
+fn test_tendermint_ibc_withdraw() {
+    const IBC_SOURCE_CHANNEL: &str = "channel-81";
+    const IBC_TARGET_ADDRESS: &str = "cosmos1r5v5srda7xfth3hn2s26txvrcrntldjumt8mhl";
+    const MY_ADDRESS: &str = "iaa1e0rx87mdj79zejewuc4jg7ql9ud2286g2us8f2";
+
     let coins = json!([iris_testnet_conf(), iris_nimda_testnet_conf()]);
     let platform_coin = coins[0]["coin"].as_str().unwrap();
     let token = coins[1]["coin"].as_str().unwrap();
 
-    let conf = Mm2TestConf::seednode(TEST_SEED, &coins);
+    let conf = Mm2TestConf::seednode(IRIS_TEST_SEED, &coins);
+    let mm = MarketMakerIt::start(conf.conf, conf.rpc_password, None).unwrap();
+
+    let activation_res = block_on(enable_tendermint(&mm, platform_coin, &[], IRIS_TESTNET_RPC_URLS, false));
+    println!("Activation with assets {}", json::to_string(&activation_res).unwrap());
+
+    let activation_res = block_on(enable_tendermint_token(&mm, token));
+    println!("Token activation {}", json::to_string(&activation_res).unwrap());
+
+    let tx_details = block_on(ibc_withdraw(&mm, IBC_SOURCE_CHANNEL, token, IBC_TARGET_ADDRESS, "0.1"));
+    println!("IBC transfer to atom address {}", json::to_string(&tx_details).unwrap());
+
+    let expected_spent: BigDecimal = "0.1".parse().unwrap();
+    assert_eq!(tx_details.spent_by_me, expected_spent);
+
+    assert_eq!(tx_details.to, vec![IBC_TARGET_ADDRESS.to_owned()]);
+    assert_eq!(tx_details.from, vec![MY_ADDRESS.to_owned()]);
+
+    let tx_details = block_on(ibc_withdraw(&mm, IBC_SOURCE_CHANNEL, token, IBC_TARGET_ADDRESS, "0.1"));
+    let send_raw_tx = block_on(send_raw_transaction(&mm, token, &tx_details.tx_hex));
+    println!("Send raw tx {}", json::to_string(&send_raw_tx).unwrap());
+}
+
+#[test]
+fn test_tendermint_token_activation_and_withdraw() {
+    let coins = json!([iris_testnet_conf(), iris_nimda_testnet_conf()]);
+    let platform_coin = coins[0]["coin"].as_str().unwrap();
+    let token = coins[1]["coin"].as_str().unwrap();
+
+    let conf = Mm2TestConf::seednode(IRIS_TEST_SEED, &coins);
     let mm = MarketMakerIt::start(conf.conf, conf.rpc_password, None).unwrap();
 
     let activation_res = block_on(enable_tendermint(&mm, platform_coin, &[], IRIS_TESTNET_RPC_URLS, false));
@@ -188,6 +227,12 @@ fn test_tendermint_token_activation_and_withdraw() {
         "iaa1e0rx87mdj79zejewuc4jg7ql9ud2286g2us8f2".to_owned()
     ]);
 
+    let tx_details = block_on(withdraw_v1(
+        &mm,
+        token,
+        "iaa1e0rx87mdj79zejewuc4jg7ql9ud2286g2us8f2",
+        "0.1",
+    ));
     let send_raw_tx = block_on(send_raw_transaction(&mm, token, &tx_details.tx_hex));
     println!("Send raw tx {}", json::to_string(&send_raw_tx).unwrap());
 }
@@ -223,9 +268,9 @@ fn test_tendermint_tx_history() {
         true,
     ));
 
-    if let Err(_) = block_on(mm.wait_for_log(60., |log| log.contains(TX_FINISHED_LOG))) {
+    if block_on(mm.wait_for_log(60., |log| log.contains(TX_FINISHED_LOG))).is_err() {
         println!("{}", mm.log_as_utf8().unwrap());
-        assert!(false, "Tx history didn't finish which is not expected");
+        panic!("Tx history didn't finish which is not expected");
     }
 
     // testing IRIS-TEST history
@@ -277,13 +322,7 @@ fn test_disable_tendermint_platform_coin_with_token() {
     let conf = Mm2TestConf::seednode(TEST_SEED, &coins);
     let mm = MarketMakerIt::start(conf.conf, conf.rpc_password, None).unwrap();
     // Enable platform coin IRIS-TEST
-    let activation_res = block_on(enable_tendermint(
-        &mm,
-        platform_coin,
-        &[],
-        &["http://34.80.202.172:26657"],
-        false,
-    ));
+    let activation_res = block_on(enable_tendermint(&mm, platform_coin, &[], IRIS_TESTNET_RPC_URLS, false));
     assert!(&activation_res.get("result").unwrap().get("address").is_some());
 
     // Enable platform coin token IRIS-NIMDA

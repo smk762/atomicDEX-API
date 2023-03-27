@@ -24,17 +24,16 @@ use crate::utxo::utxo_builder::{BlockHeaderUtxoArcOps, MergeUtxoArcOps, UtxoCoin
                                 UtxoFieldsWithHardwareWalletBuilder, UtxoFieldsWithIguanaSecretBuilder};
 use crate::utxo::utxo_tx_history_v2::{UtxoMyAddressesHistoryError, UtxoTxDetailsError, UtxoTxDetailsParams,
                                       UtxoTxHistoryOps};
-use crate::{eth, CanRefundHtlc, CheckIfMyPaymentSentArgs, CoinBalance, CoinWithDerivationMethod, DelegationError,
-            DelegationFut, GetWithdrawSenderAddress, IguanaPrivKey, MakerSwapTakerCoin, NegotiateSwapContractAddrErr,
-            PaymentInstructions, PaymentInstructionsErr, PrivKeyBuildPolicy, RefundError, RefundResult,
-            SearchForSwapTxSpendInput, SendMakerPaymentArgs, SendMakerPaymentSpendPreimageInput,
-            SendMakerRefundsPaymentArgs, SendMakerSpendsTakerPaymentArgs, SendTakerPaymentArgs,
-            SendTakerRefundsPaymentArgs, SendTakerSpendsMakerPaymentArgs, SendWatcherRefundsPaymentArgs,
-            SignatureResult, StakingInfosFut, SwapOps, TakerSwapMakerCoin, TradePreimageValue, TransactionFut,
-            TxMarshalingErr, UnexpectedDerivationMethod, ValidateAddressResult, ValidateFeeArgs,
-            ValidateInstructionsErr, ValidateOtherPubKeyErr, ValidatePaymentError, ValidatePaymentFut,
-            ValidatePaymentInput, VerificationResult, WatcherOps, WatcherSearchForSwapTxSpendInput,
-            WatcherValidatePaymentInput, WatcherValidateTakerFeeInput, WithdrawFut, WithdrawSenderAddress};
+use crate::{eth, CanRefundHtlc, CheckIfMyPaymentSentArgs, CoinBalance, CoinWithDerivationMethod, ConfirmPaymentInput,
+            DelegationError, DelegationFut, GetWithdrawSenderAddress, IguanaPrivKey, MakerSwapTakerCoin,
+            NegotiateSwapContractAddrErr, PaymentInstructions, PaymentInstructionsErr, PrivKeyBuildPolicy,
+            RefundError, RefundPaymentArgs, RefundResult, SearchForSwapTxSpendInput,
+            SendMakerPaymentSpendPreimageInput, SendPaymentArgs, SignatureResult, SpendPaymentArgs, StakingInfosFut,
+            SwapOps, TakerSwapMakerCoin, TradePreimageValue, TransactionFut, TxMarshalingErr,
+            UnexpectedDerivationMethod, ValidateAddressResult, ValidateFeeArgs, ValidateInstructionsErr,
+            ValidateOtherPubKeyErr, ValidatePaymentError, ValidatePaymentFut, ValidatePaymentInput,
+            VerificationResult, WatcherOps, WatcherSearchForSwapTxSpendInput, WatcherValidatePaymentInput,
+            WatcherValidateTakerFeeInput, WithdrawFut, WithdrawSenderAddress};
 use common::executor::{AbortableSystem, AbortedError};
 use crypto::Bip44Chain;
 use ethereum_types::H160;
@@ -532,86 +531,36 @@ impl SwapOps for QtumCoin {
     }
 
     #[inline]
-    fn send_maker_payment(&self, maker_payment_args: SendMakerPaymentArgs) -> TransactionFut {
-        utxo_common::send_maker_payment(
-            self.clone(),
-            maker_payment_args.time_lock,
-            maker_payment_args.other_pubkey,
-            maker_payment_args.secret_hash,
-            maker_payment_args.amount,
-            maker_payment_args.swap_unique_data,
-        )
+    fn send_maker_payment(&self, maker_payment_args: SendPaymentArgs) -> TransactionFut {
+        utxo_common::send_maker_payment(self.clone(), maker_payment_args)
     }
 
     #[inline]
-    fn send_taker_payment(&self, taker_payment_args: SendTakerPaymentArgs) -> TransactionFut {
-        utxo_common::send_taker_payment(
-            self.clone(),
-            taker_payment_args.time_lock,
-            taker_payment_args.other_pubkey,
-            taker_payment_args.secret_hash,
-            taker_payment_args.amount,
-            taker_payment_args.swap_unique_data,
-        )
+    fn send_taker_payment(&self, taker_payment_args: SendPaymentArgs) -> TransactionFut {
+        utxo_common::send_taker_payment(self.clone(), taker_payment_args)
     }
 
     #[inline]
-    fn send_maker_spends_taker_payment(
-        &self,
-        maker_spends_payment_args: SendMakerSpendsTakerPaymentArgs,
-    ) -> TransactionFut {
-        utxo_common::send_maker_spends_taker_payment(
-            self.clone(),
-            maker_spends_payment_args.other_payment_tx,
-            maker_spends_payment_args.time_lock,
-            maker_spends_payment_args.other_pubkey,
-            maker_spends_payment_args.secret,
-            maker_spends_payment_args.secret_hash,
-            maker_spends_payment_args.swap_unique_data,
-        )
+    fn send_maker_spends_taker_payment(&self, maker_spends_payment_args: SpendPaymentArgs) -> TransactionFut {
+        utxo_common::send_maker_spends_taker_payment(self.clone(), maker_spends_payment_args)
     }
 
     #[inline]
-    fn send_taker_spends_maker_payment(
-        &self,
-        taker_spends_payment_args: SendTakerSpendsMakerPaymentArgs,
-    ) -> TransactionFut {
-        utxo_common::send_taker_spends_maker_payment(
-            self.clone(),
-            taker_spends_payment_args.other_payment_tx,
-            taker_spends_payment_args.time_lock,
-            taker_spends_payment_args.other_pubkey,
-            taker_spends_payment_args.secret,
-            taker_spends_payment_args.secret_hash,
-            taker_spends_payment_args.swap_unique_data,
-        )
+    fn send_taker_spends_maker_payment(&self, taker_spends_payment_args: SpendPaymentArgs) -> TransactionFut {
+        utxo_common::send_taker_spends_maker_payment(self.clone(), taker_spends_payment_args)
     }
 
     #[inline]
-    fn send_taker_refunds_payment(&self, taker_refunds_payment_args: SendTakerRefundsPaymentArgs) -> TransactionFut {
-        utxo_common::send_taker_refunds_payment(
-            self.clone(),
-            taker_refunds_payment_args.payment_tx,
-            taker_refunds_payment_args.time_lock,
-            taker_refunds_payment_args.other_pubkey,
-            taker_refunds_payment_args.secret_hash,
-            taker_refunds_payment_args.swap_unique_data,
-        )
+    fn send_taker_refunds_payment(&self, taker_refunds_payment_args: RefundPaymentArgs) -> TransactionFut {
+        utxo_common::send_taker_refunds_payment(self.clone(), taker_refunds_payment_args)
     }
 
     #[inline]
-    fn send_maker_refunds_payment(&self, maker_refunds_payment_args: SendMakerRefundsPaymentArgs) -> TransactionFut {
-        utxo_common::send_maker_refunds_payment(
-            self.clone(),
-            maker_refunds_payment_args.payment_tx,
-            maker_refunds_payment_args.time_lock,
-            maker_refunds_payment_args.other_pubkey,
-            maker_refunds_payment_args.secret_hash,
-            maker_refunds_payment_args.swap_unique_data,
-        )
+    fn send_maker_refunds_payment(&self, maker_refunds_payment_args: RefundPaymentArgs) -> TransactionFut {
+        utxo_common::send_maker_refunds_payment(self.clone(), maker_refunds_payment_args)
     }
 
-    fn validate_fee(&self, validate_fee_args: ValidateFeeArgs) -> Box<dyn Future<Item = (), Error = String> + Send> {
+    fn validate_fee(&self, validate_fee_args: ValidateFeeArgs) -> ValidatePaymentFut<()> {
         let tx = match validate_fee_args.fee_tx {
             TransactionEnum::UtxoTx(tx) => tx.clone(),
             _ => panic!(),
@@ -673,7 +622,12 @@ impl SwapOps for QtumCoin {
     }
 
     #[inline]
-    async fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
+    async fn extract_secret(
+        &self,
+        secret_hash: &[u8],
+        spend_tx: &[u8],
+        _watcher_reward: bool,
+    ) -> Result<Vec<u8>, String> {
         utxo_common::extract_secret(secret_hash, spend_tx)
     }
 
@@ -818,10 +772,7 @@ impl WatcherOps for QtumCoin {
     }
 
     #[inline]
-    fn send_taker_payment_refund_preimage(
-        &self,
-        watcher_refunds_payment_args: SendWatcherRefundsPaymentArgs,
-    ) -> TransactionFut {
+    fn send_taker_payment_refund_preimage(&self, watcher_refunds_payment_args: RefundPaymentArgs) -> TransactionFut {
         utxo_common::send_taker_payment_refund_preimage(self, watcher_refunds_payment_args)
     }
 
@@ -881,22 +832,8 @@ impl MarketCoinOps for QtumCoin {
         utxo_common::send_raw_tx_bytes(&self.utxo_arc, tx)
     }
 
-    fn wait_for_confirmations(
-        &self,
-        tx: &[u8],
-        confirmations: u64,
-        requires_nota: bool,
-        wait_until: u64,
-        check_every: u64,
-    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        utxo_common::wait_for_confirmations(
-            &self.utxo_arc,
-            tx,
-            confirmations,
-            requires_nota,
-            wait_until,
-            check_every,
-        )
+    fn wait_for_confirmations(&self, input: ConfirmPaymentInput) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        utxo_common::wait_for_confirmations(&self.utxo_arc, input)
     }
 
     fn wait_for_htlc_tx_spend(
@@ -1017,9 +954,17 @@ impl MmCoin for QtumCoin {
 
     fn mature_confirmations(&self) -> Option<u32> { Some(self.utxo_arc.conf.mature_confirmations) }
 
-    fn coin_protocol_info(&self) -> Vec<u8> { utxo_common::coin_protocol_info(self) }
+    fn coin_protocol_info(&self, _amount_to_receive: Option<MmNumber>) -> Vec<u8> {
+        utxo_common::coin_protocol_info(self)
+    }
 
-    fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool {
+    fn is_coin_protocol_supported(
+        &self,
+        info: &Option<Vec<u8>>,
+        _amount_to_send: Option<MmNumber>,
+        _locktime: u64,
+        _is_maker: bool,
+    ) -> bool {
         utxo_common::is_coin_protocol_supported(self, info)
     }
 

@@ -59,6 +59,7 @@
 
 use crate::mm2::lp_network::{broadcast_p2p_msg, Libp2pPeerId};
 use bitcrypto::{dhash160, sha256};
+use coins::eth::Web3RpcError;
 use coins::{lp_coinfind, lp_coinfind_or_err, CoinFindError, MmCoinEnum, TradeFee, TransactionEnum};
 use common::log::{debug, warn};
 use common::time_cache::DuplicateCache;
@@ -67,6 +68,7 @@ use common::{bits256, calc_total_pages,
              log::{error, info},
              now_ms, var, HttpStatusCode, PagingOptions, StatusCode};
 use derive_more::Display;
+use futures::compat::Future01CompatExt;
 use http::Response;
 use mm2_core::mm_ctx::{from_ctx, MmArc};
 use mm2_err_handle::prelude::*;
@@ -442,7 +444,7 @@ impl SwapsContext {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub async fn swap_db(&self) -> InitDbResult<SwapDbLocked<'_>> { Ok(self.swap_db.get_or_initialize().await?) }
+    pub async fn swap_db(&self) -> InitDbResult<SwapDbLocked<'_>> { self.swap_db.get_or_initialize().await }
 }
 
 #[derive(Debug, Deserialize)]
@@ -680,6 +682,72 @@ pub fn dex_fee_amount_from_taker_coin(taker_coin: &MmCoinEnum, maker_coin: &str,
     let min_tx_amount = MmNumber::from(taker_coin.min_tx_amount());
     let dex_fee_threshold = dex_fee_threshold(min_tx_amount);
     dex_fee_amount(taker_coin.ticker(), maker_coin, trade_amount, &dex_fee_threshold)
+}
+
+#[derive(Debug, Display)]
+pub enum WatcherRewardError {
+    RPCError(Web3RpcError),
+    InvalidCoinType(String),
+}
+
+// This needs discussion. We need a way to determine the watcher reward amount, and a way to validate it at watcher side so
+// that watchers won't accept it if it's less than the expected amount. This has to be done for all coin types, because watcher rewards
+// will be required by both parties even if only one side is ETH coin. Artem's suggestion was first calculating the reward for ETH and
+// converting the value to other coins, which is what I'm planning to do. I based the values to be higher than the gas amounts used
+// when the watcher spends the maker payment or refunds the taker payment. For the validation, I check if the reward is higher
+// than a minimum amount using the min_watcher_reward method. I can't make an exact comparison because the gas price and relative
+// price of the coins will be different when the taker/maker sends their payment and when the watcher receives the message. This should
+// work fine if we pick the WATCHER_REWARD_GAS and MIN_WATCHER_REWARD_GAS constants good. The advantage of this is that the reward will
+// be directly based on the amount of gas burned when the watcher will call the contract functions (Artem's idea was to make it slightly
+// profitable for the watchers). The disadvantage is the comparison during the validations using a separate minimum value. If we want
+// validations with exact values, there are two other ways I could think of:
+// 1.  Precalculating fixed rewards for all coins. The disadvantage is that the gas price and the relative price of coins will change over
+// time and the reward will deviate from the actual gas used by the watchers, and we can't keep updating the values.
+// 2. Picking the reward to be a percentage of the trade amount like the taker fee. The disadvantage is it will be extremely hard to
+// pick the right ratio such that it will be slightly profitable for watchers.
+pub async fn watcher_reward_amount(
+    coin: &MmCoinEnum,
+    other_coin: &MmCoinEnum,
+) -> Result<u64, MmError<WatcherRewardError>> {
+    const WATCHER_REWARD_GAS: u64 = 100_000;
+    watcher_reward_from_gas(coin, other_coin, WATCHER_REWARD_GAS).await
+}
+
+pub async fn min_watcher_reward(
+    coin: &MmCoinEnum,
+    other_coin: &MmCoinEnum,
+) -> Result<u64, MmError<WatcherRewardError>> {
+    const MIN_WATCHER_REWARD_GAS: u64 = 70_000;
+    watcher_reward_from_gas(coin, other_coin, MIN_WATCHER_REWARD_GAS).await
+}
+
+pub async fn watcher_reward_from_gas(
+    coin: &MmCoinEnum,
+    other_coin: &MmCoinEnum,
+    gas: u64,
+) -> Result<u64, MmError<WatcherRewardError>> {
+    match (coin, other_coin) {
+        (MmCoinEnum::EthCoin(coin), _) | (_, MmCoinEnum::EthCoin(coin)) => {
+            let mut attempts = 0;
+            loop {
+                match coin.get_gas_price().compat().await {
+                    Ok(gas_price) => return Ok(gas * gas_price.as_u64()),
+                    Err(err) => {
+                        if attempts >= 3 {
+                            return MmError::err(WatcherRewardError::RPCError(err.into_inner()));
+                        } else {
+                            attempts += 1;
+                            Timer::sleep(10.).await;
+                        }
+                    },
+                };
+            }
+        },
+        _ => Err(WatcherRewardError::InvalidCoinType(
+            "At least one coin must be ETH to use watcher reward".to_string(),
+        )
+        .into()),
+    }
 }
 
 #[derive(Clone, Debug, Eq, Deserialize, PartialEq, Serialize)]
@@ -1382,6 +1450,11 @@ fn detect_secret_hash_algo(maker_coin: &MmCoinEnum, taker_coin: &MmCoinEnum) -> 
     }
 }
 
+pub struct SwapPubkeys {
+    pub maker: String,
+    pub taker: String,
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod lp_swap_tests {
     use super::*;
@@ -1391,7 +1464,7 @@ mod lp_swap_tests {
     use coins::utxo::{UtxoActivationParams, UtxoRpcMode};
     use coins::MarketCoinOps;
     use coins::PrivKeyActivationPolicy;
-    use common::block_on;
+    use common::{block_on, new_uuid};
     use mm2_core::mm_ctx::MmCtxBuilder;
     use mm2_test_helpers::for_tests::{morty_conf, rick_conf, MORTY_ELECTRUM_ADDRS, RICK_ELECTRUM_ADDRS};
 
@@ -1753,7 +1826,7 @@ mod lp_swap_tests {
         UtxoActivationParams {
             mode: UtxoRpcMode::Electrum {
                 servers: electrums
-                    .into_iter()
+                    .iter()
                     .map(|url| ElectrumRpcRequest {
                         url: url.to_string(),
                         protocol: Default::default(),
@@ -1863,7 +1936,7 @@ mod lp_swap_tests {
 
         println!("Taker address {}", rick_taker.my_address().unwrap());
 
-        let uuid = Uuid::new_v4();
+        let uuid = new_uuid();
         let maker_amount = BigDecimal::from_str("0.1").unwrap();
         let taker_amount = BigDecimal::from_str("0.1").unwrap();
         let conf_settings = SwapConfirmationsSettings {

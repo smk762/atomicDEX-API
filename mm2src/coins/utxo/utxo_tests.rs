@@ -1,5 +1,6 @@
 use super::*;
 use crate::coin_balance::HDAddressBalance;
+use crate::coin_errors::ValidatePaymentError;
 use crate::hd_confirm_address::for_tests::MockableConfirmAddress;
 use crate::hd_confirm_address::{HDConfirmAddress, HDConfirmAddressError};
 use crate::hd_wallet::HDAccountsMap;
@@ -28,8 +29,9 @@ use crate::utxo::utxo_standard::{utxo_standard_coin_with_priv_key, UtxoStandardC
 use crate::utxo::utxo_tx_history_v2::{UtxoTxDetailsParams, UtxoTxHistoryOps};
 #[cfg(not(target_arch = "wasm32"))] use crate::WithdrawFee;
 use crate::{BlockHeightAndTime, CoinBalance, IguanaPrivKey, PrivKeyBuildPolicy, SearchForSwapTxSpendInput,
-            SendMakerSpendsTakerPaymentArgs, StakingInfosDetails, SwapOps, TradePreimageValue, TxFeeDetails,
-            TxMarshalingErr, ValidateFeeArgs};
+            SpendPaymentArgs, StakingInfosDetails, SwapOps, TradePreimageValue, TxFeeDetails, TxMarshalingErr,
+            ValidateFeeArgs};
+use crate::{ConfirmPaymentInput, INVALID_SENDER_ERR_LOG};
 use chain::{BlockHeader, BlockHeaderBits, OutPoint};
 use common::executor::Timer;
 use common::{block_on, now_ms, OrdRange, PagingOptionsEnum, DEX_FEE_ADDR_RAW_PUBKEY};
@@ -149,7 +151,7 @@ fn test_extract_secret() {
     let tx_hex = hex::decode("0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c").unwrap();
     let expected_secret = hex::decode("9da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365").unwrap();
     let secret_hash = &*dhash160(&expected_secret);
-    let secret = block_on(coin.extract_secret(secret_hash, &tx_hex)).unwrap();
+    let secret = block_on(coin.extract_secret(secret_hash, &tx_hex, false)).unwrap();
     assert_eq!(secret, expected_secret);
 }
 
@@ -159,14 +161,15 @@ fn test_send_maker_spends_taker_payment_recoverable_tx() {
     let coin = utxo_coin_for_test(client.into(), None, false);
     let tx_hex = hex::decode("0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c").unwrap();
     let secret = hex::decode("9da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365").unwrap();
-    let maker_spends_payment_args = SendMakerSpendsTakerPaymentArgs {
+    let maker_spends_payment_args = SpendPaymentArgs {
         other_payment_tx: &tx_hex,
         time_lock: 777,
-        other_pubkey: &coin.my_public_key().unwrap().to_vec(),
+        other_pubkey: coin.my_public_key().unwrap(),
         secret: &secret,
         secret_hash: &*dhash160(&secret),
         swap_contract_address: &coin.swap_contract_address(),
         swap_unique_data: &[],
+        watcher_reward: false,
     };
     let tx_err = coin
         .send_maker_spends_taker_payment(maker_spends_payment_args)
@@ -492,12 +495,13 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
 
     let search_input = SearchForSwapTxSpendInput {
         time_lock: 1591928233,
-        other_pub: &*coin.my_public_key().unwrap(),
+        other_pub: coin.my_public_key().unwrap(),
         secret_hash: &*dhash160(&secret),
         tx: &payment_tx_bytes,
         search_from_block: 0,
         swap_contract_address: &None,
         swap_unique_data: &[],
+        watcher_reward: false,
     };
     let found = block_on(coin.search_for_swap_tx_spend_my(search_input))
         .unwrap()
@@ -526,12 +530,13 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
 
     let search_input = SearchForSwapTxSpendInput {
         time_lock: 1591933469,
-        other_pub: &coin.as_ref().priv_key_policy.key_pair_or_err().unwrap().public(),
+        other_pub: coin.as_ref().priv_key_policy.key_pair_or_err().unwrap().public(),
         secret_hash: &secret_hash,
         tx: &payment_tx_bytes,
         search_from_block: 0,
         swap_contract_address: &None,
         swap_unique_data: &[],
+        watcher_reward: false,
     };
     let found = block_on(coin.search_for_swap_tx_spend_my(search_input))
         .unwrap()
@@ -1315,9 +1320,9 @@ fn test_get_median_time_past_from_native_does_not_have_median_in_get_block() {
     let blocks: Vec<VerboseBlock> = json::from_str(blocks_json_str).unwrap();
     let mut block_hashes: HashMap<_, _> = blocks
         .iter()
-        .map(|block| (block.height.unwrap() as u64, block.hash.clone()))
+        .map(|block| (block.height.unwrap() as u64, block.hash))
         .collect();
-    let mut blocks: HashMap<_, _> = blocks.into_iter().map(|block| (block.hash.clone(), block)).collect();
+    let mut blocks: HashMap<_, _> = blocks.into_iter().map(|block| (block.hash, block)).collect();
     let client = native_client_for_test();
 
     NativeClientImpl::get_block_hash.mock_safe(move |_, block_num| {
@@ -1475,7 +1480,7 @@ fn test_address_from_str_with_legacy_address_activated() {
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/673
 fn test_network_info_negative_time_offset() {
     let info_str = r#"{"version":1140200,"subversion":"/Shibetoshi:1.14.2/","protocolversion":70015,"localservices":"0000000000000005","localrelay":true,"timeoffset":-1,"networkactive":true,"connections":12,"networks":[{"name":"ipv4","limited":false,"reachable":true,"proxy":"","proxy_randomize_credentials":false},{"name":"ipv6","limited":false,"reachable":true,"proxy":"","proxy_randomize_credentials":false},{"name":"onion","limited":false,"reachable":true,"proxy":"127.0.0.1:9050","proxy_randomize_credentials":true}],"relayfee":1.00000000,"incrementalfee":0.00001000,"localaddresses":[],"warnings":""}"#;
-    let _info: NetworkInfo = json::from_str(&info_str).unwrap();
+    let _info: NetworkInfo = json::from_str(info_str).unwrap();
 }
 
 #[test]
@@ -1631,7 +1636,7 @@ fn test_qtum_add_delegation() {
     };
     let res = coin.add_delegation(request).wait().unwrap();
     // Eligible for delegation
-    assert_eq!(res.my_balance_change.is_negative(), true);
+    assert!(res.my_balance_change.is_negative());
     assert_eq!(res.total_amount, res.spent_by_me);
     assert!(res.spent_by_me > res.received_by_me);
 
@@ -1641,7 +1646,7 @@ fn test_qtum_add_delegation() {
     };
     let res = coin.add_delegation(request).wait();
     // Wrong address
-    assert_eq!(res.is_err(), true);
+    assert!(res.is_err());
 }
 
 #[test]
@@ -1670,7 +1675,7 @@ fn test_qtum_add_delegation_on_already_delegating() {
     };
     let res = coin.add_delegation(request).wait();
     // Already Delegating
-    assert_eq!(res.is_err(), true);
+    assert!(res.is_err());
 }
 
 #[test]
@@ -1697,10 +1702,10 @@ fn test_qtum_get_delegation_infos() {
     let staking_infos = coin.get_delegation_infos().wait().unwrap();
     match staking_infos.staking_infos_details {
         StakingInfosDetails::Qtum(staking_details) => {
-            assert_eq!(staking_details.am_i_staking, true);
+            assert!(staking_details.am_i_staking);
             assert_eq!(staking_details.staker.unwrap(), "qcyBHeSct7Wr4mAw18iuQ1zW5mMFYmtmBE");
             // Will return false for segwit.
-            assert_eq!(staking_details.is_staking_supported, true);
+            assert!(staking_details.is_staking_supported);
         },
     };
 }
@@ -1725,7 +1730,7 @@ fn test_qtum_remove_delegation() {
     ))
     .unwrap();
     let res = coin.remove_delegation().wait();
-    assert_eq!(res.is_err(), false);
+    assert!(res.is_ok());
 }
 
 #[test]
@@ -1874,7 +1879,7 @@ fn test_get_mature_unspent_ordered_map_from_cache_impl(
         block_on(coin.get_mature_unspent_ordered_list(&Address::from("R9o9xTocqr6CeEDGDH6mEYpwLoMz6jNjMW")))
             .expect("Expected an empty unspent list");
     // unspents should be empty because `is_unspent_mature()` always returns false
-    assert!(unsafe { IS_UNSPENT_MATURE_CALLED == true });
+    assert!(unsafe { IS_UNSPENT_MATURE_CALLED });
     assert!(unspents.mature.is_empty());
     assert_eq!(unspents.immature.len(), 1);
 }
@@ -2019,12 +2024,12 @@ fn test_native_client_unspents_filtered_using_tx_cache_single_tx_in_cache() {
     let tx: UtxoTx = "0400008085202f89027f57730fcbbc2c72fb18bcc3766a713044831a117bb1cade3ed88644864f7333020000006a47304402206e3737b2fcf078b61b16fa67340cc3e79c5d5e2dc9ffda09608371552a3887450220460a332aa1b8ad8f2de92d319666f70751078b221199951f80265b4f7cef8543012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff42b916a80430b80a77e114445b08cf120735447a524de10742fac8f6a9d4170f000000006a473044022004aa053edafb9d161ea8146e0c21ed1593aa6b9404dd44294bcdf920a1695fd902202365eac15dbcc5e9f83e2eed56a8f2f0e5aded36206f9c3fabc668fd4665fa2d012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff03547b16000000000017a9143e8ad0e2bf573d32cb0b3d3a304d9ebcd0c2023b870000000000000000166a144e2b3c0323ab3c2dc6f86dc5ec0729f11e42f56103970400000000001976a91450f4f098306f988d8843004689fae28c83ef16e888ac89c5925f000000000000000000000000000000".into();
     let spent_by_tx = vec![
         UnspentInfo {
-            outpoint: tx.inputs[0].previous_output.clone(),
+            outpoint: tx.inputs[0].previous_output,
             value: 886737,
             height: Some(642293),
         },
         UnspentInfo {
-            outpoint: tx.inputs[1].previous_output.clone(),
+            outpoint: tx.inputs[1].previous_output,
             value: 88843,
             height: Some(642293),
         },
@@ -2065,56 +2070,48 @@ fn test_native_client_unspents_filtered_using_tx_cache_single_several_chained_tx
     let tx_0: UtxoTx = "0400008085202f89027f57730fcbbc2c72fb18bcc3766a713044831a117bb1cade3ed88644864f7333020000006a47304402206e3737b2fcf078b61b16fa67340cc3e79c5d5e2dc9ffda09608371552a3887450220460a332aa1b8ad8f2de92d319666f70751078b221199951f80265b4f7cef8543012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff42b916a80430b80a77e114445b08cf120735447a524de10742fac8f6a9d4170f000000006a473044022004aa053edafb9d161ea8146e0c21ed1593aa6b9404dd44294bcdf920a1695fd902202365eac15dbcc5e9f83e2eed56a8f2f0e5aded36206f9c3fabc668fd4665fa2d012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff03547b16000000000017a9143e8ad0e2bf573d32cb0b3d3a304d9ebcd0c2023b870000000000000000166a144e2b3c0323ab3c2dc6f86dc5ec0729f11e42f56103970400000000001976a91450f4f098306f988d8843004689fae28c83ef16e888ac89c5925f000000000000000000000000000000".into();
     let spent_by_tx_0 = vec![
         UnspentInfo {
-            outpoint: tx_0.inputs[0].previous_output.clone(),
+            outpoint: tx_0.inputs[0].previous_output,
             value: 886737,
             height: Some(642293),
         },
         UnspentInfo {
-            outpoint: tx_0.inputs[1].previous_output.clone(),
+            outpoint: tx_0.inputs[1].previous_output,
             value: 88843,
             height: Some(642293),
         },
     ];
-    block_on(coin.as_ref().recently_spent_outpoints.lock()).add_spent(
-        spent_by_tx_0.clone(),
-        tx_0.hash(),
-        tx_0.outputs.clone(),
-    );
+    block_on(coin.as_ref().recently_spent_outpoints.lock()).add_spent(spent_by_tx_0.clone(), tx_0.hash(), tx_0.outputs);
 
     // https://morty.explorer.dexstats.info/tx/dbfc821e482747a3512ee6d5734f9df2aa73dab07e2fcd86abeadb462e795bf9
     let tx_1: UtxoTx = "0400008085202f890347d329798b508dc28ec99d8c6f6c7ced860a19a364e1bafe391cab89aeaac731020000006a47304402203ea8b380d0a7e64348869ef7c4c2bfa966fc7b148633003332fa8d0ab0c1bc5602202cc63fabdd2a6578c52d8f4f549069b16505f2ead48edc2b8de299be15aadf9a012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff1d1fd3a6b01710647a7f4a08c6de6075cb8e78d5069fa50f10c4a2a10ded2a95000000006a47304402203868945edc0f6dc2ee43d70a69ee4ec46ca188dc493173ce58924ba9bf6ee7a50220648ff99ce458ca72800758f6a1bd3800cd05ff9c3122f23f3653c25e09d22c79012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff7932150df8b4a1852b8b84b89b0d5322bf74665fb7f76a728369fd6895d3fd48000000006a4730440220127918c6f79c11f7f2376a6f3b750ed4c7103183181ad1218afcb2625ece9599022028c05e88d3a2f97cebd84a718cda33b62b48b18f16278fa8e531fd2155e61ee8012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff0329fd12000000000017a914cafb62e3e8bdb8db3735c39b92743ac6ebc9ef20870000000000000000166a14a7416b070c9bb98f4bafae55616f005a2a30bd6014b40c00000000001976a91450f4f098306f988d8843004689fae28c83ef16e888ac8cc5925f000000000000000000000000000000".into();
     let spent_by_tx_1 = vec![
         UnspentInfo {
-            outpoint: tx_1.inputs[0].previous_output.clone(),
+            outpoint: tx_1.inputs[0].previous_output,
             value: 300803,
             height: Some(642293),
         },
         UnspentInfo {
-            outpoint: tx_1.inputs[1].previous_output.clone(),
+            outpoint: tx_1.inputs[1].previous_output,
             value: 888544,
             height: Some(642293),
         },
         UnspentInfo {
-            outpoint: tx_1.inputs[2].previous_output.clone(),
+            outpoint: tx_1.inputs[2].previous_output,
             value: 888642,
             height: Some(642293),
         },
     ];
-    block_on(coin.as_ref().recently_spent_outpoints.lock()).add_spent(
-        spent_by_tx_1.clone(),
-        tx_1.hash(),
-        tx_1.outputs.clone(),
-    );
+    block_on(coin.as_ref().recently_spent_outpoints.lock()).add_spent(spent_by_tx_1.clone(), tx_1.hash(), tx_1.outputs);
     // https://morty.explorer.dexstats.info/tx/12ea22a7cde9efb66b76f9b84345ddfc4c34870e293bfa8eac68d7df83dffa4b
     let tx_2: UtxoTx = "0400008085202f8902f95b792e46dbeaab86cd2f7eb0da73aaf29d4f73d5e62e51a34727481e82fcdb020000006a4730440220347adefe33ed5afbbb8e5d453afd527319f9a50ab790023296a981da095ca4a2022029a68ef6fd5a4decf3793d4c33994eb8658408f3b14a6d439c4753b2dde954ee012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff75bd4348594f8ff2a216e5ad7533b37d47d2a2767b0b88d43972ad51895355e2000000006a473044022069b36c0f65d56e02bc179f7442806374c4163d07939090aba1da736abad9a77d022006dc39adf48e02033ae9d4a48540752ae3b3841e3ec60d2e86dececb88b9e518012102d8c948c6af848c588517288168faa397d6ba3ea924596d03d1d84f224b5123c2ffffffff03414111000000000017a914a153024c826a3a42c2e501eca5d7dacd3fc59976870000000000000000166a14db0e6f4d418d68dce8e5beb26cc5078e01e2e3ace2fe0800000000001976a91450f4f098306f988d8843004689fae28c83ef16e888ac8fc5925f000000000000000000000000000000".into();
     let spent_by_tx_2 = vec![
         UnspentInfo {
-            outpoint: tx_2.inputs[0].previous_output.clone(),
+            outpoint: tx_2.inputs[0].previous_output,
             value: 832532,
             height: Some(642293),
         },
         UnspentInfo {
-            outpoint: tx_2.inputs[1].previous_output.clone(),
+            outpoint: tx_2.inputs[1].previous_output,
             value: 888823,
             height: Some(642293),
         },
@@ -2529,14 +2526,18 @@ fn test_validate_fee_wrong_sender() {
     let amount: BigDecimal = "0.0014157".parse().unwrap();
     let validate_fee_args = ValidateFeeArgs {
         fee_tx: &taker_fee_tx,
-        expected_sender: &*DEX_FEE_ADDR_RAW_PUBKEY,
-        fee_addr: &*DEX_FEE_ADDR_RAW_PUBKEY,
+        expected_sender: &DEX_FEE_ADDR_RAW_PUBKEY,
+        fee_addr: &DEX_FEE_ADDR_RAW_PUBKEY,
         amount: &amount,
         min_block_number: 0,
         uuid: &[],
     };
-    let validate_err = coin.validate_fee(validate_fee_args).wait().unwrap_err();
-    assert!(validate_err.contains("was sent from wrong address"));
+    let error = coin.validate_fee(validate_fee_args).wait().unwrap_err().into_inner();
+    log!("error: {:?}", error);
+    match error {
+        ValidatePaymentError::WrongPaymentTx(err) => assert!(err.contains(INVALID_SENDER_ERR_LOG)),
+        _ => panic!("Expected `WrongPaymentTx` wrong sender address, found {:?}", error),
+    }
 }
 
 #[test]
@@ -2555,13 +2556,16 @@ fn test_validate_fee_min_block() {
     let validate_fee_args = ValidateFeeArgs {
         fee_tx: &taker_fee_tx,
         expected_sender: &sender_pub,
-        fee_addr: &*DEX_FEE_ADDR_RAW_PUBKEY,
+        fee_addr: &DEX_FEE_ADDR_RAW_PUBKEY,
         amount: &amount,
         min_block_number: 810329,
         uuid: &[],
     };
-    let validate_err = coin.validate_fee(validate_fee_args).wait().unwrap_err();
-    assert!(validate_err.contains("confirmed before min_block"));
+    let error = coin.validate_fee(validate_fee_args).wait().unwrap_err().into_inner();
+    match error {
+        ValidatePaymentError::WrongPaymentTx(err) => assert!(err.contains("confirmed before min_block")),
+        _ => panic!("Expected `WrongPaymentTx` early confirmation, found {:?}", error),
+    }
 }
 
 #[test]
@@ -2581,7 +2585,7 @@ fn test_validate_fee_bch_70_bytes_signature() {
     let validate_fee_args = ValidateFeeArgs {
         fee_tx: &taker_fee_tx,
         expected_sender: &sender_pub,
-        fee_addr: &*DEX_FEE_ADDR_RAW_PUBKEY,
+        fee_addr: &DEX_FEE_ADDR_RAW_PUBKEY,
         amount: &amount,
         min_block_number: 0,
         uuid: &[],
@@ -2736,8 +2740,7 @@ fn test_generate_tx_doge_fee() {
         TransactionOutput {
             value: 100000000,
             script_pubkey: vec![0; 26].into(),
-        }
-        .clone();
+        };
         40
     ];
 
@@ -2757,8 +2760,7 @@ fn test_generate_tx_doge_fee() {
         TransactionOutput {
             value: 100000000,
             script_pubkey: vec![0; 26].into(),
-        }
-        .clone();
+        };
         60
     ];
 
@@ -3067,7 +3069,7 @@ fn test_withdraw_to_p2pkh() {
 
     let client = NativeClient(Arc::new(NativeClientImpl::default()));
 
-    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client.clone()), None, false);
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None, false);
 
     // Create a p2pkh address for the test coin
     let p2pkh_address = Address {
@@ -3115,7 +3117,7 @@ fn test_withdraw_to_p2sh() {
 
     let client = NativeClient(Arc::new(NativeClientImpl::default()));
 
-    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client.clone()), None, false);
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None, false);
 
     // Create a p2sh address for the test coin
     let p2sh_address = Address {
@@ -3163,7 +3165,7 @@ fn test_withdraw_to_p2wpkh() {
 
     let client = NativeClient(Arc::new(NativeClientImpl::default()));
 
-    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client.clone()), None, true);
+    let coin = utxo_coin_for_test(UtxoRpcClientEnum::Native(client), None, true);
 
     // Create a p2wpkh address for the test coin
     let p2wpkh_address = Address {
@@ -3469,7 +3471,7 @@ fn test_account_balance_rpc() {
                 let address_str = address.to_string();
                 let balance = addresses_map
                     .remove(&address_str)
-                    .expect(&format!("Unexpected address: {}", address_str));
+                    .unwrap_or_else(|| panic!("Unexpected address: {}", address_str));
                 (address, BigDecimal::from(balance))
             })
             .collect();
@@ -3786,7 +3788,7 @@ fn test_scan_for_new_addresses() {
         let address = address.to_string();
         let balance = display_balances
             .remove(&address)
-            .expect(&format!("Unexpected address: {}", address));
+            .unwrap_or_else(|| panic!("Unexpected address: {}", address));
         MockResult::Return(Box::new(futures01::future::ok(BigDecimal::from(balance))))
     });
 
@@ -4123,11 +4125,14 @@ fn test_for_non_existent_tx_hex_utxo_electrum() {
     );
     // bad transaction hex
     let tx = hex::decode("0400008085202f8902bf17bf7d1daace52e08f732a6b8771743ca4b1cb765a187e72fd091a0aabfd52000000006a47304402203eaaa3c4da101240f80f9c5e9de716a22b1ec6d66080de6a0cca32011cd77223022040d9082b6242d6acf9a1a8e658779e1c655d708379862f235e8ba7b8ca4e69c6012102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ffffffffff023ca13c0e9e085dd13f481f193e8a3e8fd609020936e98b5587342d994f4d020000006b483045022100c0ba56adb8de923975052312467347d83238bd8d480ce66e8b709a7997373994022048507bcac921fdb2302fa5224ce86e41b7efc1a2e20ae63aa738dfa99b7be826012102031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3ffffffff0300e1f5050000000017a9141ee6d4c38a3c078eab87ad1a5e4b00f21259b10d87000000000000000016611400000000000000000000000000000000000000001b94d736000000001976a91405aab5342166f8594baf17a7d9bef5d56744332788ac2d08e35e000000000000000000000000000000").unwrap();
-    let actual = coin
-        .wait_for_confirmations(&tx, 1, false, timeout, 1)
-        .wait()
-        .err()
-        .unwrap();
+    let confirm_payment_input = ConfirmPaymentInput {
+        payment_tx: tx,
+        confirmations: 1,
+        requires_nota: false,
+        wait_until: timeout,
+        check_every: 1,
+    };
+    let actual = coin.wait_for_confirmations(confirm_payment_input).wait().err().unwrap();
     assert!(actual.contains(
         "Tx d342ff9da528a2e262bddf2b6f9a27d1beb7aeb03f0fc8d9eac2987266447e44 was not found on chain after 10 tries"
     ));
@@ -4343,7 +4348,7 @@ fn test_block_header_utxo_loop() {
     });
 
     let ctx = mm_ctx_with_custom_db();
-    let priv_key_policy = PrivKeyBuildPolicy::IguanaPrivKey(IguanaPrivKey::from(H256Json::from([1u8; 32])));
+    let priv_key_policy = PrivKeyBuildPolicy::IguanaPrivKey(H256Json::from([1u8; 32]));
     let servers: Vec<_> = RICK_ELECTRUM_ADDRS
         .iter()
         .map(|server| json!({ "url": server }))

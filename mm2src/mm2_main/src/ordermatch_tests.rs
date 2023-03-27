@@ -28,7 +28,7 @@ fn test_match_maker_order_and_taker_request() {
         price: 1.into(),
         matches: HashMap::new(),
         started_swaps: Vec::new(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         conf_settings: None,
         changes_history: None,
         save_in_history: false,
@@ -40,7 +40,7 @@ fn test_match_maker_order_and_taker_request() {
     let request = TakerRequest {
         base: "BASE".into(),
         rel: "REL".into(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         dest_pub_key: H256Json::default(),
         sender_pubkey: H256Json::default(),
         base_amount: 10.into(),
@@ -66,7 +66,7 @@ fn test_match_maker_order_and_taker_request() {
         price: "0.5".into(),
         matches: HashMap::new(),
         started_swaps: Vec::new(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         conf_settings: None,
         changes_history: None,
         save_in_history: false,
@@ -78,7 +78,7 @@ fn test_match_maker_order_and_taker_request() {
     let request = TakerRequest {
         base: "BASE".into(),
         rel: "REL".into(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         dest_pub_key: H256Json::default(),
         sender_pubkey: H256Json::default(),
         base_amount: 10.into(),
@@ -104,7 +104,7 @@ fn test_match_maker_order_and_taker_request() {
         price: "0.5".into(),
         matches: HashMap::new(),
         started_swaps: Vec::new(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         conf_settings: None,
         changes_history: None,
         save_in_history: false,
@@ -116,7 +116,7 @@ fn test_match_maker_order_and_taker_request() {
     let request = TakerRequest {
         base: "BASE".into(),
         rel: "REL".into(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         dest_pub_key: H256Json::default(),
         sender_pubkey: H256Json::default(),
         base_amount: 10.into(),
@@ -142,7 +142,7 @@ fn test_match_maker_order_and_taker_request() {
         price: "0.5".into(),
         matches: HashMap::new(),
         started_swaps: Vec::new(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         conf_settings: None,
         changes_history: None,
         save_in_history: false,
@@ -154,7 +154,7 @@ fn test_match_maker_order_and_taker_request() {
     let request = TakerRequest {
         base: "REL".into(),
         rel: "BASE".into(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         dest_pub_key: H256Json::default(),
         sender_pubkey: H256Json::default(),
         base_amount: 5.into(),
@@ -180,7 +180,7 @@ fn test_match_maker_order_and_taker_request() {
         price: "0.5".into(),
         matches: HashMap::new(),
         started_swaps: Vec::new(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         conf_settings: None,
         changes_history: None,
         save_in_history: false,
@@ -192,7 +192,7 @@ fn test_match_maker_order_and_taker_request() {
     let request = TakerRequest {
         base: "REL".into(),
         rel: "BASE".into(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         dest_pub_key: H256Json::default(),
         sender_pubkey: H256Json::default(),
         base_amount: 10.into(),
@@ -218,7 +218,7 @@ fn test_match_maker_order_and_taker_request() {
         price: "1".into(),
         matches: HashMap::new(),
         started_swaps: Vec::new(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         conf_settings: None,
         changes_history: None,
         save_in_history: false,
@@ -230,7 +230,7 @@ fn test_match_maker_order_and_taker_request() {
     let request = TakerRequest {
         base: "REL".into(),
         rel: "BASE".into(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         dest_pub_key: H256Json::default(),
         sender_pubkey: H256Json::default(),
         base_amount: 1.into(),
@@ -258,7 +258,7 @@ fn test_match_maker_order_and_taker_request() {
         rel: "KMD".to_owned(),
         matches: HashMap::new(),
         started_swaps: vec![],
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         conf_settings: None,
         changes_history: None,
         save_in_history: false,
@@ -272,7 +272,7 @@ fn test_match_maker_order_and_taker_request() {
         base_amount: "774.205645538427044180416545".into(),
         rel_amount: "0.2928826881884105".into(),
         action: TakerAction::Sell,
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
         match_by: MatchBy::Any,
@@ -298,7 +298,7 @@ fn test_match_maker_order_and_taker_request() {
         rel: "REL".to_owned(),
         matches: HashMap::new(),
         started_swaps: vec![],
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         conf_settings: None,
         changes_history: None,
         save_in_history: false,
@@ -312,7 +312,7 @@ fn test_match_maker_order_and_taker_request() {
         base_amount: "30".into(),
         rel_amount: "1.5".into(),
         action: TakerAction::Sell,
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
         match_by: MatchBy::Any,
@@ -369,7 +369,7 @@ fn test_maker_order_available_amount() {
         price: 1.into(),
         matches: HashMap::new(),
         started_swaps: Vec::new(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         conf_settings: None,
         changes_history: None,
         save_in_history: false,
@@ -377,9 +377,9 @@ fn test_maker_order_available_amount() {
         rel_orderbook_ticker: None,
         p2p_privkey: None,
     };
-    maker.matches.insert(Uuid::new_v4(), MakerMatch {
+    maker.matches.insert(new_uuid(), MakerMatch {
         request: TakerRequest {
-            uuid: Uuid::new_v4(),
+            uuid: new_uuid(),
             base: "BASE".into(),
             rel: "REL".into(),
             base_amount: 5.into(),
@@ -399,8 +399,8 @@ fn test_maker_order_available_amount() {
             rel_amount: 5.into(),
             sender_pubkey: H256Json::default(),
             dest_pub_key: H256Json::default(),
-            maker_order_uuid: Uuid::new_v4(),
-            taker_order_uuid: Uuid::new_v4(),
+            maker_order_uuid: new_uuid(),
+            taker_order_uuid: new_uuid(),
             conf_settings: None,
             base_protocol_info: None,
             rel_protocol_info: None,
@@ -409,9 +409,9 @@ fn test_maker_order_available_amount() {
         connected: None,
         last_updated: now_ms(),
     });
-    maker.matches.insert(Uuid::new_v4(), MakerMatch {
+    maker.matches.insert(new_uuid(), MakerMatch {
         request: TakerRequest {
-            uuid: Uuid::new_v4(),
+            uuid: new_uuid(),
             base: "BASE".into(),
             rel: "REL".into(),
             base_amount: 1.into(),
@@ -431,8 +431,8 @@ fn test_maker_order_available_amount() {
             rel_amount: 1.into(),
             sender_pubkey: H256Json::default(),
             dest_pub_key: H256Json::default(),
-            maker_order_uuid: Uuid::new_v4(),
-            taker_order_uuid: Uuid::new_v4(),
+            maker_order_uuid: new_uuid(),
+            taker_order_uuid: new_uuid(),
             conf_settings: None,
             base_protocol_info: None,
             rel_protocol_info: None,
@@ -449,7 +449,7 @@ fn test_maker_order_available_amount() {
 
 #[test]
 fn test_taker_match_reserved() {
-    let uuid = Uuid::new_v4();
+    let uuid = new_uuid();
 
     let request = TakerRequest {
         base: "BASE".into(),
@@ -486,7 +486,7 @@ fn test_taker_match_reserved() {
         rel_amount: 10.into(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
-        maker_order_uuid: Uuid::new_v4(),
+        maker_order_uuid: new_uuid(),
         taker_order_uuid: uuid,
         conf_settings: None,
         base_protocol_info: None,
@@ -530,7 +530,7 @@ fn test_taker_match_reserved() {
         rel_amount: 10.into(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
-        maker_order_uuid: Uuid::new_v4(),
+        maker_order_uuid: new_uuid(),
         taker_order_uuid: uuid,
         conf_settings: None,
         base_protocol_info: None,
@@ -574,7 +574,7 @@ fn test_taker_match_reserved() {
         rel_amount: 1.into(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
-        maker_order_uuid: Uuid::new_v4(),
+        maker_order_uuid: new_uuid(),
         taker_order_uuid: uuid,
         conf_settings: None,
         base_protocol_info: None,
@@ -618,7 +618,7 @@ fn test_taker_match_reserved() {
         rel_amount: 1.into(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
-        maker_order_uuid: Uuid::new_v4(),
+        maker_order_uuid: new_uuid(),
         taker_order_uuid: uuid,
         conf_settings: None,
         base_protocol_info: None,
@@ -662,7 +662,7 @@ fn test_taker_match_reserved() {
         rel_amount: 1.into(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
-        maker_order_uuid: Uuid::new_v4(),
+        maker_order_uuid: new_uuid(),
         taker_order_uuid: uuid,
         conf_settings: None,
         base_protocol_info: None,
@@ -706,7 +706,7 @@ fn test_taker_match_reserved() {
         rel_amount: 1.into(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
-        maker_order_uuid: Uuid::new_v4(),
+        maker_order_uuid: new_uuid(),
         taker_order_uuid: uuid,
         conf_settings: None,
         base_protocol_info: None,
@@ -750,7 +750,7 @@ fn test_taker_match_reserved() {
         rel_amount: 1.into(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
-        maker_order_uuid: Uuid::new_v4(),
+        maker_order_uuid: new_uuid(),
         taker_order_uuid: uuid,
         conf_settings: None,
         base_protocol_info: None,
@@ -794,7 +794,7 @@ fn test_taker_match_reserved() {
         rel_amount: 3.into(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
-        maker_order_uuid: Uuid::new_v4(),
+        maker_order_uuid: new_uuid(),
         taker_order_uuid: uuid,
         conf_settings: None,
         base_protocol_info: None,
@@ -853,7 +853,7 @@ fn test_taker_order_cancellable() {
     let request = TakerRequest {
         base: "BASE".into(),
         rel: "REL".into(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         dest_pub_key: H256Json::default(),
         sender_pubkey: H256Json::default(),
         base_amount: 1.into(),
@@ -883,7 +883,7 @@ fn test_taker_order_cancellable() {
     let request = TakerRequest {
         base: "BASE".into(),
         rel: "REL".into(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         dest_pub_key: H256Json::default(),
         sender_pubkey: H256Json::default(),
         base_amount: 1.into(),
@@ -908,7 +908,7 @@ fn test_taker_order_cancellable() {
         p2p_privkey: None,
     };
 
-    order.matches.insert(Uuid::new_v4(), TakerMatch {
+    order.matches.insert(new_uuid(), TakerMatch {
         last_updated: now_ms(),
         reserved: MakerReserved {
             base: "BASE".into(),
@@ -917,8 +917,8 @@ fn test_taker_order_cancellable() {
             rel_amount: 3.into(),
             sender_pubkey: H256Json::default(),
             dest_pub_key: H256Json::default(),
-            maker_order_uuid: Uuid::new_v4(),
-            taker_order_uuid: Uuid::new_v4(),
+            maker_order_uuid: new_uuid(),
+            taker_order_uuid: new_uuid(),
             conf_settings: None,
             base_protocol_info: None,
             rel_protocol_info: None,
@@ -926,8 +926,8 @@ fn test_taker_order_cancellable() {
         connect: TakerConnect {
             sender_pubkey: H256Json::default(),
             dest_pub_key: H256Json::default(),
-            maker_order_uuid: Uuid::new_v4(),
-            taker_order_uuid: Uuid::new_v4(),
+            maker_order_uuid: new_uuid(),
+            taker_order_uuid: new_uuid(),
         },
         connected: None,
     });
@@ -1102,10 +1102,10 @@ fn test_cancel_by_all() {
 #[test]
 // https://github.com/KomodoPlatform/atomicDEX-API/issues/607
 fn test_taker_order_match_by() {
-    let uuid = Uuid::new_v4();
+    let uuid = new_uuid();
 
     let mut not_matching_uuids = HashSet::new();
-    not_matching_uuids.insert(Uuid::new_v4());
+    not_matching_uuids.insert(new_uuid());
     let request = TakerRequest {
         base: "BASE".into(),
         rel: "REL".into(),
@@ -1141,7 +1141,7 @@ fn test_taker_order_match_by() {
         rel_amount: 10.into(),
         sender_pubkey: H256Json::default(),
         dest_pub_key: H256Json::default(),
-        maker_order_uuid: Uuid::new_v4(),
+        maker_order_uuid: new_uuid(),
         taker_order_uuid: uuid,
         conf_settings: None,
         base_protocol_info: None,
@@ -1179,7 +1179,7 @@ fn test_maker_order_was_updated() {
         price: 1.into(),
         matches: HashMap::new(),
         started_swaps: Vec::new(),
-        uuid: Uuid::new_v4(),
+        uuid: new_uuid(),
         conf_settings: None,
         changes_history: None,
         save_in_history: false,
@@ -1213,13 +1213,15 @@ fn lp_connect_start_bob_should_not_be_invoked_if_order_match_already_connected()
 
     static mut CONNECT_START_CALLED: bool = false;
     lp_connect_start_bob.mock_safe(|_, _, _| {
-        MockResult::Return(unsafe {
+        unsafe {
             CONNECT_START_CALLED = true;
-        })
+        }
+
+        MockResult::Return(())
     });
 
     let connect: TakerConnect = json::from_str(r#"{"taker_order_uuid":"2f9afe84-7a89-4194-8947-45fba563118f","maker_order_uuid":"5f6516ea-ccaa-453a-9e37-e1c2c0d527e3","method":"connect","sender_pubkey":"031d4256c4bc9f99ac88bf3dba21773132281f65f9bf23a59928bce08961e2f3","dest_pub_key":"c6a78589e18b482aea046975e6d0acbdea7bf7dbf04d9d5bd67fda917815e3ed"}"#).unwrap();
-    block_on(process_taker_connect(ctx, connect.sender_pubkey.clone(), connect));
+    block_on(process_taker_connect(ctx, connect.sender_pubkey, connect));
     assert!(unsafe { !CONNECT_START_CALLED });
 }
 
@@ -1391,7 +1393,7 @@ fn test_choose_taker_confs_settings_buy_action() {
     let maker_reserved = MakerReserved::default();
     TestCoin::requires_notarization.mock_safe(|_| MockResult::Return(true));
     TestCoin::required_confirmations.mock_safe(|_| MockResult::Return(8));
-    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved, &coin, &coin);
+    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved.conf_settings, &coin, &coin);
     // should pick settings from coins
     assert!(settings.taker_coin_nota);
     assert_eq!(settings.taker_coin_confs, 8);
@@ -1409,7 +1411,7 @@ fn test_choose_taker_confs_settings_buy_action() {
         .build_unchecked();
     // no confs and notas set
     let maker_reserved = MakerReserved::default();
-    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved, &coin, &coin);
+    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved.conf_settings, &coin, &coin);
     // should pick settings from taker request
     // as action is buy my_coin is rel and other coin is base
     assert!(!settings.taker_coin_nota);
@@ -1434,7 +1436,7 @@ fn test_choose_taker_confs_settings_buy_action() {
         base_nota: true,
     };
     maker_reserved.conf_settings = Some(maker_conf_settings);
-    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved, &coin, &coin);
+    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved.conf_settings, &coin, &coin);
     // should pick settings from maker reserved if he requires less confs
     // as action is buy my_coin is rel and other coin is base in request
     assert!(!settings.taker_coin_nota);
@@ -1459,7 +1461,7 @@ fn test_choose_taker_confs_settings_buy_action() {
         base_nota: true,
     };
     maker_reserved.conf_settings = Some(maker_conf_settings);
-    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved, &coin, &coin);
+    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved.conf_settings, &coin, &coin);
     // should allow maker to use more confirmations than we require, but it shouldn't affect our settings
     // as action is buy my_coin is rel and other coin is base in request
     assert!(!settings.taker_coin_nota);
@@ -1484,7 +1486,7 @@ fn test_choose_taker_confs_settings_buy_action() {
         rel_nota: true,
     };
     maker_reserved.conf_settings = Some(maker_conf_settings);
-    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved, &coin, &coin);
+    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved.conf_settings, &coin, &coin);
     // maker settings should have no effect on other_coin_confs and other_coin_nota
     // as action is buy my_coin is rel and other coin is base in request
     assert!(!settings.taker_coin_nota);
@@ -1505,7 +1507,7 @@ fn test_choose_taker_confs_settings_sell_action() {
     let maker_reserved = MakerReserved::default();
     TestCoin::requires_notarization.mock_safe(|_| MockResult::Return(true));
     TestCoin::required_confirmations.mock_safe(|_| MockResult::Return(8));
-    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved, &coin, &coin);
+    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved.conf_settings, &coin, &coin);
     // should pick settings from coins
     assert!(settings.taker_coin_nota);
     assert_eq!(settings.taker_coin_confs, 8);
@@ -1524,7 +1526,7 @@ fn test_choose_taker_confs_settings_sell_action() {
         .build_unchecked();
     // no confs and notas set
     let maker_reserved = MakerReserved::default();
-    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved, &coin, &coin);
+    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved.conf_settings, &coin, &coin);
     // should pick settings from taker request
     // as action is sell my_coin is base and other coin is rel in request
     assert!(!settings.taker_coin_nota);
@@ -1550,7 +1552,7 @@ fn test_choose_taker_confs_settings_sell_action() {
         rel_nota: false,
     };
     maker_reserved.conf_settings = Some(maker_conf_settings);
-    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved, &coin, &coin);
+    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved.conf_settings, &coin, &coin);
     // should pick settings from maker reserved if he requires less confs
     // as action is sell my_coin is base and other coin is rel in request
     assert!(!settings.taker_coin_nota);
@@ -1576,7 +1578,7 @@ fn test_choose_taker_confs_settings_sell_action() {
         base_nota: false,
     };
     maker_reserved.conf_settings = Some(maker_conf_settings);
-    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved, &coin, &coin);
+    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved.conf_settings, &coin, &coin);
     // should allow maker to use more confirmations than we require, but it shouldn't affect our settings
     // as action is sell my_coin is base and other coin is rel in request
     assert!(!settings.taker_coin_nota);
@@ -1602,7 +1604,7 @@ fn test_choose_taker_confs_settings_sell_action() {
         base_nota: false,
     };
     maker_reserved.conf_settings = Some(maker_conf_settings);
-    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved, &coin, &coin);
+    let settings = choose_taker_confs_and_notas(&taker_order.request, &maker_reserved.conf_settings, &coin, &coin);
     // maker settings should have no effect on other_coin_confs and other_coin_nota
     // as action is sell my_coin is base and other coin is rel in request
     assert!(!settings.taker_coin_nota);
@@ -1633,7 +1635,7 @@ pub(super) fn make_random_orders(
     for _i in 0..n {
         let numer: u64 = rng.gen_range(2000, 10000000);
         let order = new_protocol::MakerOrderCreated {
-            uuid: Uuid::new_v4().into(),
+            uuid: new_uuid().into(),
             base: base.clone(),
             rel: rel.clone(),
             price: BigRational::new(numer.into(), 1000000.into()),
@@ -1656,7 +1658,7 @@ pub(super) fn make_random_orders(
 fn pubkey_and_secret_for_test(passphrase: &str) -> (String, [u8; 32]) {
     let key_pair = key_pair_from_seed(passphrase).unwrap();
     let pubkey = hex::encode(&**key_pair.public());
-    let secret = *(&*key_pair.private().secret);
+    let secret = *key_pair.private().secret;
     (pubkey, secret)
 }
 
@@ -1706,14 +1708,14 @@ fn test_process_get_orderbook_request() {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let mut orderbook = ordermatch_ctx.orderbook.lock();
 
-    for order in orders_by_pubkeys.iter().map(|(_pubkey, orders)| orders).flatten() {
+    for order in orders_by_pubkeys.values().flatten() {
         orderbook.insert_or_update_order_update_trie(order.clone());
     }
 
     // avoid dead lock on orderbook as process_get_orderbook_request also acquires it
     drop(orderbook);
 
-    let encoded = process_get_orderbook_request(ctx.clone(), "RICK".into(), "MORTY".into())
+    let encoded = process_get_orderbook_request(ctx, "RICK".into(), "MORTY".into())
         .unwrap()
         .unwrap();
 
@@ -1721,7 +1723,7 @@ fn test_process_get_orderbook_request() {
     for (pubkey, item) in orderbook.pubkey_orders {
         let expected = orders_by_pubkeys
             .get(&pubkey)
-            .expect(&format!("!best_orders_by_pubkeys is expected to contain {:?}", pubkey));
+            .unwrap_or_else(|| panic!("!best_orders_by_pubkeys is expected to contain {:?}", pubkey));
 
         let mut actual: Vec<OrderbookItem> = item
             .orders
@@ -1761,9 +1763,7 @@ fn test_process_get_orderbook_request_limit() {
     // avoid dead lock on orderbook as process_get_orderbook_request also acquires it
     drop(orderbook);
 
-    let err = process_get_orderbook_request(ctx.clone(), "RICK".into(), "MORTY".into())
-        .err()
-        .expect("Expected an error");
+    let err = process_get_orderbook_request(ctx, "RICK".into(), "MORTY".into()).expect_err("Expected an error");
 
     log!("error: {}", err);
     assert!(err.contains("Orderbook too large"));
@@ -1859,19 +1859,10 @@ fn test_request_and_fill_orderbook() {
     let ordermatch_ctx = OrdermatchContext::from_ctx(&ctx).unwrap();
     let orderbook = ordermatch_ctx.orderbook.lock();
 
-    let expected = expected_orders
-        .iter()
-        .map(|(_pubkey, orders)| orders.clone())
-        .flatten()
-        .collect();
+    let expected = expected_orders.values().flatten().cloned().collect();
     assert_eq!(orderbook.order_set, expected);
 
-    let expected = expected_orders
-        .iter()
-        .map(|(_pubkey, orders)| orders)
-        .flatten()
-        .map(|(uuid, _order)| *uuid)
-        .collect();
+    let expected = expected_orders.values().flatten().map(|(uuid, _order)| *uuid).collect();
     let unordered = orderbook
         .unordered
         .get(&("RICK".to_owned(), "MORTY".to_owned()))
@@ -1879,8 +1870,7 @@ fn test_request_and_fill_orderbook() {
     assert_eq!(*unordered, expected);
 
     let expected = expected_orders
-        .iter()
-        .map(|(_pubkey, orders)| orders)
+        .values()
         .flatten()
         .map(|(uuid, order)| OrderedByPriceOrder {
             uuid: *uuid,
@@ -1940,7 +1930,7 @@ fn test_process_order_keep_alive_requested_from_peer() {
     let (_, mut cmd_rx) = p2p_context_mock();
 
     let (ctx, pubkey, secret) = make_ctx_for_tests();
-    let uuid = Uuid::new_v4();
+    let uuid = new_uuid();
     let peer = PeerId::random().to_string();
 
     let order = new_protocol::MakerOrderCreated {
@@ -2022,7 +2012,7 @@ fn test_process_get_order_request() {
     let mut orderbook = block_on(ordermatch_ctx.orderbook.lock());
 
     let order = new_protocol::MakerOrderCreated {
-        uuid: Uuid::new_v4().into(),
+        uuid: new_uuid().into(),
         base: "RICK".into(),
         rel: "MORTY".into(),
         price: BigRational::from_integer(1000000.into()),
@@ -2199,7 +2189,7 @@ fn test_taker_request_can_match_with_maker_pubkey() {
     assert!(order.request.can_match_with_maker_pubkey(&maker_pubkey));
 
     let mut set = HashSet::new();
-    set.insert(maker_pubkey.clone());
+    set.insert(maker_pubkey);
     order.request.match_by = MatchBy::Pubkeys(set);
     assert!(order.request.can_match_with_maker_pubkey(&maker_pubkey));
 
@@ -2209,7 +2199,7 @@ fn test_taker_request_can_match_with_maker_pubkey() {
 
 #[test]
 fn test_taker_request_can_match_with_uuid() {
-    let uuid = Uuid::new_v4();
+    let uuid = new_uuid();
     let coin = MmCoinEnum::Test(TestCoin::default());
 
     // default has MatchBy::Any
@@ -2322,7 +2312,7 @@ fn test_diff_should_not_be_written_if_hash_not_changed_on_insert() {
 
     let alb_ordered_pair = alb_ordered_pair("C1", "C2");
     let pair_trie_root = pair_trie_root_by_pub(&ctx, &pubkey, &alb_ordered_pair);
-    for order in orders.clone() {
+    for order in orders {
         insert_or_update_order(&ctx, order);
     }
 
@@ -2581,7 +2571,7 @@ fn test_process_sync_pubkey_orderbook_state_points_to_not_uptodate_trie_root() {
     assert_eq!(full_trie, expected);
 }
 
-fn check_if_orderbook_contains_only(orderbook: &Orderbook, pubkey: &str, orders: &Vec<OrderbookItem>) {
+fn check_if_orderbook_contains_only(orderbook: &Orderbook, pubkey: &str, orders: &[OrderbookItem]) {
     let pubkey_state = orderbook.pubkeys_state.get(pubkey).expect("!pubkeys_state");
 
     // order_set
@@ -2717,7 +2707,7 @@ fn test_orderbook_sync_trie_diff_time_cache() {
     let bob_root = bob_state.trie_roots.get(&rick_morty_pair).unwrap();
 
     let bob_history_on_sync = DeltaOrFullTrie::from_history(
-        &rick_morty_history_bob,
+        rick_morty_history_bob,
         *alice_root,
         *bob_root,
         &orderbook_bob.memory_db,
@@ -2768,7 +2758,7 @@ fn test_orderbook_sync_trie_diff_time_cache() {
     let bob_root = bob_state.trie_roots.get(&rick_morty_pair).unwrap();
 
     let bob_history_on_sync = DeltaOrFullTrie::from_history(
-        &rick_morty_history_bob,
+        rick_morty_history_bob,
         *alice_root,
         *bob_root,
         &orderbook_bob.memory_db,
@@ -2881,7 +2871,7 @@ fn test_trie_state_bytes() {
     let price = BigRational::from_integer(1.into());
     let max_volume = BigRational::from_integer(u64::MAX.into());
     let min_volume = BigRational::from_integer(1.into());
-    let uuid = Uuid::new_v4();
+    let uuid = new_uuid();
     let created_at = now_ms() / 1000;
 
     #[derive(Serialize)]
@@ -2998,11 +2988,11 @@ fn check_get_orderbook_p2p_res_serde() {
     let v1_serialized = rmp_serde::to_vec(&v1).unwrap();
 
     let mut new: GetOrderbookRes = rmp_serde::from_read_ref(&v1_serialized).unwrap();
-    new.protocol_infos.insert(Uuid::new_v4(), BaseRelProtocolInfo {
+    new.protocol_infos.insert(new_uuid(), BaseRelProtocolInfo {
         base: vec![1],
         rel: vec![2],
     });
-    new.conf_infos.insert(Uuid::new_v4(), OrderConfirmationsSettings {
+    new.conf_infos.insert(new_uuid(), OrderConfirmationsSettings {
         base_confs: 6,
         base_nota: false,
         rel_confs: 3,
@@ -3030,7 +3020,7 @@ fn check_get_orderbook_p2p_res_serde() {
 
     let v2 = GetOrderbookResV2 {
         pubkey_orders: HashMap::from_iter(std::iter::once(("pubkey".into(), item))),
-        protocol_infos: HashMap::from_iter(std::iter::once((Uuid::new_v4(), BaseRelProtocolInfo {
+        protocol_infos: HashMap::from_iter(std::iter::once((new_uuid(), BaseRelProtocolInfo {
             base: vec![1],
             rel: vec![2],
         }))),
@@ -3039,7 +3029,7 @@ fn check_get_orderbook_p2p_res_serde() {
     let v2_serialized = rmp_serde::to_vec(&v2).unwrap();
 
     let mut new: GetOrderbookRes = rmp_serde::from_read_ref(&v2_serialized).unwrap();
-    new.conf_infos.insert(Uuid::new_v4(), OrderConfirmationsSettings {
+    new.conf_infos.insert(new_uuid(), OrderConfirmationsSettings {
         base_confs: 6,
         base_nota: false,
         rel_confs: 3,
@@ -3107,11 +3097,11 @@ fn check_sync_pubkey_state_p2p_res_serde() {
     let v1_serialized = rmp_serde::to_vec(&v1).unwrap();
 
     let mut new: SyncPubkeyOrderbookStateRes = rmp_serde::from_read_ref(&v1_serialized).unwrap();
-    new.protocol_infos.insert(Uuid::new_v4(), BaseRelProtocolInfo {
+    new.protocol_infos.insert(new_uuid(), BaseRelProtocolInfo {
         base: vec![1],
         rel: vec![2],
     });
-    new.conf_infos.insert(Uuid::new_v4(), OrderConfirmationsSettings {
+    new.conf_infos.insert(new_uuid(), OrderConfirmationsSettings {
         base_confs: 6,
         base_nota: false,
         rel_confs: 3,
@@ -3137,7 +3127,7 @@ fn check_sync_pubkey_state_p2p_res_serde() {
             alb_ordered_pair("RICK", "MORTY"),
             DeltaOrFullTrie::FullTrie(orders.into_iter().map(|order| (order.uuid, order.into())).collect()),
         ))),
-        protocol_infos: HashMap::from_iter(std::iter::once((Uuid::new_v4(), BaseRelProtocolInfo {
+        protocol_infos: HashMap::from_iter(std::iter::once((new_uuid(), BaseRelProtocolInfo {
             base: vec![1],
             rel: vec![2],
         }))),
@@ -3146,7 +3136,7 @@ fn check_sync_pubkey_state_p2p_res_serde() {
     let v2_serialized = rmp_serde::to_vec(&v2).unwrap();
 
     let mut new: SyncPubkeyOrderbookStateRes = rmp_serde::from_read_ref(&v2_serialized).unwrap();
-    new.conf_infos.insert(Uuid::new_v4(), OrderConfirmationsSettings {
+    new.conf_infos.insert(new_uuid(), OrderConfirmationsSettings {
         base_confs: 6,
         base_nota: false,
         rel_confs: 3,

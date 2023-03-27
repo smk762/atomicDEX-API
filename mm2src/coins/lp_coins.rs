@@ -19,6 +19,13 @@
 //  marketmaker
 //
 
+// `mockable` implementation uses these
+#![allow(
+    clippy::forget_ref,
+    clippy::forget_copy,
+    clippy::swap_ptr_to_ref,
+    clippy::forget_non_drop
+)]
 #![allow(uncommon_codepoints)]
 #![feature(integer_atomics)]
 #![feature(async_closure)]
@@ -45,6 +52,7 @@ use crypto::{Bip32Error, CryptoCtx, CryptoCtxError, DerivationPath, GlobalHDAcco
              Secp256k1Secret, WithHwRpcError};
 use derive_more::Display;
 use enum_from::{EnumFromStringify, EnumFromTrait};
+use ethereum_types::H256;
 use futures::compat::Future01CompatExt;
 use futures::lock::Mutex as AsyncMutex;
 use futures::{FutureExt, TryFutureExt};
@@ -200,7 +208,10 @@ use coin_errors::{MyAddressError, ValidatePaymentError, ValidatePaymentFut};
 pub mod coins_tests;
 
 pub mod eth;
-use eth::{eth_coin_from_conf_and_request, EthCoin, EthTxFeeDetails, SignedEthTx};
+#[cfg(feature = "enable-nft-integration")]
+use eth::GetValidEthWithdrawAddError;
+use eth::{eth_coin_from_conf_and_request, get_eth_address, EthCoin, EthGasDetailsErr, EthTxFeeDetails,
+          GetEthAddressError, SignedEthTx};
 
 pub mod hd_confirm_address;
 pub mod hd_pubkey;
@@ -236,11 +247,26 @@ pub mod tx_history_storage;
 
 #[doc(hidden)]
 #[allow(unused_variables)]
-#[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+#[cfg(all(
+    feature = "enable-solana",
+    not(target_os = "ios"),
+    not(target_os = "android"),
+    not(target_arch = "wasm32")
+))]
 pub mod solana;
-#[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+#[cfg(all(
+    feature = "enable-solana",
+    not(target_os = "ios"),
+    not(target_os = "android"),
+    not(target_arch = "wasm32")
+))]
 pub use solana::spl::SplToken;
-#[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+#[cfg(all(
+    feature = "enable-solana",
+    not(target_os = "ios"),
+    not(target_os = "android"),
+    not(target_arch = "wasm32")
+))]
 pub use solana::{SolanaActivationParams, SolanaCoin, SolanaFeeDetails};
 
 pub mod utxo;
@@ -254,6 +280,10 @@ use utxo::utxo_common::big_decimal_from_sat_unsigned;
 use utxo::utxo_standard::{utxo_standard_coin_with_policy, UtxoStandardCoin};
 use utxo::UtxoActivationParams;
 use utxo::{BlockchainNetwork, GenerateTxError, UtxoFeeDetails, UtxoTx};
+
+#[cfg(feature = "enable-nft-integration")] pub mod nft;
+#[cfg(feature = "enable-nft-integration")]
+use nft::nft_errors::GetNftInfoError;
 
 #[cfg(not(target_arch = "wasm32"))] pub mod z_coin;
 #[cfg(not(target_arch = "wasm32"))] use z_coin::ZCoin;
@@ -278,13 +308,6 @@ pub type RawTransactionResult = Result<RawTransactionRes, MmError<RawTransaction
 pub type RawTransactionFut<'a> =
     Box<dyn Future<Item = RawTransactionRes, Error = MmError<RawTransactionError>> + Send + 'a>;
 pub type RefundResult<T> = Result<T, MmError<RefundError>>;
-pub type SendMakerPaymentArgs<'a> = SendSwapPaymentArgs<'a>;
-pub type SendTakerPaymentArgs<'a> = SendSwapPaymentArgs<'a>;
-pub type SendMakerSpendsTakerPaymentArgs<'a> = SendSpendPaymentArgs<'a>;
-pub type SendTakerSpendsMakerPaymentArgs<'a> = SendSpendPaymentArgs<'a>;
-pub type SendTakerRefundsPaymentArgs<'a> = SendRefundPaymentArgs<'a>;
-pub type SendMakerRefundsPaymentArgs<'a> = SendRefundPaymentArgs<'a>;
-pub type SendWatcherRefundsPaymentArgs<'a> = SendRefundPaymentArgs<'a>;
 
 pub type IguanaPrivKey = Secp256k1Secret;
 
@@ -294,6 +317,11 @@ pub const EARLY_CONFIRMATION_ERR_LOG: &str = "Early confirmation";
 pub const OLD_TRANSACTION_ERR_LOG: &str = "Old transaction";
 pub const INVALID_RECEIVER_ERR_LOG: &str = "Invalid receiver";
 pub const INVALID_CONTRACT_ADDRESS_ERR_LOG: &str = "Invalid contract address";
+pub const INVALID_PAYMENT_STATE_ERR_LOG: &str = "Invalid payment state";
+pub const INVALID_SWAP_ID_ERR_LOG: &str = "Invalid swap id";
+pub const INVALID_SCRIPT_ERR_LOG: &str = "Invalid script";
+pub const INVALID_REFUND_TX_ERR_LOG: &str = "Invalid refund transaction";
+pub const INSUFFICIENT_WATCHER_REWARD_ERR_LOG: &str = "Insufficient watcher reward";
 
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
@@ -331,6 +359,38 @@ impl From<CoinFindError> for RawTransactionError {
     }
 }
 
+#[derive(Debug, Deserialize, Display, EnumFromStringify, Serialize, SerializeErrorType)]
+#[serde(tag = "error_type", content = "error_data")]
+pub enum GetMyAddressError {
+    CoinsConfCheckError(String),
+    CoinIsNotSupported(String),
+    #[from_stringify("CryptoCtxError")]
+    #[display(fmt = "Internal error: {}", _0)]
+    Internal(String),
+    #[from_stringify("serde_json::Error")]
+    #[display(fmt = "Invalid request error error: {}", _0)]
+    InvalidRequest(String),
+    #[display(fmt = "Get Eth address error: {}", _0)]
+    GetEthAddressError(GetEthAddressError),
+}
+
+impl From<GetEthAddressError> for GetMyAddressError {
+    fn from(e: GetEthAddressError) -> Self { GetMyAddressError::GetEthAddressError(e) }
+}
+
+impl HttpStatusCode for GetMyAddressError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            GetMyAddressError::CoinsConfCheckError(_)
+            | GetMyAddressError::CoinIsNotSupported(_)
+            | GetMyAddressError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+            GetMyAddressError::Internal(_) | GetMyAddressError::GetEthAddressError(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct RawTransactionRequest {
     pub coin: String,
@@ -341,6 +401,17 @@ pub struct RawTransactionRequest {
 pub struct RawTransactionRes {
     /// Raw bytes of signed transaction in hexadecimal string, this should be return hexadecimal encoded signed transaction for get_raw_transaction
     pub tx_hex: BytesJson,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MyAddressReq {
+    coin: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MyWalletAddress {
+    coin: String,
+    wallet_address: String,
 }
 
 pub type SignatureResult<T> = Result<T, MmError<SignatureError>>;
@@ -361,7 +432,7 @@ pub enum TxHistoryError {
     InternalError(String),
 }
 
-#[derive(Clone, Debug, Display)]
+#[derive(Clone, Debug, Deserialize, Display, PartialEq)]
 pub enum PrivKeyPolicyNotAllowed {
     #[display(fmt = "Hardware Wallet is not supported")]
     HardwareWalletNotSupported,
@@ -500,6 +571,15 @@ pub enum ValidateOtherPubKeyErr {
 }
 
 #[derive(Clone, Debug)]
+pub struct ConfirmPaymentInput {
+    pub payment_tx: Vec<u8>,
+    pub confirmations: u64,
+    pub requires_nota: bool,
+    pub wait_until: u64,
+    pub check_every: u64,
+}
+
+#[derive(Clone, Debug)]
 pub struct WatcherValidateTakerFeeInput {
     pub taker_fee_hash: Vec<u8>,
     pub sender_pubkey: Vec<u8>,
@@ -518,6 +598,7 @@ pub struct WatcherValidatePaymentInput {
     pub secret_hash: Vec<u8>,
     pub try_spv_proof_until: u64,
     pub confirmations: u64,
+    pub min_watcher_reward: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -532,6 +613,7 @@ pub struct ValidatePaymentInput {
     pub try_spv_proof_until: u64,
     pub confirmations: u64,
     pub unique_swap_data: Vec<u8>,
+    pub min_watcher_reward: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -542,6 +624,7 @@ pub struct WatcherSearchForSwapTxSpendInput<'a> {
     pub secret_hash: &'a [u8],
     pub tx: &'a [u8],
     pub search_from_block: u64,
+    pub watcher_reward: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -550,6 +633,7 @@ pub struct SendMakerPaymentSpendPreimageInput<'a> {
     pub secret_hash: &'a [u8],
     pub secret: &'a [u8],
     pub taker_pub: &'a [u8],
+    pub watcher_reward: bool,
 }
 
 pub struct SearchForSwapTxSpendInput<'a> {
@@ -560,10 +644,11 @@ pub struct SearchForSwapTxSpendInput<'a> {
     pub search_from_block: u64,
     pub swap_contract_address: &'a Option<BytesJson>,
     pub swap_unique_data: &'a [u8],
+    pub watcher_reward: bool,
 }
 
 #[derive(Clone, Debug)]
-pub struct SendSwapPaymentArgs<'a> {
+pub struct SendPaymentArgs<'a> {
     pub time_lock_duration: u64,
     pub time_lock: u32,
     /// This is either:
@@ -575,10 +660,12 @@ pub struct SendSwapPaymentArgs<'a> {
     pub swap_contract_address: &'a Option<BytesJson>,
     pub swap_unique_data: &'a [u8],
     pub payment_instructions: &'a Option<PaymentInstructions>,
+    pub watcher_reward: Option<u64>,
+    pub wait_for_confirmation_until: u64,
 }
 
 #[derive(Clone, Debug)]
-pub struct SendSpendPaymentArgs<'a> {
+pub struct SpendPaymentArgs<'a> {
     /// This is either:
     /// * Taker's payment tx if this structure is used in [`SwapOps::send_maker_spends_taker_payment`].
     /// * Maker's payment tx if this structure is used in [`SwapOps::send_taker_spends_maker_payment`].
@@ -592,10 +679,11 @@ pub struct SendSpendPaymentArgs<'a> {
     pub secret_hash: &'a [u8],
     pub swap_contract_address: &'a Option<BytesJson>,
     pub swap_unique_data: &'a [u8],
+    pub watcher_reward: bool,
 }
 
 #[derive(Clone, Debug)]
-pub struct SendRefundPaymentArgs<'a> {
+pub struct RefundPaymentArgs<'a> {
     pub payment_tx: &'a [u8],
     pub time_lock: u32,
     /// This is either:
@@ -605,6 +693,7 @@ pub struct SendRefundPaymentArgs<'a> {
     pub secret_hash: &'a [u8],
     pub swap_contract_address: &'a Option<BytesJson>,
     pub swap_unique_data: &'a [u8],
+    pub watcher_reward: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -622,6 +711,15 @@ pub struct CheckIfMyPaymentSentArgs<'a> {
 #[derive(Clone, Debug)]
 pub struct ValidateFeeArgs<'a> {
     pub fee_tx: &'a TransactionEnum,
+    pub expected_sender: &'a [u8],
+    pub fee_addr: &'a [u8],
+    pub amount: &'a BigDecimal,
+    pub min_block_number: u64,
+    pub uuid: &'a [u8],
+}
+
+pub struct EthValidateFeeArgs<'a> {
+    pub fee_tx_hash: &'a H256,
     pub expected_sender: &'a [u8],
     pub fee_addr: &'a [u8],
     pub amount: &'a BigDecimal,
@@ -669,28 +767,19 @@ pub enum RefundError {
 pub trait SwapOps {
     fn send_taker_fee(&self, fee_addr: &[u8], amount: BigDecimal, uuid: &[u8]) -> TransactionFut;
 
-    fn send_maker_payment(&self, maker_payment_args: SendMakerPaymentArgs<'_>) -> TransactionFut;
+    fn send_maker_payment(&self, maker_payment_args: SendPaymentArgs<'_>) -> TransactionFut;
 
-    fn send_taker_payment(&self, taker_payment_args: SendTakerPaymentArgs<'_>) -> TransactionFut;
+    fn send_taker_payment(&self, taker_payment_args: SendPaymentArgs<'_>) -> TransactionFut;
 
-    fn send_maker_spends_taker_payment(
-        &self,
-        maker_spends_payment_args: SendMakerSpendsTakerPaymentArgs<'_>,
-    ) -> TransactionFut;
+    fn send_maker_spends_taker_payment(&self, maker_spends_payment_args: SpendPaymentArgs<'_>) -> TransactionFut;
 
-    fn send_taker_spends_maker_payment(
-        &self,
-        taker_spends_payment_args: SendTakerSpendsMakerPaymentArgs<'_>,
-    ) -> TransactionFut;
+    fn send_taker_spends_maker_payment(&self, taker_spends_payment_args: SpendPaymentArgs<'_>) -> TransactionFut;
 
-    fn send_taker_refunds_payment(&self, taker_refunds_payment_args: SendTakerRefundsPaymentArgs<'_>)
-        -> TransactionFut;
+    fn send_taker_refunds_payment(&self, taker_refunds_payment_args: RefundPaymentArgs<'_>) -> TransactionFut;
 
-    fn send_maker_refunds_payment(&self, maker_refunds_payment_args: SendMakerRefundsPaymentArgs<'_>)
-        -> TransactionFut;
+    fn send_maker_refunds_payment(&self, maker_refunds_payment_args: RefundPaymentArgs<'_>) -> TransactionFut;
 
-    fn validate_fee(&self, validate_fee_args: ValidateFeeArgs<'_>)
-        -> Box<dyn Future<Item = (), Error = String> + Send>;
+    fn validate_fee(&self, validate_fee_args: ValidateFeeArgs<'_>) -> ValidatePaymentFut<()>;
 
     fn validate_maker_payment(&self, input: ValidatePaymentInput) -> ValidatePaymentFut<()>;
 
@@ -711,7 +800,12 @@ pub trait SwapOps {
         input: SearchForSwapTxSpendInput<'_>,
     ) -> Result<Option<FoundSwapTxSpend>, String>;
 
-    async fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String>;
+    async fn extract_secret(
+        &self,
+        secret_hash: &[u8],
+        spend_tx: &[u8],
+        watcher_reward: bool,
+    ) -> Result<Vec<u8>, String>;
 
     fn check_tx_signed_by_pub(&self, tx: &[u8], expected_pub: &[u8]) -> Result<bool, MmError<ValidatePaymentError>>;
 
@@ -782,6 +876,9 @@ pub trait SwapOps {
 
     fn is_supported_by_watchers(&self) -> bool { false }
 
+    // Do we also need a method for the fallback contract?
+    fn contract_supports_watchers(&self) -> bool { true }
+
     fn maker_locktime_multiplier(&self) -> f64 { 2.0 }
 }
 
@@ -807,10 +904,7 @@ pub trait MakerSwapTakerCoin {
 pub trait WatcherOps {
     fn send_maker_payment_spend_preimage(&self, input: SendMakerPaymentSpendPreimageInput) -> TransactionFut;
 
-    fn send_taker_payment_refund_preimage(
-        &self,
-        watcher_refunds_payment_args: SendWatcherRefundsPaymentArgs,
-    ) -> TransactionFut;
+    fn send_taker_payment_refund_preimage(&self, watcher_refunds_payment_args: RefundPaymentArgs) -> TransactionFut;
 
     fn create_taker_payment_refund_preimage(
         &self,
@@ -883,14 +977,7 @@ pub trait MarketCoinOps {
     /// Receives raw transaction bytes as input and returns tx hash in hexadecimal format
     fn send_raw_tx_bytes(&self, tx: &[u8]) -> Box<dyn Future<Item = String, Error = String> + Send>;
 
-    fn wait_for_confirmations(
-        &self,
-        tx: &[u8],
-        confirmations: u64,
-        requires_nota: bool,
-        wait_until: u64,
-        check_every: u64,
-    ) -> Box<dyn Future<Item = (), Error = String> + Send>;
+    fn wait_for_confirmations(&self, input: ConfirmPaymentInput) -> Box<dyn Future<Item = (), Error = String> + Send>;
 
     fn wait_for_htlc_tx_spend(
         &self,
@@ -1085,7 +1172,12 @@ pub enum TxFeeDetails {
     Qrc20(Qrc20FeeDetails),
     Slp(SlpFeeDetails),
     Tendermint(TendermintFeeDetails),
-    #[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+    #[cfg(all(
+        feature = "enable-solana",
+        not(target_os = "ios"),
+        not(target_os = "android"),
+        not(target_arch = "wasm32")
+    ))]
     Solana(SolanaFeeDetails),
 }
 
@@ -1101,7 +1193,12 @@ impl<'de> Deserialize<'de> for TxFeeDetails {
             Utxo(UtxoFeeDetails),
             Eth(EthTxFeeDetails),
             Qrc20(Qrc20FeeDetails),
-            #[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+            #[cfg(all(
+                feature = "enable-solana",
+                not(target_os = "ios"),
+                not(target_os = "android"),
+                not(target_arch = "wasm32")
+            ))]
             Solana(SolanaFeeDetails),
             Tendermint(TendermintFeeDetails),
         }
@@ -1110,7 +1207,12 @@ impl<'de> Deserialize<'de> for TxFeeDetails {
             TxFeeDetailsUnTagged::Utxo(f) => Ok(TxFeeDetails::Utxo(f)),
             TxFeeDetailsUnTagged::Eth(f) => Ok(TxFeeDetails::Eth(f)),
             TxFeeDetailsUnTagged::Qrc20(f) => Ok(TxFeeDetails::Qrc20(f)),
-            #[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+            #[cfg(all(
+                feature = "enable-solana",
+                not(target_os = "ios"),
+                not(target_os = "android"),
+                not(target_arch = "wasm32")
+            ))]
             TxFeeDetailsUnTagged::Solana(f) => Ok(TxFeeDetails::Solana(f)),
             TxFeeDetailsUnTagged::Tendermint(f) => Ok(TxFeeDetails::Tendermint(f)),
         }
@@ -1129,7 +1231,12 @@ impl From<Qrc20FeeDetails> for TxFeeDetails {
     fn from(qrc20_details: Qrc20FeeDetails) -> Self { TxFeeDetails::Qrc20(qrc20_details) }
 }
 
-#[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+#[cfg(all(
+    feature = "enable-solana",
+    not(target_os = "ios"),
+    not(target_os = "android"),
+    not(target_arch = "wasm32")
+))]
 impl From<SolanaFeeDetails> for TxFeeDetails {
     fn from(solana_details: SolanaFeeDetails) -> Self { TxFeeDetails::Solana(solana_details) }
 }
@@ -1165,6 +1272,7 @@ pub enum TransactionType {
         msg_type: CustomTendermintMsgType,
         token_id: Option<BytesJson>,
     },
+    NftTransfer,
 }
 
 /// Transaction details
@@ -1667,7 +1775,7 @@ impl DelegationError {
     }
 }
 
-#[derive(Clone, Debug, Display, EnumFromStringify, EnumFromTrait, Serialize, SerializeErrorType, PartialEq)]
+#[derive(Clone, Debug, Display, EnumFromStringify, EnumFromTrait, PartialEq, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum WithdrawError {
     #[display(
@@ -1730,6 +1838,38 @@ pub enum WithdrawError {
     #[from_stringify("NumConversError", "UnexpectedDerivationMethod", "PrivKeyPolicyNotAllowed")]
     #[display(fmt = "Internal error: {}", _0)]
     InternalError(String),
+    #[cfg(feature = "enable-nft-integration")]
+    #[display(fmt = "{} coin doesn't support NFT withdrawing", coin)]
+    CoinDoesntSupportNftWithdraw { coin: String },
+    #[cfg(feature = "enable-nft-integration")]
+    #[display(fmt = "My address {} and from address {} mismatch", my_address, from)]
+    AddressMismatchError { my_address: String, from: String },
+    #[cfg(feature = "enable-nft-integration")]
+    #[display(fmt = "Contract type {} doesnt support 'withdraw_nft' yet", _0)]
+    ContractTypeDoesntSupportNftWithdrawing(String),
+    #[display(fmt = "Action not allowed for coin: {}", _0)]
+    ActionNotAllowed(String),
+    #[cfg(feature = "enable-nft-integration")]
+    GetNftInfoError(GetNftInfoError),
+    #[cfg(feature = "enable-nft-integration")]
+    #[display(
+        fmt = "Not enough NFTs amount with token_address: {} and token_id {}. Available {}, required {}",
+        token_address,
+        token_id,
+        available,
+        required
+    )]
+    NotEnoughNftsAmount {
+        token_address: String,
+        token_id: String,
+        available: BigDecimal,
+        required: BigDecimal,
+    },
+}
+
+#[cfg(feature = "enable-nft-integration")]
+impl From<GetNftInfoError> for WithdrawError {
+    fn from(e: GetNftInfoError) -> Self { WithdrawError::GetNftInfoError(e) }
 }
 
 impl HttpStatusCode for WithdrawError {
@@ -1748,11 +1888,18 @@ impl HttpStatusCode for WithdrawError {
             | WithdrawError::FromAddressNotFound
             | WithdrawError::UnexpectedFromAddress(_)
             | WithdrawError::UnknownAccount { .. }
-            | WithdrawError::UnexpectedUserAction { .. } => StatusCode::BAD_REQUEST,
+            | WithdrawError::UnexpectedUserAction { .. }
+            | WithdrawError::ActionNotAllowed(_) => StatusCode::BAD_REQUEST,
             WithdrawError::HwError(_) => StatusCode::GONE,
             #[cfg(target_arch = "wasm32")]
             WithdrawError::BroadcastExpected(_) => StatusCode::BAD_REQUEST,
             WithdrawError::Transport(_) | WithdrawError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            #[cfg(feature = "enable-nft-integration")]
+            WithdrawError::GetNftInfoError(_)
+            | WithdrawError::AddressMismatchError { .. }
+            | WithdrawError::ContractTypeDoesntSupportNftWithdrawing(_)
+            | WithdrawError::CoinDoesntSupportNftWithdraw { .. }
+            | WithdrawError::NotEnoughNftsAmount { .. } => StatusCode::BAD_REQUEST,
         }
     }
 }
@@ -1785,6 +1932,31 @@ impl From<UtxoSignWithKeyPairError> for WithdrawError {
 
 impl From<TimeoutError> for WithdrawError {
     fn from(e: TimeoutError) -> Self { WithdrawError::Timeout(e.duration) }
+}
+
+#[cfg(feature = "enable-nft-integration")]
+impl From<GetValidEthWithdrawAddError> for WithdrawError {
+    fn from(e: GetValidEthWithdrawAddError) -> Self {
+        match e {
+            GetValidEthWithdrawAddError::AddressMismatchError { my_address, from } => {
+                WithdrawError::AddressMismatchError { my_address, from }
+            },
+            GetValidEthWithdrawAddError::CoinDoesntSupportNftWithdraw { coin } => {
+                WithdrawError::CoinDoesntSupportNftWithdraw { coin }
+            },
+            GetValidEthWithdrawAddError::InvalidAddress(e) => WithdrawError::InvalidAddress(e),
+        }
+    }
+}
+
+impl From<EthGasDetailsErr> for WithdrawError {
+    fn from(e: EthGasDetailsErr) -> Self {
+        match e {
+            EthGasDetailsErr::InvalidFeePolicy(e) => WithdrawError::InvalidFeePolicy(e),
+            EthGasDetailsErr::Internal(e) => WithdrawError::InternalError(e),
+            EthGasDetailsErr::Transport(e) => WithdrawError::Transport(e),
+        }
+    }
 }
 
 impl WithdrawError {
@@ -1831,7 +2003,7 @@ impl WithdrawError {
     }
 }
 
-#[derive(Serialize, Display, Debug, EnumFromStringify, SerializeErrorType)]
+#[derive(Debug, Display, EnumFromStringify, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum SignatureError {
     #[display(fmt = "Invalid request: {}", _0)]
@@ -1856,7 +2028,7 @@ impl HttpStatusCode for SignatureError {
     }
 }
 
-#[derive(Serialize, Display, Debug, SerializeErrorType)]
+#[derive(Debug, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum VerificationError {
     #[display(fmt = "Invalid request: {}", _0)]
@@ -2048,11 +2220,18 @@ pub trait MmCoin:
     /// The minimum number of confirmations at which a transaction is considered mature.
     fn mature_confirmations(&self) -> Option<u32>;
 
-    /// Get some of the coin config info in serialized format for p2p messaging.
-    fn coin_protocol_info(&self) -> Vec<u8>;
+    /// Get some of the coin protocol related info in serialized format for p2p messaging.
+    fn coin_protocol_info(&self, amount_to_receive: Option<MmNumber>) -> Vec<u8>;
 
     /// Check if serialized coin protocol info is supported by current version.
-    fn is_coin_protocol_supported(&self, info: &Option<Vec<u8>>) -> bool;
+    /// Can also be used to check if orders can be matched or not.
+    fn is_coin_protocol_supported(
+        &self,
+        info: &Option<Vec<u8>>,
+        amount_to_send: Option<MmNumber>,
+        locktime: u64,
+        is_maker: bool,
+    ) -> bool;
 
     /// Abort all coin related futures on coin deactivation.
     fn on_disabled(&self) -> Result<(), AbortedError>;
@@ -2111,9 +2290,19 @@ pub enum MmCoinEnum {
     SlpToken(SlpToken),
     Tendermint(TendermintCoin),
     TendermintToken(TendermintToken),
-    #[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+    #[cfg(all(
+        feature = "enable-solana",
+        not(target_os = "ios"),
+        not(target_os = "android"),
+        not(target_arch = "wasm32")
+    ))]
     SolanaCoin(SolanaCoin),
-    #[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+    #[cfg(all(
+        feature = "enable-solana",
+        not(target_os = "ios"),
+        not(target_os = "android"),
+        not(target_arch = "wasm32")
+    ))]
     SplToken(SplToken),
     #[cfg(not(target_arch = "wasm32"))]
     LightningCoin(LightningCoin),
@@ -2132,12 +2321,22 @@ impl From<TestCoin> for MmCoinEnum {
     fn from(c: TestCoin) -> MmCoinEnum { MmCoinEnum::Test(c) }
 }
 
-#[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+#[cfg(all(
+    feature = "enable-solana",
+    not(target_os = "ios"),
+    not(target_os = "android"),
+    not(target_arch = "wasm32")
+))]
 impl From<SolanaCoin> for MmCoinEnum {
     fn from(c: SolanaCoin) -> MmCoinEnum { MmCoinEnum::SolanaCoin(c) }
 }
 
-#[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+#[cfg(all(
+    feature = "enable-solana",
+    not(target_os = "ios"),
+    not(target_os = "android"),
+    not(target_arch = "wasm32")
+))]
 impl From<SplToken> for MmCoinEnum {
     fn from(c: SplToken) -> MmCoinEnum { MmCoinEnum::SplToken(c) }
 }
@@ -2194,9 +2393,19 @@ impl Deref for MmCoinEnum {
             #[cfg(not(target_arch = "wasm32"))]
             MmCoinEnum::ZCoin(ref c) => c,
             MmCoinEnum::Test(ref c) => c,
-            #[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+            #[cfg(all(
+                feature = "enable-solana",
+                not(target_os = "ios"),
+                not(target_os = "android"),
+                not(target_arch = "wasm32")
+            ))]
             MmCoinEnum::SolanaCoin(ref c) => c,
-            #[cfg(all(not(target_os = "ios"), not(target_os = "android"), not(target_arch = "wasm32")))]
+            #[cfg(all(
+                feature = "enable-solana",
+                not(target_os = "ios"),
+                not(target_os = "android"),
+                not(target_arch = "wasm32")
+            ))]
             MmCoinEnum::SplToken(ref c) => c,
         }
     }
@@ -2215,6 +2424,8 @@ impl MmCoinEnum {
             _ => false,
         }
     }
+
+    pub fn is_eth(&self) -> bool { matches!(self, MmCoinEnum::EthCoin(_)) }
 }
 
 #[async_trait]
@@ -2478,7 +2689,7 @@ pub trait CoinWithDerivationMethod {
 }
 
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", content = "protocol_data")]
 pub enum CoinProtocol {
     UTXO,
@@ -2509,9 +2720,9 @@ pub enum CoinProtocol {
         network: BlockchainNetwork,
         confirmation_targets: PlatformCoinConfirmationTargets,
     },
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "enable-solana", not(target_arch = "wasm32")))]
     SOLANA,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "enable-solana", not(target_arch = "wasm32")))]
     SPLTOKEN {
         platform: String,
         token_contract_address: String,
@@ -2698,34 +2909,11 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
 
     let coins_en = coin_conf(ctx, ticker);
 
-    if coins_en.is_null() {
-        let warning = format!(
-            "Warning, coin {} is used without a corresponding configuration.",
-            ticker
-        );
-        ctx.log.log(
-            "😅",
-            #[allow(clippy::unnecessary_cast)]
-            &[&("coin" as &str), &ticker, &("no-conf" as &str)],
-            &warning,
-        );
-    }
-
-    if coins_en["mm2"].is_null() && req["mm2"].is_null() {
-        return ERR!(concat!(
-            "mm2 param is not set neither in coins config nor enable request, ",
-            "assuming that coin is not supported"
-        ));
-    }
+    coins_conf_check(ctx, &coins_en, ticker, Some(req))?;
 
     // The legacy electrum/enable RPCs don't support Hardware Wallet policy.
     let priv_key_policy = try_s!(PrivKeyBuildPolicy::detect_priv_key_policy(ctx));
 
-    if coins_en["protocol"].is_null() {
-        return ERR!(
-            r#""protocol" field is missing in coins file. The file format is deprecated, please execute ./mm2 update_config command to convert it or download a new one"#
-        );
-    }
     let protocol: CoinProtocol = try_s!(json::from_value(coins_en["protocol"].clone()));
 
     let coin: MmCoinEnum = match &protocol {
@@ -2797,11 +2985,11 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
         CoinProtocol::ZHTLC { .. } => return ERR!("ZHTLC protocol is not supported by lp_coininit"),
         #[cfg(not(target_arch = "wasm32"))]
         CoinProtocol::LIGHTNING { .. } => return ERR!("Lightning protocol is not supported by lp_coininit"),
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(feature = "enable-solana", not(target_arch = "wasm32")))]
         CoinProtocol::SOLANA => {
             return ERR!("Solana protocol is not supported by lp_coininit - use enable_solana_with_tokens instead")
         },
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(feature = "enable-solana", not(target_arch = "wasm32")))]
         CoinProtocol::SPLTOKEN { .. } => {
             return ERR!("SplToken protocol is not supported by lp_coininit - use enable_spl instead")
         },
@@ -3367,7 +3555,7 @@ pub fn address_by_coin_conf_and_pubkey_str(
         CoinProtocol::LIGHTNING { .. } => {
             ERR!("address_by_coin_conf_and_pubkey_str is not implemented for lightning protocol yet!")
         },
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(feature = "enable-solana", not(target_arch = "wasm32")))]
         CoinProtocol::SOLANA | CoinProtocol::SPLTOKEN { .. } => {
             ERR!("Solana pubkey is the public address - you do not need to use this rpc call.")
         },
@@ -3595,4 +3783,60 @@ pub trait RpcCommonOps {
 
     /// Returns an alive RPC client or returns an error if no RPC endpoint is currently available.
     async fn get_live_client(&self) -> Result<Self::RpcClient, Self::Error>;
+}
+
+/// `get_my_address` function returns wallet address for necessary coin without its activation.
+/// Currently supports only coins with `ETH` protocol type.
+pub async fn get_my_address(ctx: MmArc, req: MyAddressReq) -> MmResult<MyWalletAddress, GetMyAddressError> {
+    let ticker = req.coin.as_str();
+    let coins_en = coin_conf(&ctx, ticker);
+    coins_conf_check(&ctx, &coins_en, ticker, None).map_to_mm(GetMyAddressError::CoinsConfCheckError)?;
+
+    let protocol: CoinProtocol = json::from_value(coins_en["protocol"].clone())?;
+
+    let my_address = match protocol {
+        CoinProtocol::ETH => get_eth_address(&ctx, ticker).await?,
+        _ => {
+            return MmError::err(GetMyAddressError::CoinIsNotSupported(format!(
+                "{} doesn't support get_my_address",
+                req.coin
+            )));
+        },
+    };
+
+    Ok(my_address)
+}
+
+fn coins_conf_check(ctx: &MmArc, coins_en: &Json, ticker: &str, req: Option<&Json>) -> Result<(), String> {
+    if coins_en.is_null() {
+        let warning = format!(
+            "Warning, coin {} is used without a corresponding configuration.",
+            ticker
+        );
+        ctx.log.log(
+            "😅",
+            #[allow(clippy::unnecessary_cast)]
+            &[&("coin" as &str), &ticker, &("no-conf" as &str)],
+            &warning,
+        );
+    }
+
+    if let Some(req) = req {
+        if coins_en["mm2"].is_null() && req["mm2"].is_null() {
+            return ERR!(concat!(
+                "mm2 param is not set neither in coins config nor enable request, assuming that coin is not supported"
+            ));
+        }
+    } else if coins_en["mm2"].is_null() {
+        return ERR!(concat!(
+            "mm2 param is not set in coins config, assuming that coin is not supported"
+        ));
+    }
+
+    if coins_en["protocol"].is_null() {
+        return ERR!(
+            r#""protocol" field is missing in coins file. The file format is deprecated, please execute ./mm2 update_config command to convert it or download a new one"#
+        );
+    }
+    Ok(())
 }

@@ -20,6 +20,7 @@ use serde_json::{self as json, json, Value as Json};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::env;
+#[cfg(not(target_arch = "wasm32"))] use std::io::Write;
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::process::Child;
@@ -36,7 +37,6 @@ cfg_native! {
     use bytes::Bytes;
     use futures::channel::oneshot;
     use futures::task::SpawnExt;
-    use gstuff::ISATTY;
     use http::Request;
     use regex::Regex;
     use std::fs;
@@ -124,10 +124,10 @@ pub const MORTY_ELECTRUM_ADDRS: &[&str] = &[
 ];
 pub const ZOMBIE_TICKER: &str = "ZOMBIE";
 pub const ARRR: &str = "ARRR";
-pub const ZOMBIE_ELECTRUMS: &[&str] = &["zombie.sirseven.me:10033"];
-pub const ZOMBIE_LIGHTWALLETD_URLS: &[&str] = &["http://zombie.sirseven.me:443"];
-pub const PIRATE_ELECTRUMS: &[&str] = &["pirate.sirseven.me:10032"];
-pub const PIRATE_LIGHTWALLETD_URLS: &[&str] = &["http://pirate.sirseven.me:443"];
+pub const ZOMBIE_ELECTRUMS: &[&str] = &["zombie.dragonhound.info:10033"];
+pub const ZOMBIE_LIGHTWALLETD_URLS: &[&str] = &["http://zombie.dragonhound.info:443"];
+pub const PIRATE_ELECTRUMS: &[&str] = &["pirate.dragonhound.info:10032"];
+pub const PIRATE_LIGHTWALLETD_URLS: &[&str] = &["http://pirate.dragonhound.info:443"];
 pub const DEFAULT_RPC_PASSWORD: &str = "pass";
 pub const QRC20_ELECTRUMS: &[&str] = &[
     "electrum1.cipig.net:10071",
@@ -147,7 +147,7 @@ pub const ETH_DEV_NODES: &[&str] = &["http://195.201.0.6:8565"];
 pub const ETH_DEV_SWAP_CONTRACT: &str = "0xa09ad3cd7e96586ebd05a2607ee56b56fb2db8fd";
 
 pub const ETH_SEPOLIA_NODE: &[&str] = &["https://rpc-sepolia.rockx.com/"];
-pub const ETH_SEPOLIA_SWAP_CONTRACT: &str = "0xA25E0e06fB139CDc2f9f11675877DaD9EdD1C352";
+pub const ETH_SEPOLIA_SWAP_CONTRACT: &str = "0x5BCC05dD32a87fABEDBcbbfeb77476eaD1F7051C";
 pub const ETH_SEPOLIA_TOKEN_CONTRACT: &str = "0x948BF5172383F1Bc0Fdf3aBe0630b855694A5D2c";
 
 pub const BCHD_TESTNET_URLS: &[&str] = &["https://bchd-testnet.greyh.at:18335"];
@@ -211,6 +211,21 @@ impl Mm2TestConf {
                 "coins": coins,
                 "rpc_password": DEFAULT_RPC_PASSWORD,
                 "seednodes": seednodes
+            }),
+            rpc_password: DEFAULT_RPC_PASSWORD.into(),
+        }
+    }
+
+    pub fn light_node_using_watchers(passphrase: &str, coins: &Json, seednodes: &[&str]) -> Self {
+        Mm2TestConf {
+            conf: json!({
+                "gui": "nogui",
+                "netid": 9998,
+                "passphrase": passphrase,
+                "coins": coins,
+                "rpc_password": DEFAULT_RPC_PASSWORD,
+                "seednodes": seednodes,
+                "use_watchers": true
             }),
             rpc_password: DEFAULT_RPC_PASSWORD.into(),
         }
@@ -844,8 +859,9 @@ pub struct RaiiDump {
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for RaiiDump {
     fn drop(&mut self) {
-        use crossterm::execute;
-        use crossterm::style::{Color, Print, SetForegroundColor};
+        const DARK_YELLOW_ANSI_CODE: &str = "\x1b[33m";
+        const YELLOW_ANSI_CODE: &str = "\x1b[93m";
+        const RESET_COLOR_ANSI_CODE: &str = "\x1b[0m";
 
         // `term` bypasses the stdout capturing, we should only use it if the capturing was disabled.
         let nocapture = env::args().any(|a| a == "--nocapture");
@@ -857,15 +873,16 @@ impl Drop for RaiiDump {
         let log = String::from_utf8_lossy(&log);
         let log = log.trim();
 
-        if let (true, true, mut stdout) = (nocapture, *ISATTY, std::io::stdout()) {
-            execute!(
-                stdout,
-                SetForegroundColor(Color::DarkYellow),
-                Print(format!("vvv {:?} vvv\n", self.log_path)),
-                SetForegroundColor(Color::Yellow),
-                Print(log),
-            )
-            .expect("Printing to stdout failed");
+        // If we want to determine is a tty or not here and write logs to stdout only if it's tty,
+        // we can use something like https://docs.rs/atty/latest/atty/ here, look like it's more cross-platform than gstuff::ISATTY .
+
+        if nocapture {
+            std::io::stdout()
+                .write_all(format!("{}vvv {:?} vvv\n", DARK_YELLOW_ANSI_CODE, self.log_path).as_bytes())
+                .expect("Printing to stdout failed");
+            std::io::stdout()
+                .write_all(format!("{}{}{}\n", YELLOW_ANSI_CODE, log, RESET_COLOR_ANSI_CODE).as_bytes())
+                .expect("Printing to stdout failed");
         } else {
             log!("vvv {:?} vvv\n{}", self.log_path, log);
         }
@@ -1139,7 +1156,8 @@ impl MarketMakerIt {
                 } else {
                     StatusCode::INTERNAL_SERVER_ERROR
                 };
-                let body_str = json::to_string(&body).expect(&format!("Response {:?} is not a valid JSON", body));
+                let body_str =
+                    json::to_string(&body).unwrap_or_else(|_| panic!("Response {:?} is not a valid JSON", body));
                 Ok((status_code, body_str, HeaderMap::new()))
             },
             Err(e) => Ok((StatusCode::INTERNAL_SERVER_ERROR, e, HeaderMap::new())),
@@ -1576,6 +1594,7 @@ pub async fn enable_eth_coin(
     urls: &[&str],
     swap_contract_address: &str,
     fallback_swap_contract: Option<&str>,
+    contract_supports_watcher: bool,
 ) -> Json {
     let enable = mm
         .rpc(&json!({
@@ -1586,6 +1605,7 @@ pub async fn enable_eth_coin(
             "swap_contract_address": swap_contract_address,
             "fallback_swap_contract": fallback_swap_contract,
             "mm2": 1,
+            "contract_supports_watchers": contract_supports_watcher
         }))
         .await
         .unwrap();
@@ -2188,6 +2208,33 @@ pub async fn withdraw_v1(mm: &MarketMakerIt, coin: &str, to: &str, amount: &str)
         .unwrap();
     assert_eq!(request.0, StatusCode::OK, "'withdraw' failed: {}", request.1);
     json::from_str(&request.1).unwrap()
+}
+
+pub async fn ibc_withdraw(
+    mm: &MarketMakerIt,
+    source_channel: &str,
+    coin: &str,
+    to: &str,
+    amount: &str,
+) -> TransactionDetails {
+    let request = mm
+        .rpc(&json!({
+            "userpass": mm.userpass,
+            "method": "ibc_withdraw",
+            "mmrpc": "2.0",
+            "params": {
+                "ibc_source_channel": source_channel,
+                "coin": coin,
+                "to": to,
+                "amount": amount
+            }
+        }))
+        .await
+        .unwrap();
+    assert_eq!(request.0, StatusCode::OK, "'ibc_withdraw' failed: {}", request.1);
+
+    let json: Json = json::from_str(&request.1).unwrap();
+    json::from_value(json["result"].clone()).unwrap()
 }
 
 pub async fn withdraw_status(mm: &MarketMakerIt, task_id: u64) -> Json {

@@ -1,10 +1,11 @@
-use crate::transport::{SlurpError, SlurpResult};
+use crate::transport::{SlurpError, SlurpResult, SlurpResultJson};
 use common::wio::{drive03, HYPER};
 use common::APPLICATION_JSON;
 use futures::channel::oneshot::Canceled;
-use http::{header, Request};
+use http::{header, HeaderValue, Request};
 use hyper::Body;
 use mm2_err_handle::prelude::*;
+use serde_json::Value as Json;
 
 impl From<Canceled> for SlurpError {
     fn from(_: Canceled) -> Self { SlurpError::Internal("Spawned Slurp future has been canceled".to_owned()) }
@@ -49,9 +50,44 @@ pub async fn slurp_req(request: Request<Vec<u8>>) -> SlurpResult {
     Ok((status, headers, output.to_vec()))
 }
 
+/// Executes a Hyper request, requires [`Request<Body>`] and return the response status, headers and body as Json.
+pub async fn slurp_req_body(request: Request<Body>) -> SlurpResultJson {
+    let uri = request.uri().to_string();
+
+    let request_f = HYPER.request(request);
+    let response = drive03(request_f)
+        .await?
+        .map_to_mm(|e| SlurpError::from_hyper_error(e, uri.clone()))?;
+    let status = response.status();
+    let headers = response.headers().clone();
+    // Get the response body bytes.
+    let body_bytes = hyper::body::to_bytes(response.into_body())
+        .await
+        .map_to_mm(|e| SlurpError::from_hyper_error(e, uri.clone()))?;
+    let body_str = String::from_utf8(body_bytes.to_vec()).map_to_mm(|e| SlurpError::Internal(e.to_string()))?;
+    let body: Json = serde_json::from_str(&body_str)?;
+    Ok((status, headers, body))
+}
+
 /// Executes a GET request, returning the response status, headers and body.
 pub async fn slurp_url(url: &str) -> SlurpResult {
     let req = Request::builder().uri(url).body(Vec::new())?;
+    slurp_req(req).await
+}
+
+/// Executes a GET request with additional headers.
+/// Returning the response status, headers and body.
+pub async fn slurp_url_with_headers(url: &str, headers: Vec<(&'static str, &'static str)>) -> SlurpResult {
+    let mut req = Request::builder();
+    let h = req
+        .headers_mut()
+        .or_mm_err(|| SlurpError::Internal("An error occured while accessing to the request headers.".to_string()))?;
+
+    for (key, value) in headers {
+        h.insert(key, HeaderValue::from_static(value));
+    }
+
+    let req = req.uri(url).body(Vec::new())?;
     slurp_req(req).await
 }
 

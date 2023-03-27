@@ -1,6 +1,6 @@
 use crate::integration_tests_common::*;
 use common::executor::Timer;
-use common::{cfg_native, cfg_wasm32, get_utc_timestamp, log};
+use common::{cfg_native, cfg_wasm32, get_utc_timestamp, log, new_uuid};
 use crypto::privkey::key_pair_from_seed;
 use http::{HeaderMap, StatusCode};
 use mm2_main::mm2::lp_ordermatch::MIN_ORDER_KEEP_ALIVE_INTERVAL;
@@ -1417,7 +1417,7 @@ fn test_swap_status() {
         "userpass": mm.userpass,
         "method": "my_swap_status",
         "params": {
-            "uuid":Uuid::new_v4(),
+            "uuid": new_uuid(),
         }
     })))
     .unwrap();
@@ -1428,7 +1428,7 @@ fn test_swap_status() {
         "userpass": mm.userpass,
         "method": "stats_swap_status",
         "params": {
-            "uuid":Uuid::new_v4(),
+            "uuid": new_uuid(),
         }
     })))
     .unwrap();
@@ -3349,7 +3349,7 @@ fn test_add_delegation_qtum() {
         "pass".into(),
         None,
     )
-    .unwrap();
+        .unwrap();
 
     let json = block_on(enable_electrum(&mm, "tQTUM", false, &[
         "electrum1.cipig.net:10071",
@@ -3434,7 +3434,7 @@ fn test_remove_delegation_qtum() {
         "pass".into(),
         None,
     )
-    .unwrap();
+        .unwrap();
 
     let json = block_on(enable_electrum(&mm, "tQTUM", false, &[
         "electrum1.cipig.net:10071",
@@ -4518,7 +4518,7 @@ fn test_tx_history_tbtc_non_segwit() {
         "mm2": 1,
         "tx_history": true,
     })))
-    .unwrap();
+        .unwrap();
     assert_eq!(
         electrum.0,
         StatusCode::OK,
@@ -4533,6 +4533,8 @@ fn test_tx_history_tbtc_non_segwit() {
     );
 
     let expected = vec![
+        // https://live.blockcypher.com/btc-testnet/tx/a41b2e5f0741d1dcbc309ce4c43fde1ad44c5e61bb34778ab0bf9f3d9fd6fb6c/
+        "a41b2e5f0741d1dcbc309ce4c43fde1ad44c5e61bb34778ab0bf9f3d9fd6fb6c",
         // https://live.blockcypher.com/btc-testnet/tx/9c1ca9de9f3a47d71c8113209123410f44048c67951bf49cdfb1a84c2cc6a55b/
         "9c1ca9de9f3a47d71c8113209123410f44048c67951bf49cdfb1a84c2cc6a55b",
         // https://live.blockcypher.com/btc-testnet/tx/ac6218b33d02e069c4055af709bbb6ca92ce11e55450cde96bc17411e281e5e7/
@@ -5710,7 +5712,7 @@ fn test_orderbook_is_mine_orders() {
     let asks = bob_orderbook["asks"].as_array().unwrap();
     assert_eq!(asks.len(), 1, "Bob RICK/MORTY orderbook must have exactly 1 ask");
     let is_mine = asks[0]["is_mine"].as_bool().unwrap();
-    assert_eq!(is_mine, true);
+    assert!(is_mine);
 
     // Alice orderbook must show 1 not-mine order
     log!("Get RICK/MORTY orderbook on Alice side");
@@ -5728,7 +5730,7 @@ fn test_orderbook_is_mine_orders() {
     let asks = alice_orderbook["asks"].as_array().unwrap();
     assert_eq!(asks.len(), 1, "Alice RICK/MORTY orderbook must have exactly 1 ask");
     let is_mine = asks[0]["is_mine"].as_bool().unwrap();
-    assert_eq!(is_mine, false);
+    assert!(!is_mine);
 
     // make another order by Alice
     let rc = block_on(mm_alice.rpc(&json! ({
@@ -6232,7 +6234,7 @@ fn test_get_current_mtp() {
     ]);
     let passphrase = "cMhHM3PMpMrChygR4bLF7QsTdenhWpFrrmf2UezBG3eeFsz41rtL";
 
-    let conf = Mm2TestConf::seednode(&passphrase, &coins);
+    let conf = Mm2TestConf::seednode(passphrase, &coins);
     let mm = MarketMakerIt::start(conf.conf, conf.rpc_password, None).unwrap();
     let (_dump_log, _dump_dashboard) = mm.mm_dump();
 
@@ -6254,10 +6256,10 @@ fn test_get_current_mtp() {
     .unwrap();
 
     // Test if request is successful before proceeding.
-    assert_eq!(true, rc.0.is_success());
+    assert!(rc.0.is_success());
     let mtp_result: Json = json::from_str(&rc.1).unwrap();
     // Test if mtp returns a u32 Number.
-    assert_eq!(true, mtp_result["result"]["mtp"].is_number());
+    assert!(mtp_result["result"]["mtp"].is_number());
 }
 
 #[test]
@@ -6295,7 +6297,7 @@ fn test_get_public_key() {
 
     // Must be 200
     assert_eq!(resp.0, 200);
-    let v: RpcV2Response<GetPublicKeyResult> = serde_json::from_str(&*resp.1).unwrap();
+    let v: RpcV2Response<GetPublicKeyResult> = serde_json::from_str(&resp.1).unwrap();
     assert_eq!(
         v.result.public_key,
         "022cd3021a2197361fb70b862c412bc8e44cff6951fa1de45ceabfdd9b4c520420"
@@ -6334,7 +6336,7 @@ fn test_get_public_key_hash() {
 
     // Must be 200
     assert_eq!(resp.0, StatusCode::OK);
-    let v: RpcV2Response<GetPublicKeyHashResult> = serde_json::from_str(&*resp.1).unwrap();
+    let v: RpcV2Response<GetPublicKeyHashResult> = serde_json::from_str(&resp.1).unwrap();
     // Public key hash must be "b506088aa2a3b4bb1da3a29bf00ce1a550ea1df9"
     assert_eq!(v.result.public_key_hash, "b506088aa2a3b4bb1da3a29bf00ce1a550ea1df9")
 }
@@ -6481,9 +6483,9 @@ fn test_conf_settings_in_orderbook() {
         "Alice RICK/MORTY orderbook must have exactly 1 ask"
     );
     assert_eq!(alice_orderbook.asks[0].base_confs, 10);
-    assert_eq!(alice_orderbook.asks[0].base_nota, true);
+    assert!(alice_orderbook.asks[0].base_nota);
     assert_eq!(alice_orderbook.asks[0].rel_confs, 5);
-    assert_eq!(alice_orderbook.asks[0].rel_nota, false);
+    assert!(!alice_orderbook.asks[0].rel_nota);
 
     assert_eq!(
         alice_orderbook.bids.len(),
@@ -6491,9 +6493,9 @@ fn test_conf_settings_in_orderbook() {
         "Alice RICK/MORTY orderbook must have exactly 1 bid"
     );
     assert_eq!(alice_orderbook.bids[0].base_confs, 10);
-    assert_eq!(alice_orderbook.bids[0].base_nota, true);
+    assert!(alice_orderbook.bids[0].base_nota);
     assert_eq!(alice_orderbook.bids[0].rel_confs, 5);
-    assert_eq!(alice_orderbook.bids[0].rel_nota, false);
+    assert!(!alice_orderbook.bids[0].rel_nota);
 
     block_on(mm_bob.stop()).unwrap();
     block_on(mm_alice.stop()).unwrap();
@@ -6622,9 +6624,9 @@ fn alice_can_see_confs_in_orderbook_after_sync() {
         .find(|entry| entry.pubkey == bob_pubkey)
         .unwrap();
     assert_eq!(bob_order_in_orderbook.base_confs, 10);
-    assert_eq!(bob_order_in_orderbook.base_nota, true);
+    assert!(bob_order_in_orderbook.base_nota);
     assert_eq!(bob_order_in_orderbook.rel_confs, 5);
-    assert_eq!(bob_order_in_orderbook.rel_nota, false);
+    assert!(!bob_order_in_orderbook.rel_nota);
 
     block_on(mm_bob.stop()).unwrap();
     block_on(mm_alice.stop()).unwrap();
@@ -6827,9 +6829,9 @@ fn test_sign_verify_message_eth() {
         "0xcdf11a9c4591fb7334daa4b21494a2590d3f7de41c7d2b333a5b61ca59da9b311b492374cc0ba4fbae53933260fa4b1c18f15d95b694629a7b0620eec77a938600"
     );
 
-    let response = block_on(verify_message(&mm_bob, "ETH", 
-    "0xcdf11a9c4591fb7334daa4b21494a2590d3f7de41c7d2b333a5b61ca59da9b311b492374cc0ba4fbae53933260fa4b1c18f15d95b694629a7b0620eec77a938600",
-    "0xbAB36286672fbdc7B250804bf6D14Be0dF69fa29"));
+    let response = block_on(verify_message(&mm_bob, "ETH",
+                                           "0xcdf11a9c4591fb7334daa4b21494a2590d3f7de41c7d2b333a5b61ca59da9b311b492374cc0ba4fbae53933260fa4b1c18f15d95b694629a7b0620eec77a938600",
+                                           "0xbAB36286672fbdc7B250804bf6D14Be0dF69fa29"));
     let response: RpcV2Response<VerificationResponse> = json::from_value(response).unwrap();
     let response = response.result;
 
@@ -7450,7 +7452,8 @@ fn test_eth_swap_contract_addr_negotiation_same_fallback() {
         ETH_DEV_NODES,
         // using arbitrary address
         "0x2b294F029Fde858b2c62184e8390591755521d8E",
-        Some(ETH_DEV_SWAP_CONTRACT)
+        Some(ETH_DEV_SWAP_CONTRACT),
+        false
     )));
 
     dbg!(block_on(enable_eth_coin(
@@ -7459,7 +7462,8 @@ fn test_eth_swap_contract_addr_negotiation_same_fallback() {
         ETH_DEV_NODES,
         // using arbitrary address
         "0x2b294F029Fde858b2c62184e8390591755521d8E",
-        Some(ETH_DEV_SWAP_CONTRACT)
+        Some(ETH_DEV_SWAP_CONTRACT),
+        false
     )));
 
     dbg!(block_on(enable_eth_coin(
@@ -7468,7 +7472,8 @@ fn test_eth_swap_contract_addr_negotiation_same_fallback() {
         ETH_DEV_NODES,
         // using arbitrary address
         ETH_MAINNET_SWAP_CONTRACT,
-        Some(ETH_DEV_SWAP_CONTRACT)
+        Some(ETH_DEV_SWAP_CONTRACT),
+        false
     )));
 
     dbg!(block_on(enable_eth_coin(
@@ -7477,7 +7482,8 @@ fn test_eth_swap_contract_addr_negotiation_same_fallback() {
         ETH_DEV_NODES,
         // using arbitrary address
         ETH_MAINNET_SWAP_CONTRACT,
-        Some(ETH_DEV_SWAP_CONTRACT)
+        Some(ETH_DEV_SWAP_CONTRACT),
+        false
     )));
 
     let uuids = block_on(start_swaps(
@@ -7538,6 +7544,7 @@ fn test_eth_swap_negotiation_fails_maker_no_fallback() {
         // using arbitrary address
         "0x2b294F029Fde858b2c62184e8390591755521d8E",
         None,
+        false
     )));
 
     dbg!(block_on(enable_eth_coin(
@@ -7547,6 +7554,7 @@ fn test_eth_swap_negotiation_fails_maker_no_fallback() {
         // using arbitrary address
         "0x2b294F029Fde858b2c62184e8390591755521d8E",
         None,
+        false
     )));
 
     dbg!(block_on(enable_eth_coin(
@@ -7555,7 +7563,8 @@ fn test_eth_swap_negotiation_fails_maker_no_fallback() {
         ETH_DEV_NODES,
         // using arbitrary address
         ETH_MAINNET_SWAP_CONTRACT,
-        Some(ETH_DEV_SWAP_CONTRACT)
+        Some(ETH_DEV_SWAP_CONTRACT),
+        false
     )));
 
     dbg!(block_on(enable_eth_coin(
@@ -7564,7 +7573,8 @@ fn test_eth_swap_negotiation_fails_maker_no_fallback() {
         ETH_DEV_NODES,
         // using arbitrary address
         ETH_MAINNET_SWAP_CONTRACT,
-        Some(ETH_DEV_SWAP_CONTRACT)
+        Some(ETH_DEV_SWAP_CONTRACT),
+        false
     )));
 
     let uuids = block_on(start_swaps(

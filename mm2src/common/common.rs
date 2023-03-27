@@ -174,6 +174,7 @@ cfg_wasm32! {
 }
 
 pub const X_GRPC_WEB: &str = "x-grpc-web";
+pub const X_API_KEY: &str = "X-API-Key";
 pub const APPLICATION_JSON: &str = "application/json";
 pub const APPLICATION_GRPC_WEB: &str = "application/grpc-web";
 pub const APPLICATION_GRPC_WEB_PROTO: &str = "application/grpc-web+proto";
@@ -798,7 +799,7 @@ pub struct PagingOptions {
     pub from_uuid: Option<Uuid>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[inline]
 pub fn new_uuid() -> Uuid { Uuid::new_v4() }
 
 pub fn first_char_to_upper(input: &str) -> String {
@@ -929,16 +930,13 @@ pub fn is_acceptable_input_on_repeated_characters(entry: &str, limit: usize) -> 
 
 #[test]
 fn test_is_acceptable_input_on_repeated_characters() {
-    assert_eq!(is_acceptable_input_on_repeated_characters("Hello", 3), true);
-    assert_eq!(is_acceptable_input_on_repeated_characters("Hellooo", 3), false);
-    assert_eq!(
-        is_acceptable_input_on_repeated_characters("SuperStrongPassword123*", 3),
-        true
-    );
-    assert_eq!(
-        is_acceptable_input_on_repeated_characters("SuperStrongaaaPassword123*", 3),
-        false
-    );
+    assert!(is_acceptable_input_on_repeated_characters("Hello", 3));
+    assert!(!is_acceptable_input_on_repeated_characters("Hellooo", 3));
+    assert!(is_acceptable_input_on_repeated_characters("SuperStrongPassword123*", 3));
+    assert!(!is_acceptable_input_on_repeated_characters(
+        "SuperStrongaaaPassword123*",
+        3
+    ));
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]

@@ -13,13 +13,12 @@ use crate::utxo::utxo_common::{self, big_decimal_from_sat_unsigned, payment_scri
 use crate::utxo::{generate_and_send_tx, sat_from_big_decimal, ActualTxFee, AdditionalTxData, BroadcastTxErr,
                   FeePolicy, GenerateTxError, RecentlySpentOutPointsGuard, UtxoCoinConf, UtxoCoinFields,
                   UtxoCommonOps, UtxoTx, UtxoTxBroadcastOps, UtxoTxGenerationOps};
-use crate::{BalanceFut, CheckIfMyPaymentSentArgs, CoinBalance, CoinFutSpawner, FeeApproxStage, FoundSwapTxSpend,
-            HistorySyncState, MakerSwapTakerCoin, MarketCoinOps, MmCoin, NegotiateSwapContractAddrErr,
-            NumConversError, PaymentInstructions, PaymentInstructionsErr, PrivKeyPolicyNotAllowed, RawTransactionFut,
-            RawTransactionRequest, RefundError, RefundResult, SearchForSwapTxSpendInput, SendMakerPaymentArgs,
-            SendMakerPaymentSpendPreimageInput, SendMakerRefundsPaymentArgs, SendMakerSpendsTakerPaymentArgs,
-            SendTakerPaymentArgs, SendTakerRefundsPaymentArgs, SendTakerSpendsMakerPaymentArgs,
-            SendWatcherRefundsPaymentArgs, SignatureResult, SwapOps, TakerSwapMakerCoin, TradeFee, TradePreimageError,
+use crate::{BalanceFut, CheckIfMyPaymentSentArgs, CoinBalance, CoinFutSpawner, ConfirmPaymentInput, FeeApproxStage,
+            FoundSwapTxSpend, HistorySyncState, MakerSwapTakerCoin, MarketCoinOps, MmCoin,
+            NegotiateSwapContractAddrErr, NumConversError, PaymentInstructions, PaymentInstructionsErr,
+            PrivKeyPolicyNotAllowed, RawTransactionFut, RawTransactionRequest, RefundError, RefundPaymentArgs,
+            RefundResult, SearchForSwapTxSpendInput, SendMakerPaymentSpendPreimageInput, SendPaymentArgs,
+            SignatureResult, SpendPaymentArgs, SwapOps, TakerSwapMakerCoin, TradeFee, TradePreimageError,
             TradePreimageFut, TradePreimageResult, TradePreimageValue, TransactionDetails, TransactionEnum,
             TransactionErr, TransactionFut, TxFeeDetails, TxMarshalingErr, UnexpectedDerivationMethod,
             ValidateAddressResult, ValidateFeeArgs, ValidateInstructionsErr, ValidateOtherPubKeyErr,
@@ -752,7 +751,7 @@ impl SlpToken {
         validate_fut
             .compat()
             .await
-            .map_to_mm(ValidateDexFeeError::ValidatePaymentError)?;
+            .map_err(|e| MmError::new(ValidateDexFeeError::ValidatePaymentError(e.into_inner().to_string())))?;
 
         Ok(())
     }
@@ -1156,16 +1155,8 @@ impl MarketCoinOps for SlpToken {
         Box::new(fut.boxed().compat())
     }
 
-    fn wait_for_confirmations(
-        &self,
-        tx: &[u8],
-        confirmations: u64,
-        requires_nota: bool,
-        wait_until: u64,
-        check_every: u64,
-    ) -> Box<dyn Future<Item = (), Error = String> + Send> {
-        self.platform_coin
-            .wait_for_confirmations(tx, confirmations, requires_nota, wait_until, check_every)
+    fn wait_for_confirmations(&self, input: ConfirmPaymentInput) -> Box<dyn Future<Item = (), Error = String> + Send> {
+        self.platform_coin.wait_for_confirmations(input)
     }
 
     fn wait_for_htlc_tx_spend(
@@ -1224,7 +1215,7 @@ impl SwapOps for SlpToken {
         Box::new(fut.boxed().compat().map(|tx| tx.into()))
     }
 
-    fn send_maker_payment(&self, maker_payment_args: SendMakerPaymentArgs) -> TransactionFut {
+    fn send_maker_payment(&self, maker_payment_args: SendPaymentArgs) -> TransactionFut {
         let taker_pub = try_tx_fus!(Public::from_slice(maker_payment_args.other_pubkey));
         let amount = try_tx_fus!(sat_from_big_decimal(&maker_payment_args.amount, self.decimals()));
         let secret_hash = maker_payment_args.secret_hash.to_owned();
@@ -1242,7 +1233,7 @@ impl SwapOps for SlpToken {
         Box::new(fut.boxed().compat())
     }
 
-    fn send_taker_payment(&self, taker_payment_args: SendTakerPaymentArgs) -> TransactionFut {
+    fn send_taker_payment(&self, taker_payment_args: SendPaymentArgs) -> TransactionFut {
         let maker_pub = try_tx_fus!(Public::from_slice(taker_payment_args.other_pubkey));
         let amount = try_tx_fus!(sat_from_big_decimal(&taker_payment_args.amount, self.decimals()));
         let secret_hash = taker_payment_args.secret_hash.to_owned();
@@ -1261,10 +1252,7 @@ impl SwapOps for SlpToken {
         Box::new(fut.boxed().compat())
     }
 
-    fn send_maker_spends_taker_payment(
-        &self,
-        maker_spends_payment_args: SendMakerSpendsTakerPaymentArgs,
-    ) -> TransactionFut {
+    fn send_maker_spends_taker_payment(&self, maker_spends_payment_args: SpendPaymentArgs) -> TransactionFut {
         let tx = maker_spends_payment_args.other_payment_tx.to_owned();
         let taker_pub = try_tx_fus!(Public::from_slice(maker_spends_payment_args.other_pubkey));
         let secret = maker_spends_payment_args.secret.to_owned();
@@ -1283,10 +1271,7 @@ impl SwapOps for SlpToken {
         Box::new(fut.boxed().compat())
     }
 
-    fn send_taker_spends_maker_payment(
-        &self,
-        taker_spends_payment_args: SendTakerSpendsMakerPaymentArgs,
-    ) -> TransactionFut {
+    fn send_taker_spends_maker_payment(&self, taker_spends_payment_args: SpendPaymentArgs) -> TransactionFut {
         let tx = taker_spends_payment_args.other_payment_tx.to_owned();
         let maker_pub = try_tx_fus!(Public::from_slice(taker_spends_payment_args.other_pubkey));
         let secret = taker_spends_payment_args.secret.to_owned();
@@ -1305,7 +1290,7 @@ impl SwapOps for SlpToken {
         Box::new(fut.boxed().compat())
     }
 
-    fn send_taker_refunds_payment(&self, taker_refunds_payment_args: SendTakerRefundsPaymentArgs) -> TransactionFut {
+    fn send_taker_refunds_payment(&self, taker_refunds_payment_args: RefundPaymentArgs) -> TransactionFut {
         let tx = taker_refunds_payment_args.payment_tx.to_owned();
         let maker_pub = try_tx_fus!(Public::from_slice(taker_refunds_payment_args.other_pubkey));
         let secret_hash = taker_refunds_payment_args.secret_hash.to_owned();
@@ -1323,7 +1308,7 @@ impl SwapOps for SlpToken {
         Box::new(fut.boxed().compat().map_err(TransactionErr::Plain))
     }
 
-    fn send_maker_refunds_payment(&self, maker_refunds_payment_args: SendMakerRefundsPaymentArgs) -> TransactionFut {
+    fn send_maker_refunds_payment(&self, maker_refunds_payment_args: RefundPaymentArgs) -> TransactionFut {
         let tx = maker_refunds_payment_args.payment_tx.to_owned();
         let taker_pub = try_tx_fus!(Public::from_slice(maker_refunds_payment_args.other_pubkey));
         let secret_hash = maker_refunds_payment_args.secret_hash.to_owned();
@@ -1341,7 +1326,7 @@ impl SwapOps for SlpToken {
         Box::new(fut.boxed().compat())
     }
 
-    fn validate_fee(&self, validate_fee_args: ValidateFeeArgs) -> Box<dyn Future<Item = (), Error = String> + Send> {
+    fn validate_fee(&self, validate_fee_args: ValidateFeeArgs) -> ValidatePaymentFut<()> {
         let tx = match validate_fee_args.fee_tx {
             TransactionEnum::UtxoTx(tx) => tx.clone(),
             _ => panic!(),
@@ -1353,10 +1338,9 @@ impl SwapOps for SlpToken {
         let min_block_number = validate_fee_args.min_block_number;
 
         let fut = async move {
-            try_s!(
-                coin.validate_dex_fee(tx, &expected_sender, &fee_addr, amount, min_block_number)
-                    .await
-            );
+            coin.validate_dex_fee(tx, &expected_sender, &fee_addr, amount, min_block_number)
+                .await
+                .map_err(|e| MmError::new(ValidatePaymentError::WrongPaymentTx(e.into_inner().to_string())))?;
             Ok(())
         };
         Box::new(fut.boxed().compat())
@@ -1415,7 +1399,12 @@ impl SwapOps for SlpToken {
     }
 
     #[inline]
-    async fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<Vec<u8>, String> {
+    async fn extract_secret(
+        &self,
+        secret_hash: &[u8],
+        spend_tx: &[u8],
+        _watcher_reward: bool,
+    ) -> Result<Vec<u8>, String> {
         utxo_common::extract_secret(secret_hash, spend_tx)
     }
 
@@ -1530,10 +1519,7 @@ impl WatcherOps for SlpToken {
         unimplemented!();
     }
 
-    fn send_taker_payment_refund_preimage(
-        &self,
-        _watcher_refunds_payment_args: SendWatcherRefundsPaymentArgs,
-    ) -> TransactionFut {
+    fn send_taker_payment_refund_preimage(&self, _watcher_refunds_payment_args: RefundPaymentArgs) -> TransactionFut {
         unimplemented!();
     }
 
@@ -1871,9 +1857,17 @@ impl MmCoin for SlpToken {
 
     fn mature_confirmations(&self) -> Option<u32> { self.platform_coin.mature_confirmations() }
 
-    fn coin_protocol_info(&self) -> Vec<u8> { Vec::new() }
+    fn coin_protocol_info(&self, _amount_to_receive: Option<MmNumber>) -> Vec<u8> { Vec::new() }
 
-    fn is_coin_protocol_supported(&self, _info: &Option<Vec<u8>>) -> bool { true }
+    fn is_coin_protocol_supported(
+        &self,
+        _info: &Option<Vec<u8>>,
+        _amount_to_send: Option<MmNumber>,
+        _locktime: u64,
+        _is_maker: bool,
+    ) -> bool {
+        true
+    }
 
     fn on_disabled(&self) -> Result<(), AbortedError> { self.conf.abortable_system.abort_all() }
 
@@ -2119,6 +2113,7 @@ mod slp_tests {
             try_spv_proof_until: now_ms() / 1000 + 60,
             unique_swap_data: Vec::new(),
             swap_contract_address: None,
+            min_watcher_reward: None,
         };
         block_on(fusd.validate_htlc(input)).unwrap();
     }
@@ -2195,7 +2190,7 @@ mod slp_tests {
         let err = block_on(fusd.broadcast_tx(&utxo_tx)).unwrap_err();
         match err.into_inner() {
             BroadcastTxErr::Other(err) => assert!(err.contains("is not valid with reason outputs greater than inputs")),
-            e @ _ => panic!("Unexpected err {:?}", e),
+            e => panic!("Unexpected err {:?}", e),
         };
 
         // The error variant should equal to `TxRecoverable`
@@ -2253,11 +2248,12 @@ mod slp_tests {
             try_spv_proof_until: now_ms() / 1000 + 60,
             confirmations: 1,
             unique_swap_data: Vec::new(),
+            min_watcher_reward: None,
         };
         let validity_err = block_on(fusd.validate_htlc(input)).unwrap_err();
         match validity_err.into_inner() {
             ValidatePaymentError::WrongPaymentTx(e) => println!("{:#?}", e),
-            err @ _ => panic!("Unexpected err {:#?}", err),
+            err => panic!("Unexpected err {:#?}", err),
         };
     }
 

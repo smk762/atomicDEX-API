@@ -48,7 +48,7 @@ fn eth_coin_for_test(
            {"coin":"JST","name":"jst","rpcport":80,"mm2":1,"protocol":{"type":"ERC20","protocol_data":{"platform":"ETH","contract_address":"0x2b294F029Fde858b2c62184e8390591755521d8E"}}}
         ]
     });
-    let ctx = MmCtxBuilder::new().with_conf(conf.clone()).into_mm_arc();
+    let ctx = MmCtxBuilder::new().with_conf(conf).into_mm_arc();
     let ticker = match coin_type {
         EthCoinType::Eth => "ETH".to_string(),
         EthCoinType::Erc20 { .. } => "JST".to_string(),
@@ -66,6 +66,7 @@ fn eth_coin_for_test(
         priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from_str("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94").unwrap(),
         fallback_swap_contract,
+        contract_supports_watchers: false,
         ticker,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
@@ -232,6 +233,7 @@ fn send_and_refund_erc20_payment() {
         priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from_str("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94").unwrap(),
         fallback_swap_contract: None,
+        contract_supports_watchers: false,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
             is_parity: true,
@@ -250,7 +252,7 @@ fn send_and_refund_erc20_payment() {
         erc20_tokens_infos: Default::default(),
         abortable_system: AbortableQueue::default(),
     }));
-    let maker_payment_args = SendMakerPaymentArgs {
+    let maker_payment_args = SendPaymentArgs {
         time_lock_duration: 0,
         time_lock: (now_ms() / 1000) as u32 - 200,
         other_pubkey: &DEX_FEE_ADDR_RAW_PUBKEY,
@@ -259,19 +261,22 @@ fn send_and_refund_erc20_payment() {
         swap_contract_address: &coin.swap_contract_address(),
         swap_unique_data: &[],
         payment_instructions: &None,
+        watcher_reward: None,
+        wait_for_confirmation_until: 0,
     };
     let payment = coin.send_maker_payment(maker_payment_args).wait().unwrap();
     log!("{:?}", payment);
 
     block_on(Timer::sleep(60.));
 
-    let maker_refunds_payment_args = SendMakerRefundsPaymentArgs {
+    let maker_refunds_payment_args = RefundPaymentArgs {
         payment_tx: &payment.tx_hex(),
         time_lock: (now_ms() / 1000) as u32 - 200,
         other_pubkey: &DEX_FEE_ADDR_RAW_PUBKEY,
         secret_hash: &[1; 20],
         swap_contract_address: &coin.swap_contract_address(),
         swap_unique_data: &[],
+        watcher_reward: false,
     };
     let refund = coin
         .send_maker_refunds_payment(maker_refunds_payment_args)
@@ -299,6 +304,7 @@ fn send_and_refund_eth_payment() {
         priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from_str("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94").unwrap(),
         fallback_swap_contract: None,
+        contract_supports_watchers: false,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
             is_parity: true,
@@ -317,7 +323,7 @@ fn send_and_refund_eth_payment() {
         erc20_tokens_infos: Default::default(),
         abortable_system: AbortableQueue::default(),
     }));
-    let send_maker_payment_args = SendMakerPaymentArgs {
+    let send_maker_payment_args = SendPaymentArgs {
         time_lock_duration: 0,
         time_lock: (now_ms() / 1000) as u32 - 200,
         other_pubkey: &DEX_FEE_ADDR_RAW_PUBKEY,
@@ -326,19 +332,22 @@ fn send_and_refund_eth_payment() {
         swap_contract_address: &coin.swap_contract_address(),
         swap_unique_data: &[],
         payment_instructions: &None,
+        watcher_reward: None,
+        wait_for_confirmation_until: 0,
     };
     let payment = coin.send_maker_payment(send_maker_payment_args).wait().unwrap();
 
     log!("{:?}", payment);
 
     block_on(Timer::sleep(60.));
-    let maker_refunds_payment_args = SendMakerRefundsPaymentArgs {
+    let maker_refunds_payment_args = RefundPaymentArgs {
         payment_tx: &payment.tx_hex(),
         time_lock: (now_ms() / 1000) as u32 - 200,
         other_pubkey: &DEX_FEE_ADDR_RAW_PUBKEY,
         secret_hash: &[1; 20],
         swap_contract_address: &coin.swap_contract_address(),
         swap_unique_data: &[],
+        watcher_reward: false,
     };
     let refund = coin
         .send_maker_refunds_payment(maker_refunds_payment_args)
@@ -374,6 +383,7 @@ fn test_nonce_several_urls() {
         priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from_str("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94").unwrap(),
         fallback_swap_contract: None,
+        contract_supports_watchers: false,
         web3_instances: vec![
             Web3Instance {
                 web3: web3_infura.clone(),
@@ -439,6 +449,7 @@ fn test_wait_for_payment_spend_timeout() {
         priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from_str("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94").unwrap(),
         fallback_swap_contract: None,
+        contract_supports_watchers: false,
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
@@ -509,6 +520,7 @@ fn test_search_for_swap_tx_spend_was_spent() {
         priv_key_policy: key_pair.into(),
         swap_contract_address,
         fallback_swap_contract: None,
+        contract_supports_watchers: false,
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
@@ -553,9 +565,10 @@ fn test_search_for_swap_tx_spend_was_spent() {
     ];
     let spend_tx = FoundSwapTxSpend::Spent(signed_eth_tx_from_bytes(&spend_tx).unwrap().into());
 
-    let found_tx = block_on(coin.search_for_swap_tx_spend(&payment_tx, swap_contract_address, &[0; 20], 15643279))
-        .unwrap()
-        .unwrap();
+    let found_tx =
+        block_on(coin.search_for_swap_tx_spend(&payment_tx, swap_contract_address, &[0; 20], 15643279, false))
+            .unwrap()
+            .unwrap();
     assert_eq!(spend_tx, found_tx);
 }
 
@@ -620,6 +633,7 @@ fn test_search_for_swap_tx_spend_was_refunded() {
         priv_key_policy: key_pair.into(),
         swap_contract_address,
         fallback_swap_contract: None,
+        contract_supports_watchers: false,
         ticker: "BAT".into(),
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
@@ -667,9 +681,10 @@ fn test_search_for_swap_tx_spend_was_refunded() {
     ];
     let refund_tx = FoundSwapTxSpend::Refunded(signed_eth_tx_from_bytes(&refund_tx).unwrap().into());
 
-    let found_tx = block_on(coin.search_for_swap_tx_spend(&payment_tx, swap_contract_address, &[0; 20], 13638713))
-        .unwrap()
-        .unwrap();
+    let found_tx =
+        block_on(coin.search_for_swap_tx_spend(&payment_tx, swap_contract_address, &[0; 20], 13638713, false))
+            .unwrap()
+            .unwrap();
     assert_eq!(refund_tx, found_tx);
 }
 
@@ -697,7 +712,7 @@ fn test_withdraw_impl_manual_fee() {
     };
     coin.my_balance().wait().unwrap();
 
-    let tx_details = block_on(withdraw_impl(coin.clone(), withdraw_req)).unwrap();
+    let tx_details = block_on(withdraw_impl(coin, withdraw_req)).unwrap();
     let expected = Some(
         EthTxFeeDetails {
             coin: "ETH".into(),
@@ -741,7 +756,7 @@ fn test_withdraw_impl_fee_details() {
     };
     coin.my_balance().wait().unwrap();
 
-    let tx_details = block_on(withdraw_impl(coin.clone(), withdraw_req)).unwrap();
+    let tx_details = block_on(withdraw_impl(coin, withdraw_req)).unwrap();
     let expected = Some(
         EthTxFeeDetails {
             coin: "ETH".into(),
@@ -980,7 +995,7 @@ fn test_get_fee_to_send_taker_fee() {
         vec!["http://dummy.dummy".into()],
         None,
     );
-    let actual = block_on(coin.get_fee_to_send_taker_fee(dex_fee_amount.clone(), FeeApproxStage::WithoutApprox))
+    let actual = block_on(coin.get_fee_to_send_taker_fee(dex_fee_amount, FeeApproxStage::WithoutApprox))
         .expect("!get_fee_to_send_taker_fee");
     assert_eq!(actual, expected_fee);
 }
@@ -1007,8 +1022,7 @@ fn test_get_fee_to_send_taker_fee_insufficient_balance() {
     );
     let dex_fee_amount = u256_to_big_decimal(DEX_FEE_AMOUNT.into(), 18).expect("!u256_to_big_decimal");
 
-    let error =
-        block_on(coin.get_fee_to_send_taker_fee(dex_fee_amount.clone(), FeeApproxStage::WithoutApprox)).unwrap_err();
+    let error = block_on(coin.get_fee_to_send_taker_fee(dex_fee_amount, FeeApproxStage::WithoutApprox)).unwrap_err();
     log!("{}", error);
     assert!(
         matches!(error.get_inner(), TradePreimageError::NotSufficientBalance { .. }),
@@ -1030,14 +1044,17 @@ fn validate_dex_fee_invalid_sender_eth() {
     let amount: BigDecimal = "0.000526435076465".parse().unwrap();
     let validate_fee_args = ValidateFeeArgs {
         fee_tx: &tx,
-        expected_sender: &*DEX_FEE_ADDR_RAW_PUBKEY,
-        fee_addr: &*DEX_FEE_ADDR_RAW_PUBKEY,
+        expected_sender: &DEX_FEE_ADDR_RAW_PUBKEY,
+        fee_addr: &DEX_FEE_ADDR_RAW_PUBKEY,
         amount: &amount,
         min_block_number: 0,
         uuid: &[],
     };
-    let validate_err = coin.validate_fee(validate_fee_args).wait().unwrap_err();
-    assert!(validate_err.contains("was sent from wrong address"));
+    let error = coin.validate_fee(validate_fee_args).wait().unwrap_err().into_inner();
+    match error {
+        ValidatePaymentError::WrongPaymentTx(err) => assert!(err.contains("was sent from wrong address")),
+        _ => panic!("Expected `WrongPaymentTx` wrong sender address, found {:?}", error),
+    }
 }
 
 #[test]
@@ -1061,14 +1078,17 @@ fn validate_dex_fee_invalid_sender_erc() {
     let amount: BigDecimal = "5.548262548262548262".parse().unwrap();
     let validate_fee_args = ValidateFeeArgs {
         fee_tx: &tx,
-        expected_sender: &*DEX_FEE_ADDR_RAW_PUBKEY,
-        fee_addr: &*DEX_FEE_ADDR_RAW_PUBKEY,
+        expected_sender: &DEX_FEE_ADDR_RAW_PUBKEY,
+        fee_addr: &DEX_FEE_ADDR_RAW_PUBKEY,
         amount: &amount,
         min_block_number: 0,
         uuid: &[],
     };
-    let validate_err = coin.validate_fee(validate_fee_args).wait().unwrap_err();
-    assert!(validate_err.contains("was sent from wrong address"));
+    let error = coin.validate_fee(validate_fee_args).wait().unwrap_err().into_inner();
+    match error {
+        ValidatePaymentError::WrongPaymentTx(err) => assert!(err.contains("was sent from wrong address")),
+        _ => panic!("Expected `WrongPaymentTx` wrong sender address, found {:?}", error),
+    }
 }
 
 fn sender_compressed_pub(tx: &SignedEthTx) -> [u8; 33] {
@@ -1097,13 +1117,16 @@ fn validate_dex_fee_eth_confirmed_before_min_block() {
     let validate_fee_args = ValidateFeeArgs {
         fee_tx: &tx,
         expected_sender: &compressed_public,
-        fee_addr: &*DEX_FEE_ADDR_RAW_PUBKEY,
+        fee_addr: &DEX_FEE_ADDR_RAW_PUBKEY,
         amount: &amount,
         min_block_number: 11784793,
         uuid: &[],
     };
-    let validate_err = coin.validate_fee(validate_fee_args).wait().unwrap_err();
-    assert!(validate_err.contains("confirmed before min_block"));
+    let error = coin.validate_fee(validate_fee_args).wait().unwrap_err().into_inner();
+    match error {
+        ValidatePaymentError::WrongPaymentTx(err) => assert!(err.contains("confirmed before min_block")),
+        _ => panic!("Expected `WrongPaymentTx` early confirmation, found {:?}", error),
+    }
 }
 
 #[test]
@@ -1131,13 +1154,16 @@ fn validate_dex_fee_erc_confirmed_before_min_block() {
     let validate_fee_args = ValidateFeeArgs {
         fee_tx: &tx,
         expected_sender: &compressed_public,
-        fee_addr: &*DEX_FEE_ADDR_RAW_PUBKEY,
+        fee_addr: &DEX_FEE_ADDR_RAW_PUBKEY,
         amount: &amount,
         min_block_number: 11823975,
         uuid: &[],
     };
-    let validate_err = coin.validate_fee(validate_fee_args).wait().unwrap_err();
-    assert!(validate_err.contains("confirmed before min_block"));
+    let error = coin.validate_fee(validate_fee_args).wait().unwrap_err().into_inner();
+    match error {
+        ValidatePaymentError::WrongPaymentTx(err) => assert!(err.contains("confirmed before min_block")),
+        _ => panic!("Expected `WrongPaymentTx` early confirmation, found {:?}", error),
+    }
 }
 
 #[test]
@@ -1276,6 +1302,7 @@ fn test_message_hash() {
         priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from_str("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94").unwrap(),
         fallback_swap_contract: None,
+        contract_supports_watchers: false,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
             is_parity: true,
@@ -1320,6 +1347,7 @@ fn test_sign_verify_message() {
         priv_key_policy: key_pair.into(),
         swap_contract_address: Address::from_str("0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94").unwrap(),
         fallback_swap_contract: None,
+        contract_supports_watchers: false,
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
             is_parity: true,
@@ -1375,6 +1403,7 @@ fn test_eth_extract_secret() {
         priv_key_policy: key_pair.into(),
         swap_contract_address,
         fallback_swap_contract: None,
+        contract_supports_watchers: false,
         ticker: "ETH".into(),
         web3_instances: vec![Web3Instance {
             web3: web3.clone(),
@@ -1404,7 +1433,7 @@ fn test_eth_extract_secret() {
         100, 189, 72, 74, 221, 144, 66, 170, 68, 121, 29, 105, 19, 194, 35, 245, 196, 131, 236, 29, 105, 101, 30,
     ];
 
-    let secret = block_on(coin.extract_secret(&[0u8; 20], tx_bytes.as_slice()));
+    let secret = block_on(coin.extract_secret(&[0u8; 20], tx_bytes.as_slice(), false));
     assert!(secret.is_ok());
     let expect_secret = &[
         168, 151, 11, 232, 224, 253, 63, 180, 26, 114, 23, 184, 27, 10, 161, 80, 178, 251, 73, 204, 80, 174, 97, 118,
@@ -1427,7 +1456,7 @@ fn test_eth_extract_secret() {
         6, 108, 165, 181, 188, 40, 56, 47, 211, 229, 221, 73, 5, 15, 89, 81, 117, 225, 216, 108, 98, 226, 119, 232, 94,
         184, 42, 106,
     ];
-    let secret = block_on(coin.extract_secret(&[0u8; 20], tx_bytes.as_slice()))
+    let secret = block_on(coin.extract_secret(&[0u8; 20], tx_bytes.as_slice(), false))
         .err()
         .unwrap();
     assert!(secret.contains("Expected 'receiverSpend' contract call signature"));
