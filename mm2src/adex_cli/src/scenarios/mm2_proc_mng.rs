@@ -30,7 +30,7 @@ mod reexport {
     pub const KILL_CMD: &str = "kill";
 }
 
-use reexport::*;
+#[cfg(all(unix, not(target_os = "macos")))] use reexport::*;
 
 #[cfg(all(any(unix, windows), not(target_os = "macos")))]
 pub fn get_status() {
@@ -187,5 +187,10 @@ pub fn start_process(_mm2_cfg_file: &Option<String>, _coins_file: &Option<String
 
 #[cfg(target_os = "macos")]
 pub fn stop_process() {
+    unimplemented!();
+}
+
+#[cfg(target_os = "macos")]
+pub fn get_status() {
     unimplemented!();
 }
