@@ -199,7 +199,6 @@ Some (but not all) of the JSON configuration parameters (* - required):
   seednodes      ..  Seednode IPs that node will use.
                      At least one seed IP must be present if the node is not a seed itself.
   stderr         ..  Print a message to stderr and exit.
-  userhome       ..  System home directory of a user ('/root' by default).
   wif            ..  `1` to add WIFs to the information we provide about a coin.
 
 Environment variables:
