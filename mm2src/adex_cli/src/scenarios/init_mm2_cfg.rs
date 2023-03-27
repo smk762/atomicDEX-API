@@ -12,7 +12,7 @@ use super::inquire_extentions::{InquireOption, DEFAULT_DEFAULT_OPTION_BOOL_FORMA
 use common::password_policy;
 
 const DEFAULT_NET_ID: u16 = 7777;
-const DEFAULT_GID: &str = concat!("QA CLI ", env!("CARGO_PKG_VERSION"));
+const DEFAULT_GID: &str = "adex-cli";
 const DEFAULT_OPTION_PLACEHOLDER: &str = "Tap enter to skip";
 const RPC_PORT_MIN: u16 = 1024;
 const RPC_PORT_MAX: u16 = 49151;
@@ -113,14 +113,8 @@ impl Mm2Cfg {
     }
 
     fn inquire_gui(&mut self) -> Result<(), ()> {
-        self.gui = Text::new("What is the client identifier, gui:")
-                .with_default(DEFAULT_GID)
-                .with_placeholder(DEFAULT_GID)
-                .with_help_message("Information about your GUI; place essential info about your application (name, version, etc.) here. For example: AtomicDEX iOS 1.0.1")
-                .prompt()
-                .map_err(|error| {
-                    error!("Failed to get gui: {error}");
-                })?.into();
+        self.gui = Some(DEFAULT_GID.into());
+        info!("> gui is set by default: {DEFAULT_GID}");
         Ok(())
     }
 
