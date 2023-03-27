@@ -30,7 +30,8 @@ mod reexport {
     pub const KILL_CMD: &str = "kill";
 }
 
-#[cfg(all(unix, not(target_os = "macos")))] use reexport::*;
+#[cfg(all(any(unix, windows), not(target_os = "macos")))]
+use reexport::*;
 
 #[cfg(all(any(unix, windows), not(target_os = "macos")))]
 pub fn get_status() {
