@@ -1,6 +1,10 @@
+#[cfg(all(any(unix, windows), not(target_os = "macos")))]
 use common::log::{error, info};
+#[cfg(all(any(unix, windows), not(target_os = "macos")))]
 use std::path::PathBuf;
+#[cfg(all(any(unix, windows), not(target_os = "macos")))]
 use std::{env, u32};
+#[cfg(all(any(unix, windows), not(target_os = "macos")))]
 use sysinfo::{PidExt, ProcessExt, System, SystemExt};
 
 #[cfg(windows)]
@@ -16,7 +20,7 @@ mod reexport {
     pub const MM2_BINARY: &str = "mm2.exe";
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 mod reexport {
     pub use fork::{daemon, Fork};
     pub use std::ffi::OsStr;
@@ -28,6 +32,7 @@ mod reexport {
 
 use reexport::*;
 
+#[cfg(all(any(unix, windows), not(target_os = "macos")))]
 pub fn get_status() {
     let pids = find_proc_by_name(MM2_BINARY);
     if pids.is_empty() {
@@ -38,6 +43,7 @@ pub fn get_status() {
     });
 }
 
+#[cfg(all(any(unix, windows), not(target_os = "macos")))]
 fn find_proc_by_name(pname: &'_ str) -> Vec<u32> {
     let s = System::new_all();
 
@@ -48,6 +54,7 @@ fn find_proc_by_name(pname: &'_ str) -> Vec<u32> {
         .collect()
 }
 
+#[cfg(all(any(unix, windows), not(target_os = "macos")))]
 fn get_mm2_binary_path() -> Result<PathBuf, ()> {
     let mut dir = env::current_exe().map_err(|error| {
         error!("Failed to get current binary dir: {error}");
