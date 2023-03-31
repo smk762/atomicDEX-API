@@ -33,6 +33,7 @@ pub struct Mm2Cfg {
     pub gui: Option<String>,
     pub net_id: Option<u16>,
     pub rpc_password: Option<String>,
+    #[serde(rename = "passphrase")]
     pub seed_phrase: Option<String>,
     pub allow_weak_password: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,17 +141,27 @@ impl Mm2Cfg {
         let default_password: &str = mnemonic.phrase();
         self.seed_phrase = Text::new("What is the seed phrase:")
             .with_default(default_password)
-            .with_validator(|phrase: &str| match Mnemonic::validate(phrase, Language::English) {
-                Ok(_) => Ok(Validation::Valid),
-                Err(error) => Ok(Validation::Invalid(error.into())),
+            .with_validator(|phrase: &str| {
+                if phrase == "empty" {
+                    return Ok(Validation::Valid);
+                }
+                match Mnemonic::validate(phrase, Language::English) {
+                    Ok(_) => Ok(Validation::Valid),
+                    Err(error) => Ok(Validation::Invalid(error.into())),
+                }
             })
             .with_placeholder(default_password)
-            .with_help_message("Your passphrase; this is the source of each of your coins' private keys. KEEP IT SAFE!")
+            .with_help_message(
+                "Type \"empty\" to leave it empty and to use limited service\n\
+                                Your passphrase; this is the source of each of your coins' private keys. KEEP IT SAFE!",
+            )
             .prompt()
             .map_err(|error| {
                 error!("Failed to get passphrase: {error}");
-            })?
+            })
+            .map(|value| if "empty" == value { "".to_string() } else { value })?
             .into();
+
         Ok(())
     }
 
