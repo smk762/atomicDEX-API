@@ -204,8 +204,16 @@ impl Mm2Cfg {
             exclude_similar_characters: true,
             strict: true,
         };
-        pg.generate_one()
-            .map_err(|error| error!("Failed to generate password: {error}"))
+        let mut password: String;
+        loop {
+            password = pg
+                .generate_one()
+                .map_err(|error| error!("Failed to generate password: {error}"))?;
+            if let Ok(_) = password_policy::password_policy(&password) {
+                break;
+            }
+        }
+        Ok(password)
     }
 
     #[inline]
