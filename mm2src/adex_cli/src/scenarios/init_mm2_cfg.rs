@@ -184,7 +184,7 @@ impl Mm2Cfg {
             uppercase_letters: true,
             symbols: true,
             spaces: false,
-            exclude_similar_characters: false,
+            exclude_similar_characters: true,
             strict: true,
         };
         pg.generate_one()
