@@ -1,4 +1,4 @@
-use common::log::{error, info};
+use bip39::{Language, Mnemonic, MnemonicType};
 use inquire::{validator::Validation, Confirm, CustomType, CustomUserError, Text};
 use passwords::PasswordGenerator;
 use serde::Serialize;
@@ -9,6 +9,7 @@ use std::path::Path;
 use super::helpers;
 use super::inquire_extentions::{InquireOption, DEFAULT_DEFAULT_OPTION_BOOL_FORMATTER, DEFAULT_OPTION_BOOL_FORMATTER,
                                 OPTION_BOOL_PARSER};
+use common::log::{error, info};
 use common::password_policy;
 
 const DEFAULT_NET_ID: u16 = 7777;
@@ -32,7 +33,7 @@ pub struct Mm2Cfg {
     pub gui: Option<String>,
     pub net_id: Option<u16>,
     pub rpc_password: Option<String>,
-    pub passphrase: Option<String>,
+    pub seed_phrase: Option<String>,
     pub allow_weak_password: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dbdir: Option<String>,
@@ -56,7 +57,7 @@ impl Mm2Cfg {
             gui: None,
             net_id: None,
             rpc_password: None,
-            passphrase: None,
+            seed_phrase: None,
             allow_weak_password: None,
             dbdir: None,
             rpcip: None,
@@ -71,7 +72,7 @@ impl Mm2Cfg {
     fn inquire(&mut self) -> Result<(), ()> {
         self.inquire_gui()?;
         self.inquire_net_id()?;
-        self.inquire_passphrase()?;
+        self.inquire_seed_phrase()?;
         self.inquire_allow_weak_password()?;
         self.inquire_rpc_password()?;
         self.inquire_dbdir()?;
@@ -134,12 +135,17 @@ impl Mm2Cfg {
     }
 
     #[inline]
-    fn inquire_passphrase(&mut self) -> Result<(), ()> {
-        let default_password = Self::generate_password()?;
-        self.passphrase = Text::new("What is the passphrase:")
-            .with_default(default_password.as_str())
-            .with_placeholder(default_password.as_str())
-            .with_help_message("Your passphrase; this is the source of each of your coins private keys. KEEP IT SAFE!")
+    fn inquire_seed_phrase(&mut self) -> Result<(), ()> {
+        let mnemonic = Mnemonic::new(MnemonicType::Words12, Language::English);
+        let default_password: &str = mnemonic.phrase();
+        self.seed_phrase = Text::new("What is the seed phrase:")
+            .with_default(default_password)
+            .with_validator(|phrase: &str| match Mnemonic::validate(phrase, Language::English) {
+                Ok(_) => Ok(Validation::Valid),
+                Err(error) => Ok(Validation::Invalid(error.into())),
+            })
+            .with_placeholder(default_password)
+            .with_help_message("Your passphrase; this is the source of each of your coins' private keys. KEEP IT SAFE!")
             .prompt()
             .map_err(|error| {
                 error!("Failed to get passphrase: {error}");
