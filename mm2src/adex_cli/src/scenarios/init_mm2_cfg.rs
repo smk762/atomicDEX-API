@@ -204,14 +204,11 @@ impl Mm2Cfg {
             exclude_similar_characters: true,
             strict: true,
         };
-        let mut password: String;
-        loop {
+        let mut password = String::new();
+        while password_policy::password_policy(&password).is_err() {
             password = pg
                 .generate_one()
                 .map_err(|error| error!("Failed to generate password: {error}"))?;
-            if let Ok(_) = password_policy::password_policy(&password) {
-                break;
-            }
         }
         Ok(password)
     }
