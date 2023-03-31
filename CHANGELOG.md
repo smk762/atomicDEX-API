@@ -1,7 +1,7 @@
 ## {inc-release}
 
 **Features:**
-- `adex` command line utility was introduced that supplies
+- `adex-cli` command line utility was introduced that supplies commands: `init`, `start`, `stop`, `status` [#1682](https://github.com/KomodoPlatform/atomicDEX-API/issues/1682)
 
 **Enhancements/Fixes:**
 - CI/CD workflow logics are improved [#1736](https://github.com/KomodoPlatform/atomicDEX-API/pull/1736)
