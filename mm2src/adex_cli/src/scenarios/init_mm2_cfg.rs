@@ -159,8 +159,7 @@ impl Mm2Cfg {
             .map_err(|error| {
                 error!("Failed to get passphrase: {error}");
             })
-            .map(|value| if "none" == value { None } else { Some(value) })?
-            .into();
+            .map(|value| if "none" == value { None } else { Some(value) })?;
 
         Ok(())
     }
