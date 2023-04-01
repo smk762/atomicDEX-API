@@ -33,7 +33,7 @@ pub struct Mm2Cfg {
     pub gui: Option<String>,
     pub net_id: Option<u16>,
     pub rpc_password: Option<String>,
-    #[serde(rename = "passphrase")]
+    #[serde(rename = "passphrase", skip_serializing_if = "Option::is_none")]
     pub seed_phrase: Option<String>,
     pub allow_weak_password: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -159,7 +159,7 @@ impl Mm2Cfg {
             .map_err(|error| {
                 error!("Failed to get passphrase: {error}");
             })
-            .map(|value| if "empty" == value { "".to_string() } else { value })?
+            .map(|value| if "empty" == value { None } else { Some(value) })?
             .into();
 
         Ok(())
@@ -204,8 +204,13 @@ impl Mm2Cfg {
             exclude_similar_characters: true,
             strict: true,
         };
-        pg.generate_one()
-            .map_err(|error| error!("Failed to generate password: {error}"))
+        let mut password = String::new();
+        while password_policy::password_policy(&password).is_err() {
+            password = pg
+                .generate_one()
+                .map_err(|error| error!("Failed to generate password: {error}"))?;
+        }
+        Ok(password)
     }
 
     #[inline]
