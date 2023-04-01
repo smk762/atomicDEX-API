@@ -275,7 +275,7 @@ fn get_plist_path() -> Result<PathBuf, ()> {
 	    Err(())
 	},
 	Ok(mut current_dir) => {
-	    current_dir.push(concat!(stringify!(LAUNCHCTL_MM2_ID), ".plist"));
+	    current_dir.push(&format!("{LAUNCHCTL_MM2_ID}.plist"));
 	    Ok(current_dir)
 	}
     }
