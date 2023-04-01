@@ -19,7 +19,7 @@ serde = "1.0"
 serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 sysinfo = "0.28"
 tiny-bip39 = "0.8.0"
-tokio = { version = "1.20" }
+tokio = { version = "1.20", features = [ "macros" ] }
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(windows)))'.dependencies]
 fork = "0.1"
