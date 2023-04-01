@@ -142,7 +142,7 @@ impl Mm2Cfg {
         self.seed_phrase = Text::new("What is the seed phrase:")
             .with_default(default_password)
             .with_validator(|phrase: &str| {
-                if phrase == "empty" {
+                if phrase == "none" {
                     return Ok(Validation::Valid);
                 }
                 match Mnemonic::validate(phrase, Language::English) {
@@ -152,14 +152,14 @@ impl Mm2Cfg {
             })
             .with_placeholder(default_password)
             .with_help_message(
-                "Type \"empty\" to leave it empty and to use limited service\n\
-                                Your passphrase; this is the source of each of your coins' private keys. KEEP IT SAFE!",
+                "Type \"none\" to leave it blank and use limited service\n\
+                 Your passphrase; this is the source of each of your coins' private keys. KEEP IT SAFE!",
             )
             .prompt()
             .map_err(|error| {
                 error!("Failed to get passphrase: {error}");
             })
-            .map(|value| if "empty" == value { None } else { Some(value) })?
+            .map(|value| if "none" == value { None } else { Some(value) })?
             .into();
 
         Ok(())
