@@ -306,11 +306,21 @@ pub fn get_status() {
 
     if !output.status.success() {
         info!("Service '{LAUNCHCTL_MM2_ID}' is not running");
-	return;
+        return;
     }
-    
-    if let Some(found) = String::from_utf8_lossy(&output.stdout).lines().filter(|line| line.contains("PID")).last() {
-        let pid = found.trim().matches(char::is_numeric).fold(String::default(), |mut pid, ch| { pid.push_str(ch); pid });
+
+    if let Some(found) = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| line.contains("PID"))
+        .last()
+    {
+        let pid = found
+            .trim()
+            .matches(char::is_numeric)
+            .fold(String::default(), |mut pid, ch| {
+                pid.push_str(ch);
+                pid
+            });
         info!("Service '{LAUNCHCTL_MM2_ID}' is running under launchctl, pid: {}", pid);
     } else {
         info!("Service '{LAUNCHCTL_MM2_ID}' is not running");
