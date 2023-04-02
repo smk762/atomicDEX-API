@@ -1,4 +1,4 @@
-## {inc-release}
+## v1.0.2-beta - {inc-release-date}
 
 **Features:**
 
