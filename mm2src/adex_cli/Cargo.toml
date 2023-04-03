@@ -11,6 +11,7 @@ clap = "2.33.3"
 common = { path = "../common" }
 derive_more = "0.99"
 env_logger = "0.7.1"
+gstuff = { version = "=0.7.4" , features = [ "nightly" ]}
 inquire = "0.6"
 log = "0.4"
 mm2_net = { path = "../mm2_net" }
@@ -20,7 +21,6 @@ serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 sysinfo = "0.28"
 tiny-bip39 = "0.8.0"
 tokio = { version = "1.20", features = [ "macros" ] }
-gstuff = { version = "=0.7.4" , features = [ "nightly" ]}
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(windows)))'.dependencies]
 fork = "0.1"
