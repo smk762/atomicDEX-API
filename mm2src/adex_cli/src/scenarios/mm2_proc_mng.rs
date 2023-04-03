@@ -1,4 +1,4 @@
-use common::log::{error, info};
+use common::log::{debug, error, info};
 use std::env;
 use std::path::PathBuf;
 #[cfg(not(target_os = "macos"))]
@@ -258,13 +258,13 @@ pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>,
     }
 
     match Command::new("launchctl").arg("enable").arg(format!("system/{LAUNCHCTL_MM2_ID}").as_str()).spawn() {
-        Ok(_) => info!("Successfully enabled using launchctl, label: {LAUNCHCTL_MM2_ID}"),
+        Ok(_) => debug!("Successfully enabled using launchctl, label: {LAUNCHCTL_MM2_ID}"),
         Err(error) => error!("Failed to enable process: {error}"),
     }
 
     
     match Command::new("launchctl").arg("load").arg(&plist_path).spawn() {
-        Ok(_) => info!("Successfully loaded using launchctl, label: {LAUNCHCTL_MM2_ID}"),
+        Ok(_) => debug!("Successfully loaded using launchctl, label: {LAUNCHCTL_MM2_ID}"),
         Err(error) => error!("Failed to load process: {error}"),
     }
 
