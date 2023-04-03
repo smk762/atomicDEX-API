@@ -230,9 +230,9 @@ pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>,
             <key>EnvironmentVariables</key>
             <dict>{}{}{}</dict>
             <key>RunAtLoad</key>
-            <false/>
+            <true/>
             <key>KeepAlive</key>
-            <false/>
+            <true/>
         </dict>
         </plist>"#,
         LAUNCHCTL_MM2_ID,
@@ -257,6 +257,12 @@ pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>,
         return;
     }
 
+    match Command::new("launchctl").arg("enable").arg(format!("system/{LAUNCHCTL_MM2_ID}").as_str()).spawn() {
+        Ok(_) => info!("Successfully enabled using launchctl, label: {LAUNCHCTL_MM2_ID}"),
+        Err(error) => error!("Failed to enable process: {error}"),
+    }
+
+    
     match Command::new("launchctl").arg("load").arg(&plist_path).spawn() {
         Ok(_) => info!("Successfully loaded using launchctl, label: {LAUNCHCTL_MM2_ID}"),
         Err(error) => error!("Failed to load process: {error}"),
