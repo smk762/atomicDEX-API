@@ -208,7 +208,7 @@ pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>,
     };
 
     let Ok(current_dir) = env::current_dir() else {
-	error!("Failet to get current_dir");
+	error!("Failed to get current_dir");
 	return
     };
 
@@ -281,7 +281,7 @@ pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>,
 fn get_plist_path() -> Result<PathBuf, ()> {
     match env::current_dir() {
         Err(error) => {
-            error!("Failed to get plist_pathcurrent_dir: {error}");
+            error!("Failed to get current_dir to construct plist_path: {error}");
             Err(())
         },
         Ok(mut current_dir) => {
