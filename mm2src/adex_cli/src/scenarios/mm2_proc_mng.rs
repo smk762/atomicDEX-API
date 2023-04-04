@@ -86,11 +86,6 @@ fn get_mm2_binary_path() -> Result<PathBuf, ()> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>, log_file: &Option<String>) {
-    let mm2_binary = match get_mm2_binary_path() {
-        Err(_) => return,
-        Ok(path) => path,
-    };
-
     if let Some(mm2_cfg_file) = mm2_cfg_file {
         info!("Set env MM_CONF_PATH as: {mm2_cfg_file}");
         env::set_var("MM_CONF_PATH", mm2_cfg_file);
@@ -103,6 +98,8 @@ pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>,
         info!("Set env MM_LOG as: {log_file}");
         env::set_var("MM_LOG", log_file);
     }
+
+    let Ok(mm2_binary) = get_mm2_binary_path() else { return; };
     start_process_impl(mm2_binary);
 }
 
@@ -202,10 +199,7 @@ pub fn stop_process() {
 
 #[cfg(target_os = "macos")]
 pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>, log_file: &Option<String>) {
-    let mm2_binary = match get_mm2_binary_path() {
-        Err(_) => return,
-        Ok(path) => path,
-    };
+    let Ok(mm2_binary) = get_mm2_binary_path() else { return; };
 
     let Ok(current_dir) = env::current_dir() else {
 	error!("Failed to get current_dir");
