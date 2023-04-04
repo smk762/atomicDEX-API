@@ -63,7 +63,7 @@ pub fn process_cli() {
                         .help("log file path"),
                 ),
         )
-        .subcommand(SubCommand::with_name("stop").about("Stop mm2 service"))
+        .subcommand(SubCommand::with_name("stop").about("Stop mm2 instance"))
         .subcommand(SubCommand::with_name("status").about("Get mm2 running status"));
 
     let matches = app.clone().get_matches();
