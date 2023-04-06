@@ -110,10 +110,7 @@ pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>,
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn start_process_impl(mm2_binary: PathBuf) {
     let mut command = Command::new(&mm2_binary);
-    let Some(program) = mm2_binary.file_name() else {
-        error!("Failed to start mm2, no file_name: {mm2_binary:?}");
-        return;
-    };
+    let program = mm2_binary.file_name().expect("No file_name in mm2_binary");
 
     match daemon(true, true) {
         Ok(Fork::Child) => {
