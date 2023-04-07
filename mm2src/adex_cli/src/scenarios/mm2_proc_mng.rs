@@ -23,17 +23,12 @@ mod reexport {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 mod unix_not_macos_reexport {
-    pub use fork::{daemon, Fork};
+    pub use fork::{fork, setsid, Fork};
     pub use std::ffi::OsStr;
-    pub use std::process::{Command, Stdio};
-    pub use std::u32;
-    pub extern crate termion;
-    pub use common::log::{native_log, NativeLevel::Info};
     pub use std::io::{stderr, Write};
+    pub use std::process::{Command, Stdio};
     pub use std::thread::sleep;
     pub use std::time::Duration;
-    pub use termion::cursor;
-    pub use termion::raw::IntoRawMode;
 
     pub const KILL_CMD: &str = "kill";
     pub const START_PROC_COOLDOWN_TIMEOUT_MS: u64 = 10;
@@ -120,21 +115,22 @@ pub fn start_process(mm2_cfg_file: &Option<String>, coins_file: &Option<String>,
 pub fn start_process_impl(mm2_binary: PathBuf) {
     let mut command = Command::new(&mm2_binary);
     let program = mm2_binary.file_name().expect("No file_name in mm2_binary");
-    info!("");
 
-    if let Ok(Fork::Child) = daemon(true, true) {
-        let _ = command.output();
-        return;
-    };
-    sleep(Duration::from_millis(START_PROC_COOLDOWN_TIMEOUT_MS));
-    let mut stderr = stderr().into_raw_mode().unwrap();
-    write!(stderr, "{}\r{}", cursor::Save, cursor::Up(1)).expect("Failed to write into stdderr");
-    if find_proc_by_name(MM2_BINARY).is_empty() {
-        native_log!(Info, "Failed to start: {program:?}");
-    } else {
-        native_log!(Info, "Successfully started: {program:?}");
+    match fork() {
+        Ok(Fork::Parent(child)) => {
+            sleep(Duration::from_millis(START_PROC_COOLDOWN_TIMEOUT_MS));
+            if find_proc_by_name(MM2_BINARY).is_empty() {
+                info!("Failed to start: {program:?}");
+            } else {
+                info!("Successfully started: {program:?}, fork pid: {child}");
+            }
+        },
+        Ok(Fork::Child) => {
+            setsid().expect("Failed to setsid");
+            let _ = command.output();
+        },
+        Err(_) => println!("Fork failed"),
     }
-    write!(stderr, "{}", cursor::Restore).expect("Failed to write into stdderr");
 }
 
 #[cfg(windows)]
