@@ -118,7 +118,7 @@ pub fn start_process_impl(mm2_binary: PathBuf) {
         Ok(Fork::Parent(_)) => {
             sleep(Duration::from_millis(START_PROC_COOLDOWN_TIMEOUT_MS));
             if find_proc_by_name(MM2_BINARY).is_empty() {
-                info!("Failed to start: {program:?}");
+                info!("Failed to start: {mm2_binary:?}");
             } else {
                 info!("Successfully started: {program:?}");
             }
