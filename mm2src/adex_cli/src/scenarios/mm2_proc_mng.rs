@@ -24,8 +24,6 @@ mod reexport {
 #[cfg(all(unix, not(target_os = "macos")))]
 mod unix_not_macos_reexport {
     pub use fork::{fork, setsid, Fork};
-    pub use std::ffi::OsStr;
-    pub use std::io::{stderr, Write};
     pub use std::process::{Command, Stdio};
     pub use std::thread::sleep;
     pub use std::time::Duration;
