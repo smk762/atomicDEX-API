@@ -127,7 +127,7 @@ pub fn start_process_impl(mm2_binary: PathBuf) {
             setsid().expect("Failed to setsid");
             let _ = command.output();
         },
-        Err(_) => println!("Fork failed"),
+        Err(error) => error!("Failed to fork a process: {error}"),
     }
 }
 
