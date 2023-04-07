@@ -117,12 +117,12 @@ pub fn start_process_impl(mm2_binary: PathBuf) {
     let program = mm2_binary.file_name().expect("No file_name in mm2_binary");
 
     match fork() {
-        Ok(Fork::Parent(child)) => {
+        Ok(Fork::Parent(_)) => {
             sleep(Duration::from_millis(START_PROC_COOLDOWN_TIMEOUT_MS));
             if find_proc_by_name(MM2_BINARY).is_empty() {
                 info!("Failed to start: {program:?}");
             } else {
-                info!("Successfully started: {program:?}, fork pid: {child}");
+                info!("Successfully started: {program:?}");
             }
         },
         Ok(Fork::Child) => {
