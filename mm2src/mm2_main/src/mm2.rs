@@ -123,7 +123,7 @@ pub async fn lp_main(
     let log_filter = params.filter.unwrap_or_default();
     // Logger can be initialized once.
     // If `mm2` is linked as a library, and `mm2` is restarted, `init_logger` returns an error.
-    init_logger(log_filter).ok();
+    init_logger(log_filter, params.conf["silent_console"].as_bool().unwrap_or_default()).ok();
 
     let conf = params.conf;
     if !conf["rpc_password"].is_null() {
@@ -342,20 +342,6 @@ pub fn run_lp_main(
     version: String,
     datetime: String,
 ) -> Result<(), String> {
-    fn setup_env_logger() {
-        const MM2_LOG_ENV_KEY: &str = "RUST_LOG";
-
-        if env::var_os(MM2_LOG_ENV_KEY).is_none() {
-            env::set_var(MM2_LOG_ENV_KEY, "info");
-        };
-
-        if let Err(e) = env_logger::try_init() {
-            common::log::debug!("env_logger is already initialized. {}", e);
-        };
-    }
-
-    setup_env_logger();
-
     let conf = get_mm2config(first_arg)?;
 
     let log_filter = LogLevel::from_env();
@@ -395,17 +381,15 @@ fn on_update_config(args: &[OsString]) -> Result<(), String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn init_logger(level: LogLevel) -> Result<(), String> {
-    use common::log::UnifiedLoggerBuilder;
+fn init_logger(_level: LogLevel, silent_console: bool) -> Result<(), String> {
+    common::log::UnifiedLoggerBuilder::default()
+        .silent_console(silent_console)
+        .init();
 
-    UnifiedLoggerBuilder::default()
-        .level_filter(level)
-        .console(false)
-        .mm_log(true)
-        .try_init()
+    Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
-fn init_logger(level: LogLevel) -> Result<(), String> {
+fn init_logger(level: LogLevel, _silent_console: bool) -> Result<(), String> {
     common::log::WasmLoggerBuilder::default().level_filter(level).try_init()
 }
