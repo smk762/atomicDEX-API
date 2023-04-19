@@ -4,6 +4,7 @@
 
 **Enhancements/Fixes:**
 - An issue was fixed where we don't have to wait for all EVM nodes to sync the latest account nonce [#1757](https://github.com/KomodoPlatform/atomicDEX-API/pull/1757)
+- optimized dev and release compilation profiles and removed ci [#1759](https://github.com/KomodoPlatform/atomicDEX-API/pull/1759)
 
 ## v1.0.2-beta - 2023-04-11
 
