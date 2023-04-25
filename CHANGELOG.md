@@ -1,4 +1,4 @@
-## ${next-version} - ${release-date}
+## v1.0.3-beta - ${release-date}
 
 **Features:**
 
