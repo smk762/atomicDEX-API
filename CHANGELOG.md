@@ -1,4 +1,4 @@
-## v1.0.3-beta - ${release-date}
+## v1.0.3-beta - 2023-04-28
 
 **Features:**
 
