@@ -47,7 +47,7 @@ use common::custom_futures::timeout::TimeoutError;
 use common::executor::{abortable_queue::{AbortableQueue, WeakSpawner},
                        AbortSettings, AbortedError, SpawnAbortable, SpawnFuture};
 use common::log::{warn, LogOnError};
-use common::{calc_total_pages, now_ms, ten, HttpStatusCode};
+use common::{calc_total_pages, now_sec, ten, HttpStatusCode};
 use crypto::{Bip32Error, CryptoCtx, CryptoCtxError, DerivationPath, GlobalHDAccountArc, HwRpcError, KeyPairPolicy,
              Secp256k1Secret, WithHwRpcError};
 use derive_more::Display;
@@ -201,6 +201,8 @@ macro_rules! ok_or_continue_after_sleep {
 }
 
 pub mod coin_balance;
+pub mod lp_price;
+pub mod watcher_common;
 
 pub mod coin_errors;
 use coin_errors::{MyAddressError, ValidatePaymentError, ValidatePaymentFut};
@@ -321,7 +323,6 @@ pub const INVALID_PAYMENT_STATE_ERR_LOG: &str = "Invalid payment state";
 pub const INVALID_SWAP_ID_ERR_LOG: &str = "Invalid swap id";
 pub const INVALID_SCRIPT_ERR_LOG: &str = "Invalid script";
 pub const INVALID_REFUND_TX_ERR_LOG: &str = "Invalid refund transaction";
-pub const INSUFFICIENT_WATCHER_REWARD_ERR_LOG: &str = "Insufficient watcher reward";
 
 #[derive(Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
@@ -588,7 +589,7 @@ pub struct WatcherValidateTakerFeeInput {
     pub lock_duration: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WatcherValidatePaymentInput {
     pub payment_tx: Vec<u8>,
     pub taker_payment_refund_preimage: Vec<u8>,
@@ -596,9 +597,9 @@ pub struct WatcherValidatePaymentInput {
     pub taker_pub: Vec<u8>,
     pub maker_pub: Vec<u8>,
     pub secret_hash: Vec<u8>,
-    pub try_spv_proof_until: u64,
+    pub wait_until: u64,
     pub confirmations: u64,
-    pub min_watcher_reward: Option<u64>,
+    pub maker_coin: MmCoinEnum,
 }
 
 #[derive(Clone, Debug)]
@@ -613,7 +614,7 @@ pub struct ValidatePaymentInput {
     pub try_spv_proof_until: u64,
     pub confirmations: u64,
     pub unique_swap_data: Vec<u8>,
-    pub min_watcher_reward: Option<u64>,
+    pub watcher_reward: Option<WatcherReward>,
 }
 
 #[derive(Clone, Debug)]
@@ -647,6 +648,23 @@ pub struct SearchForSwapTxSpendInput<'a> {
     pub watcher_reward: bool,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum RewardTarget {
+    None,
+    Contract,
+    PaymentSender,
+    PaymentSpender,
+    PaymentReceiver,
+}
+
+#[derive(Clone, Debug)]
+pub struct WatcherReward {
+    pub amount: BigDecimal,
+    pub is_exact_amount: bool,
+    pub reward_target: RewardTarget,
+    pub send_contract_reward_on_spend: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct SendPaymentArgs<'a> {
     pub time_lock_duration: u64,
@@ -660,7 +678,7 @@ pub struct SendPaymentArgs<'a> {
     pub swap_contract_address: &'a Option<BytesJson>,
     pub swap_unique_data: &'a [u8],
     pub payment_instructions: &'a Option<PaymentInstructions>,
-    pub watcher_reward: Option<u64>,
+    pub watcher_reward: Option<WatcherReward>,
     pub wait_for_confirmation_until: u64,
 }
 
@@ -727,15 +745,38 @@ pub struct EthValidateFeeArgs<'a> {
     pub uuid: &'a [u8],
 }
 
+#[derive(Clone, Debug)]
+pub struct WaitForHTLCTxSpendArgs<'a> {
+    pub tx_bytes: &'a [u8],
+    pub secret_hash: &'a [u8],
+    pub wait_until: u64,
+    pub from_block: u64,
+    pub swap_contract_address: &'a Option<BytesJson>,
+    pub check_every: f64,
+    pub watcher_reward: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum PaymentInstructions {
     #[cfg(not(target_arch = "wasm32"))]
     Lightning(Invoice),
+    WatcherReward(BigDecimal),
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PaymentInstructionArgs<'a> {
+    pub secret_hash: &'a [u8],
+    pub amount: BigDecimal,
+    pub maker_lock_duration: u64,
+    pub expires_in: u64,
+    pub watcher_reward: bool,
+    pub wait_until: u64,
 }
 
 #[derive(Display)]
 pub enum PaymentInstructionsErr {
     LightningInvoiceErr(String),
+    WatcherRewardErr(String),
     InternalError(String),
 }
 
@@ -747,6 +788,7 @@ impl From<NumConversError> for PaymentInstructionsErr {
 pub enum ValidateInstructionsErr {
     ValidateLightningInvoiceErr(String),
     UnsupportedCoin(String),
+    DeserializationErr(String),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -760,6 +802,13 @@ pub enum RefundError {
     DbError(String),
     Timeout(String),
     Internal(String),
+}
+
+#[derive(Debug, Display)]
+pub enum WatcherRewardError {
+    RPCError(String),
+    InvalidCoinType(String),
+    InternalError(String),
 }
 
 /// Swap operations (mostly based on the Hash/Time locked transactions implemented by coin wallets).
@@ -813,7 +862,7 @@ pub trait SwapOps {
     /// For example: there are no additional conditions for ETH, but for some UTXO coins we should wait for
     /// locktime < MTP
     fn can_refund_htlc(&self, locktime: u64) -> Box<dyn Future<Item = CanRefundHtlc, Error = String> + Send + '_> {
-        let now = now_ms() / 1000;
+        let now = now_sec();
         let result = if now > locktime {
             CanRefundHtlc::CanRefundNow
         } else {
@@ -845,33 +894,25 @@ pub trait SwapOps {
     /// Instructions from the taker on how the maker should send his payment.
     async fn maker_payment_instructions(
         &self,
-        secret_hash: &[u8],
-        amount: &BigDecimal,
-        maker_lock_duration: u64,
-        expires_in: u64,
+        args: PaymentInstructionArgs<'_>,
     ) -> Result<Option<Vec<u8>>, MmError<PaymentInstructionsErr>>;
 
     /// Instructions from the maker on how the taker should send his payment.
     async fn taker_payment_instructions(
         &self,
-        secret_hash: &[u8],
-        amount: &BigDecimal,
-        expires_in: u64,
+        args: PaymentInstructionArgs<'_>,
     ) -> Result<Option<Vec<u8>>, MmError<PaymentInstructionsErr>>;
 
     fn validate_maker_payment_instructions(
         &self,
         instructions: &[u8],
-        secret_hash: &[u8],
-        amount: BigDecimal,
-        maker_lock_duration: u64,
+        args: PaymentInstructionArgs<'_>,
     ) -> Result<PaymentInstructions, MmError<ValidateInstructionsErr>>;
 
     fn validate_taker_payment_instructions(
         &self,
         instructions: &[u8],
-        secret_hash: &[u8],
-        amount: BigDecimal,
+        args: PaymentInstructionArgs<'_>,
     ) -> Result<PaymentInstructions, MmError<ValidateInstructionsErr>>;
 
     fn is_supported_by_watchers(&self) -> bool { false }
@@ -933,6 +974,22 @@ pub trait WatcherOps {
         &self,
         input: WatcherSearchForSwapTxSpendInput<'_>,
     ) -> Result<Option<FoundSwapTxSpend>, String>;
+
+    async fn get_taker_watcher_reward(
+        &self,
+        other_coin: &MmCoinEnum,
+        coin_amount: Option<BigDecimal>,
+        other_coin_amount: Option<BigDecimal>,
+        reward_amount: Option<BigDecimal>,
+        wait_until: u64,
+    ) -> Result<WatcherReward, MmError<WatcherRewardError>>;
+
+    async fn get_maker_watcher_reward(
+        &self,
+        other_coin: &MmCoinEnum,
+        reward_amount: Option<BigDecimal>,
+        wait_until: u64,
+    ) -> Result<Option<WatcherReward>, MmError<WatcherRewardError>>;
 }
 
 /// Operations that coins have independently from the MarketMaker.
@@ -979,15 +1036,7 @@ pub trait MarketCoinOps {
 
     fn wait_for_confirmations(&self, input: ConfirmPaymentInput) -> Box<dyn Future<Item = (), Error = String> + Send>;
 
-    fn wait_for_htlc_tx_spend(
-        &self,
-        transaction: &[u8],
-        secret_hash: &[u8],
-        wait_until: u64,
-        from_block: u64,
-        swap_contract_address: &Option<BytesJson>,
-        check_every: f64,
-    ) -> TransactionFut;
+    fn wait_for_htlc_tx_spend(&self, args: WaitForHTLCTxSpendArgs<'_>) -> TransactionFut;
 
     fn tx_enum_from_bytes(&self, bytes: &[u8]) -> Result<TransactionEnum, MmError<TxMarshalingErr>>;
 
