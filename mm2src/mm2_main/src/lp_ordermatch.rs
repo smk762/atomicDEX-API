@@ -31,7 +31,7 @@ use common::executor::{simple_map::AbortableSimpleMap, AbortSettings, AbortableS
                        SpawnFuture, Timer};
 use common::log::{error, warn, LogOnError};
 use common::time_cache::TimeCache;
-use common::{bits256, log, new_uuid, now_ms, now_sec, now_sec_i64};
+use common::{bits256, log, new_uuid, now_ms, now_sec};
 use crypto::privkey::SerializableSecp256k1Keypair;
 use crypto::{CryptoCtx, CryptoCtxError};
 use derive_more::Display;
@@ -3956,6 +3956,16 @@ struct OrderbookP2PItem {
     created_at: u64,
 }
 
+macro_rules! try_get_age_or_default {
+    ($created_at: expr) => {{
+        let now = now_sec();
+        now.checked_sub($created_at).unwrap_or_else(|| {
+            warn!("now - created_at: ({} - {}) caused a u64 underflow", now, $created_at);
+            Default::default()
+        })
+    }};
+}
+
 impl OrderbookP2PItem {
     fn as_rpc_best_orders_buy(
         &self,
@@ -3985,7 +3995,7 @@ impl OrderbookP2PItem {
             min_volume_rat: min_vol_mm.to_ratio(),
             min_volume_fraction: min_vol_mm.to_fraction(),
             pubkey: self.pubkey.clone(),
-            age: now_sec_i64(),
+            age: try_get_age_or_default!(self.created_at),
             zcredits: 0,
             uuid: self.uuid,
             is_mine,
@@ -4051,7 +4061,7 @@ impl OrderbookP2PItem {
             min_volume_rat: min_vol_mm.to_ratio(),
             min_volume_fraction: min_vol_mm.to_fraction(),
             pubkey: self.pubkey.clone(),
-            age: now_sec_i64(),
+            age: try_get_age_or_default!(self.created_at),
             zcredits: 0,
             uuid: self.uuid,
             is_mine,
@@ -4213,7 +4223,7 @@ impl OrderbookItem {
             min_volume_rat: min_vol_mm.to_ratio(),
             min_volume_fraction: min_vol_mm.to_fraction(),
             pubkey: self.pubkey.clone(),
-            age: now_sec_i64(),
+            age: try_get_age_or_default!(self.created_at),
             zcredits: 0,
             uuid: self.uuid,
             is_mine,
@@ -4249,7 +4259,7 @@ impl OrderbookItem {
             min_volume_rat: min_vol_mm.to_ratio(),
             min_volume_fraction: min_vol_mm.to_fraction(),
             pubkey: self.pubkey.clone(),
-            age: now_sec_i64(),
+            age: try_get_age_or_default!(self.created_at),
             zcredits: 0,
             uuid: self.uuid,
             is_mine,
@@ -5622,7 +5632,7 @@ pub struct RpcOrderbookEntry {
     min_volume_rat: BigRational,
     min_volume_fraction: Fraction,
     pubkey: String,
-    age: i64,
+    age: u64,
     zcredits: u64,
     uuid: Uuid,
     is_mine: bool,
