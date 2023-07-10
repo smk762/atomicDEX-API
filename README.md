@@ -5,37 +5,37 @@
 </p>
 
 <p align="center">
-    <a href="https://github.com/komodoplatform/atomicdex-api/graphs/contributors" alt="Contributors">
-        <img src="https://img.shields.io/github/contributors/komodoplatform/atomicdex-api" />
+    <a href="https://github.com/komodoplatform/komodo-defi-framework/graphs/contributors" alt="Contributors">
+        <img src="https://img.shields.io/github/contributors/komodoplatform/komodo-defi-framework" />
     </a>
-    <a href="https://github.com/komodoplatform/atomicdex-api/releases">
-        <img src="https://img.shields.io/github/downloads/komodoplatform/atomicdex-api/total" alt="downloads">
+    <a href="https://github.com/komodoplatform/komodo-defi-framework/releases">
+        <img src="https://img.shields.io/github/downloads/komodoplatform/komodo-defi-framework/total" alt="downloads">
     </a>
-    <a href="https://github.com/komodoplatform/atomicdex-api/">
-        <img src="https://img.shields.io/github/last-commit/komodoplatform/atomicdex-api" alt="last commit">
+    <a href="https://github.com/komodoplatform/komodo-defi-framework/">
+        <img src="https://img.shields.io/github/last-commit/komodoplatform/komodo-defi-framework" alt="last commit">
     </a>
-    <a href="https://github.com/komodoplatform/atomicdex-api/pulse" alt="Activity">
-        <img src="https://img.shields.io/github/commit-activity/m/komodoplatform/atomicdex-api" />
-    </a>
-    <br/>
-    <a href="https://github.com/komodoplatform/atomicdex-api/issues">
-        <img src="https://img.shields.io/github/issues-raw/komodoplatform/atomicdex-api" alt="issues">
-    </a>
-    <a href="https://github.com/komodoplatform/atomicdex-api/issues?q=is%3Aissue+is%3Aclosed">
-        <img src="https://img.shields.io/github/issues-closed-raw/komodoplatform/atomicdex-api" alt="issues closed">
-    </a>
-    <a href="https://github.com/komodoplatform/atomicdex-api/pulls">
-        <img src="https://img.shields.io/github/issues-pr/komodoplatform/atomicdex-api" alt="pulls">
-    </a>
-    <a href="https://github.com/komodoplatform/atomicdex-api/pulls?q=is%3Apr+is%3Aclosed">
-        <img src="https://img.shields.io/github/issues-pr-closed/komodoplatform/atomicdex-api" alt="pulls closed">
+    <a href="https://github.com/komodoplatform/komodo-defi-framework/pulse" alt="Activity">
+        <img src="https://img.shields.io/github/commit-activity/m/komodoplatform/komodo-defi-framework" />
     </a>
     <br/>
-    <a href="https://github.com/KomodoPlatform/atomicDEX-API/actions/workflows/release-build.yml">
-        <img src="https://github.com/KomodoPlatform/atomicDEX-API/actions/workflows/release-build.yml/badge.svg?branch=main" alt="build status">
+    <a href="https://github.com/komodoplatform/komodo-defi-framework/issues">
+        <img src="https://img.shields.io/github/issues-raw/komodoplatform/komodo-defi-framework" alt="issues">
     </a>
-    <a href="https://github.com/KomodoPlatform/atomicdex-api/releases">
-        <img src="https://img.shields.io/github/v/release/komodoplatform/atomicdex-api" alt="release version">
+    <a href="https://github.com/komodoplatform/komodo-defi-framework/issues?q=is%3Aissue+is%3Aclosed">
+        <img src="https://img.shields.io/github/issues-closed-raw/komodoplatform/komodo-defi-framework" alt="issues closed">
+    </a>
+    <a href="https://github.com/komodoplatform/komodo-defi-framework/pulls">
+        <img src="https://img.shields.io/github/issues-pr/komodoplatform/komodo-defi-framework" alt="pulls">
+    </a>
+    <a href="https://github.com/komodoplatform/komodo-defi-framework/pulls?q=is%3Apr+is%3Aclosed">
+        <img src="https://img.shields.io/github/issues-pr-closed/komodoplatform/komodo-defi-framework" alt="pulls closed">
+    </a>
+    <br/>
+    <a href="https://github.com/KomodoPlatform/komodo-defi-framework/actions/workflows/release-build.yml">
+        <img src="https://github.com/KomodoPlatform/komodo-defi-framework/actions/workflows/release-build.yml/badge.svg?branch=main" alt="build status">
+    </a>
+    <a href="https://github.com/KomodoPlatform/komodo-defi-framework/releases">
+        <img src="https://img.shields.io/github/v/release/komodoplatform/komodo-defi-framework" alt="release version">
     </a>
     <a href="https://discord.gg/3rzDPAr">
         <img src="https://img.shields.io/discord/412898016371015680?logo=discord" alt="chat on Discord">
