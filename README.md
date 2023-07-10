@@ -52,7 +52,7 @@ The Komodo DeFi Framework is open-source [atomic-swap](https://komodoplatform.co
 
 There is no 3rd party intermediary, no proxy tokens, and at all times users remain in sole possession of their private keys.
 
-A [well documented API](https://developers.komodoplatform.com/basic-docs/atomicdex/introduction-to-atomicdex.html) offers simple access to the underlying services using simple language agnostic JSON structured methods and parameters such that users can communicate with the core in a variety of methods such as [curl](https://developers.komodoplatform.com/basic-docs/atomicdex-api-legacy/buy.html) in CLI, or fully functioning [desktop and mobile applications](https://atomicdex.io/) like [AtomicDEX Desktop](https://github.com/KomodoPlatform/atomicDEX-Desktop).
+A [well documented API](https://developers.komodoplatform.com/basic-docs/atomicdex/introduction-to-atomicdex.html) offers simple access to the underlying services using simple language agnostic JSON structured methods and parameters such that users can communicate with the core in a variety of methods such as [curl](https://developers.komodoplatform.com/basic-docs/atomicdex-api-legacy/buy.html) in CLI, or fully functioning [desktop and mobile applications](https://atomicdex.io/) like [Komodo Wallet Desktop](https://github.com/KomodoPlatform/komodo-wallet-desktop).
 
 For a curated list of Komodo DeFi Framework based projects and resources, check out [Awesome AtomicDEX](https://github.com/KomodoPlatform/awesome-atomicdex).
 
