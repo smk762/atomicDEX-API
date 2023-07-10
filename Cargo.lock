@@ -4412,7 +4412,7 @@ dependencies = [
 
 [[package]]
 name = "mm2_rpc"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "common",
  "derive_more",
