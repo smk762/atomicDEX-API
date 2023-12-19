@@ -3127,3 +3127,27 @@ fn test_parse_env_file() {
         )
     );
 }
+
+// test helper to call sign_raw_transaction rpc with utxo coin param
+pub async fn test_sign_raw_transaction_rpc_helper(
+    mm: &MarketMakerIt,
+    expected_ret: StatusCode,
+    json_params: &Json,
+) -> Json {
+    let response = mm
+        .rpc(&json!({
+            "userpass": mm.userpass,
+            "method":"sign_raw_transaction",
+            "mmrpc":"2.0",
+            "id": 0,
+            "params": json_params
+        }))
+        .await
+        .expect("sign_raw_transaction rpc result okay");
+    assert_eq!(
+        response.0, expected_ret,
+        "'sign_raw_transaction' unexpected return code: {}",
+        response.1
+    );
+    json::from_str(&response.1).expect("response to json conversion must be okay")
+}
