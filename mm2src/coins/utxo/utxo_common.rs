@@ -8,7 +8,7 @@ use crate::hd_wallet::{AccountUpdatingError, AddressDerivingResult, HDAccountMut
                        NewAccountCreatingError, NewAddressDeriveConfirmError, NewAddressDerivingError};
 use crate::hd_wallet_storage::{HDWalletCoinWithStorageOps, HDWalletStorageResult};
 use crate::lp_price::get_base_price_in_rel;
-use crate::rpc_command::init_withdraw::WithdrawTaskHandle;
+use crate::rpc_command::init_withdraw::WithdrawTaskHandleShared;
 use crate::utxo::rpc_clients::{electrum_script_hash, BlockHashOrHeight, UnspentInfo, UnspentMap, UtxoRpcClientEnum,
                                UtxoRpcClientOps, UtxoRpcResult};
 use crate::utxo::spv::SimplePaymentVerification;
@@ -959,7 +959,12 @@ impl<'a, T: AsRef<UtxoCoinFields> + UtxoTxGenerationOps> UtxoTxBuilder<'a, T> {
             .from
             .clone()
             .or_mm_err(|| GenerateTxError::Internal("'from' address is not specified".to_owned()))?;
-        let change_script_pubkey = output_script(&from, ScriptType::P2PKH).to_bytes();
+        let change_dest_type = if from.addr_format == UtxoAddressFormat::Segwit {
+            ScriptType::P2WPKH
+        } else {
+            ScriptType::P2PKH
+        };
+        let change_script_pubkey = output_script(&from, change_dest_type).to_bytes();
 
         let actual_tx_fee = match self.fee {
             Some(fee) => fee,
@@ -3304,7 +3309,7 @@ pub async fn init_withdraw<T>(
     ctx: MmArc,
     coin: T,
     req: WithdrawRequest,
-    task_handle: &WithdrawTaskHandle,
+    task_handle: WithdrawTaskHandleShared,
 ) -> WithdrawResult
 where
     T: UtxoCommonOps
