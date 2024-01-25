@@ -1027,6 +1027,7 @@ dependencies = [
  "http 0.2.7",
  "hyper",
  "hyper-rustls",
+ "instant",
  "itertools",
  "js-sys",
  "jsonrpc-core",
