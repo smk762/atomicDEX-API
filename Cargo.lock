@@ -1013,7 +1013,7 @@ dependencies = [
  "dirs",
  "ed25519-dalek",
  "ed25519-dalek-bip32 0.2.0",
- "enum_from",
+ "enum_derives",
  "ethabi",
  "ethcore-transaction",
  "ethereum-types",
@@ -1502,7 +1502,7 @@ dependencies = [
  "common",
  "derive_more",
  "enum-primitive-derive",
- "enum_from",
+ "enum_derives",
  "futures 0.3.28",
  "hex 0.4.3",
  "http 0.2.7",
@@ -2073,7 +2073,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "enum_from"
+name = "enum_derives"
 version = "0.1.0"
 dependencies = [
  "itertools",
@@ -4285,7 +4285,7 @@ dependencies = [
  "async-trait",
  "common",
  "derive_more",
- "enum_from",
+ "enum_derives",
  "futures 0.3.28",
  "hex 0.4.3",
  "itertools",
@@ -4423,7 +4423,7 @@ dependencies = [
  "dirs",
  "either",
  "enum-primitive-derive",
- "enum_from",
+ "enum_derives",
  "ethereum-types",
  "futures 0.1.29",
  "futures 0.3.28",
