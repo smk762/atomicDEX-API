@@ -1,0 +1,63 @@
+name: Dockerhub linux only build
+on:
+  push:
+    branches-ignore:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+  MANUAL_MM_VERSION: true
+  JEMALLOC_SYS_WITH_MALLOC_CONF: "background_thread:true,narenas:1,tcache:false,dirty_decay_ms:0,muzzy_decay_ms:0,metadata_thp:auto"
+
+jobs:
+  linux-x86-64:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    container: komodoofficial/ci-container:latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: pre scripts for ci container
+        run: |
+          git config --global --add safe.directory /__w/komodo-defi-framework/komodo-defi-framework
+          echo "/bin" >> $GITHUB_PATH
+          echo "/usr/bin" >> $GITHUB_PATH
+          echo "/root/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install nightly-2022-10-29 --no-self-update --profile=minimal
+          rustup default nightly-2022-10-29
+
+      - name: Calculate commit hash for PR commit
+        if: github.event_name == 'pull_request'
+        run: echo "COMMIT_HASH=$(git rev-parse --short=7 ${{ github.event.pull_request.head.sha }})" >> $GITHUB_ENV
+
+      - name: Calculate commit hash for merge commit
+        if: github.event_name != 'pull_request'
+        run: echo "COMMIT_HASH=$(git rev-parse --short=7 HEAD)" >> $GITHUB_ENV
+
+      - name: Cargo cache
+        uses: ./.github/actions/cargo-cache
+
+      - name: Build
+        run: |
+          rm -f ./MM_VERSION
+          echo $COMMIT_HASH > ./MM_VERSION
+          cargo build --bin mm2 --release
+
+
+      - name: Login to dockerhub
+        run: docker login --username ${{ secrets.DOCKER_HUB_USERNAME }} --password ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}  docker.io
+
+      - name: Build and push container image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
+        run: |
+          CONTAINER_TAG="dev-$COMMIT_HASH"
+          docker build -t ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:"$CONTAINER_TAG" -t ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:dev-latest -f .docker/Dockerfile.dev-release .
+          docker push ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:"$CONTAINER_TAG"
+          docker push ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:dev-latest
