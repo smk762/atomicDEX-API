@@ -89,7 +89,7 @@ impl Graph {
                 p2p_suffix_connected.unwrap()
             );
 
-            Swarm::dial_addr(&mut next.1, connected_addr_no_p2p).unwrap();
+            Swarm::dial(&mut next.1, connected_addr_no_p2p).unwrap();
 
             connected_nodes.push(next);
         }
@@ -144,7 +144,7 @@ fn build_node() -> (Multiaddr, Swarm<Gossipsub>) {
         .multiplex(yamux::YamuxConfig::default())
         .boxed();
 
-    let peer_id = public_key.clone().into_peer_id();
+    let peer_id = public_key.to_peer_id();
 
     // NOTE: The graph of created nodes can be disconnected from the mesh point of view as nodes
     // can reach their d_lo value and not add other nodes to their mesh. To speed up this test, we
@@ -157,14 +157,14 @@ fn build_node() -> (Multiaddr, Swarm<Gossipsub>) {
         .history_length(10)
         .history_gossip(10)
         .build();
-    let behaviour = Gossipsub::new(peer_id.clone(), config);
+    let behaviour = Gossipsub::new(peer_id, config);
     let mut swarm = Swarm::new(transport, behaviour, peer_id);
 
     let port = 1 + random::<u64>();
     let mut addr: Multiaddr = Protocol::Memory(port).into();
     swarm.listen_on(addr.clone()).unwrap();
 
-    addr = addr.with(libp2p_core::multiaddr::Protocol::P2p(public_key.into_peer_id().into()));
+    addr = addr.with(libp2p_core::multiaddr::Protocol::P2p(public_key.to_peer_id().into()));
 
     (addr, swarm)
 }
@@ -174,7 +174,7 @@ fn multi_hop_propagation() {
     let _ = env_logger::try_init();
 
     fn prop(num_nodes: u8, seed: u64) -> TestResult {
-        if num_nodes < 2 || num_nodes > 50 {
+        if !(2..=50).contains(&num_nodes) {
             return TestResult::discard();
         }
 

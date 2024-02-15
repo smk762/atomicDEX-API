@@ -1,7 +1,7 @@
 use secp256k1::Error as SecpError;
 use std::fmt;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 pub enum Error {
     InvalidPublic,
     InvalidSecret,
@@ -12,6 +12,7 @@ pub enum Error {
     InvalidPrivate,
     InvalidAddress,
     FailedKeyGeneration,
+    WitnessHashMismatched,
 }
 
 impl fmt::Display for Error {
@@ -26,6 +27,7 @@ impl fmt::Display for Error {
             Error::InvalidPrivate => "Invalid Private",
             Error::InvalidAddress => "Invalid Address",
             Error::FailedKeyGeneration => "Key generation failed",
+            Error::WitnessHashMismatched => "Witness hash mismatched",
         };
 
         msg.fmt(f)

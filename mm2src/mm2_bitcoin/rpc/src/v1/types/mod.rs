@@ -20,6 +20,18 @@ pub use self::hash::{H160, H256, H264};
 pub use self::script::ScriptType;
 pub use self::transaction::{GetRawTransactionResponse, RawTransaction, SignedTransactionInput,
                             SignedTransactionOutput, Transaction, TransactionInput, TransactionInputEnum,
-                            TransactionInputScript, TransactionOutput, TransactionOutputScript,
-                            TransactionOutputWithAddress, TransactionOutputWithScriptData, TransactionOutputs};
+                            TransactionInputScript, TransactionOutputScript, TransactionOutputWithAddress,
+                            TransactionOutputWithScriptData};
 pub use self::uint::U256;
+
+pub trait ToTxHash {
+    fn to_tx_hash(&self) -> String;
+}
+
+impl ToTxHash for Bytes {
+    fn to_tx_hash(&self) -> String { format!("{:02x}", self) }
+}
+
+impl ToTxHash for Vec<u8> {
+    fn to_tx_hash(&self) -> String { Bytes::new(self.clone()).to_tx_hash() }
+}

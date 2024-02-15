@@ -4,10 +4,17 @@
 use bytes::Bytes;
 use constants::{LOCKTIME_THRESHOLD, SEQUENCE_FINAL};
 use crypto::{dhash256, sha256};
+#[cfg(not(target_arch = "wasm32"))]
+use ext_bitcoin::blockdata::transaction::{OutPoint as ExtOutpoint, Transaction as ExtTransaction, TxIn, TxOut};
+#[cfg(not(target_arch = "wasm32"))]
+use ext_bitcoin::hash_types::Txid;
+#[cfg(not(target_arch = "wasm32"))]
+use ext_bitcoin::{PackedLockTime, Sequence, Witness};
 use hash::{CipherText, EncCipherText, OutCipherText, ZkProof, ZkProofSapling, H256, H512, H64};
 use hex::FromHex;
 use ser::{deserialize, serialize, serialize_with_flags, SERIALIZE_TRANSACTION_WITNESS};
 use ser::{CompactInteger, Deserializable, Error, Reader, Serializable, Stream};
+use std::fmt::Formatter;
 use std::io;
 use std::io::Read;
 
@@ -18,7 +25,7 @@ const WITNESS_FLAG: u8 = 1;
 /// Maximum supported list size (inputs, outputs, etc.)
 const MAX_LIST_SIZE: usize = 8192;
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Default, Serializable, Deserializable)]
+#[derive(Clone, Copy, Debug, Default, Deserializable, Eq, Hash, PartialEq, Serializable)]
 pub struct OutPoint {
     pub hash: H256,
     pub index: u32,
@@ -28,11 +35,21 @@ impl OutPoint {
     pub fn null() -> Self {
         OutPoint {
             hash: H256::default(),
-            index: u32::max_value(),
+            index: u32::MAX,
         }
     }
 
-    pub fn is_null(&self) -> bool { self.hash.is_zero() && self.index == u32::max_value() }
+    pub fn is_null(&self) -> bool { self.hash.is_zero() && self.index == u32::MAX }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<OutPoint> for ExtOutpoint {
+    fn from(outpoint: OutPoint) -> Self {
+        ExtOutpoint {
+            txid: Txid::from_hash(outpoint.hash.to_sha256d()),
+            vout: outpoint.index,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -58,6 +75,18 @@ impl TransactionInput {
     pub fn has_witness(&self) -> bool { !self.script_witness.is_empty() }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+impl From<TransactionInput> for TxIn {
+    fn from(txin: TransactionInput) -> Self {
+        TxIn {
+            previous_output: txin.previous_output.into(),
+            script_sig: txin.script_sig.take().into(),
+            sequence: Sequence(txin.sequence),
+            witness: Witness::from_vec(txin.script_witness.into_iter().map(|s| s.take()).collect()),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Serializable, Deserializable)]
 pub struct TransactionOutput {
     pub value: u64,
@@ -69,6 +98,16 @@ impl Default for TransactionOutput {
         TransactionOutput {
             value: 0xffffffffffffffffu64,
             script_pubkey: Bytes::default(),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<TransactionOutput> for TxOut {
+    fn from(txout: TransactionOutput) -> Self {
+        TxOut {
+            value: txout.value,
+            script_pubkey: txout.script_pubkey.take().into(),
         }
     }
 }
@@ -186,6 +225,7 @@ pub struct Transaction {
     pub join_split_sig: H512,
     pub binding_sig: H512,
     pub zcash: bool,
+    pub posv: bool,
     /// https://github.com/navcoin/navcoin-core/blob/556250920fef9dc3eddd28996329ba316de5f909/src/primitives/transaction.h#L497
     pub str_d_zeel: Option<String>,
     pub tx_hash_algo: TxHashAlgo,
@@ -193,6 +233,18 @@ pub struct Transaction {
 
 impl From<&'static str> for Transaction {
     fn from(s: &'static str) -> Self { deserialize(&s.from_hex::<Vec<u8>>().unwrap() as &[u8]).unwrap() }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<Transaction> for ExtTransaction {
+    fn from(tx: Transaction) -> Self {
+        ExtTransaction {
+            version: tx.version,
+            lock_time: PackedLockTime(tx.lock_time),
+            input: tx.inputs.into_iter().map(|i| i.into()).collect(),
+            output: tx.outputs.into_iter().map(|o| o.into()).collect(),
+        }
+    }
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -204,6 +256,14 @@ pub enum TxHashAlgo {
 
 impl Default for TxHashAlgo {
     fn default() -> Self { TxHashAlgo::DSHA256 }
+}
+
+/// Represents the error returned when transaction has no outputs
+#[derive(Debug)]
+pub struct TxHasNoOutputs {}
+
+impl std::fmt::Display for TxHasNoOutputs {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { f.write_str("Tx has no outputs") }
 }
 
 impl Transaction {
@@ -260,12 +320,18 @@ impl Transaction {
     pub fn total_spends(&self) -> u64 {
         let mut result = 0u64;
         for output in self.outputs.iter() {
-            if u64::max_value() - result < output.value {
-                return u64::max_value();
+            if u64::MAX - result < output.value {
+                return u64::MAX;
             }
             result += output.value;
         }
         result
+    }
+
+    /// Returns reference to first output of the transaction or error if outputs are empty
+    #[inline]
+    pub fn first_output(&self) -> Result<&TransactionOutput, TxHasNoOutputs> {
+        self.outputs.first().ok_or(TxHasNoOutputs {})
     }
 }
 
@@ -308,14 +374,22 @@ impl Serializable for Transaction {
                     stream.append(&self.version_group_id);
                 }
 
-                if let Some(n_time) = self.n_time {
-                    stream.append(&n_time);
+                if !self.posv {
+                    if let Some(n_time) = self.n_time {
+                        stream.append(&n_time);
+                    }
                 }
 
                 stream
                     .append_list(&self.inputs)
                     .append_list(&self.outputs)
                     .append(&self.lock_time);
+
+                if self.posv {
+                    if let Some(n_time) = self.n_time {
+                        stream.append(&n_time);
+                    }
+                }
 
                 if self.overwintered && self.version >= 3 {
                     stream.append(&self.expiry_height);
@@ -368,6 +442,11 @@ pub enum TxType {
     StandardWithWitness,
     Zcash,
     PosWithNTime,
+    PosvWithNTime,
+}
+
+impl TxType {
+    fn uses_witness(&self) -> bool { matches!(self, TxType::StandardWithWitness | TxType::PosvWithNTime) }
 }
 
 pub fn deserialize_tx<T>(reader: &mut Reader<T>, tx_type: TxType) -> Result<Transaction, Error>
@@ -383,13 +462,13 @@ where
         version_group_id = reader.read()?;
     }
 
-    let n_time = if tx_type == TxType::PosWithNTime {
+    let mut n_time = if tx_type == TxType::PosWithNTime {
         Some(reader.read()?)
     } else {
         None
     };
     let mut inputs: Vec<TransactionInput> = reader.read_list_max(MAX_LIST_SIZE)?;
-    let read_witness = if inputs.is_empty() && !overwintered && tx_type == TxType::StandardWithWitness {
+    let read_witness = if inputs.is_empty() && !overwintered && tx_type.uses_witness() {
         let witness_flag: u8 = reader.read()?;
         if witness_flag != WITNESS_FLAG {
             return Err(Error::MalformedData);
@@ -401,7 +480,7 @@ where
         false
     };
     let outputs = reader.read_list_max(MAX_LIST_SIZE)?;
-    if outputs.is_empty() && tx_type == TxType::StandardWithWitness {
+    if outputs.is_empty() && tx_type.uses_witness() {
         return Err(Error::Custom("Transaction has no output".into()));
     }
     if read_witness {
@@ -411,6 +490,14 @@ where
     }
 
     let lock_time = reader.read()?;
+
+    let mut posv = false;
+    n_time = if tx_type == TxType::PosvWithNTime {
+        posv = true;
+        Some(reader.read()?)
+    } else {
+        n_time
+    };
 
     let mut expiry_height = 0;
     let mut value_balance = 0;
@@ -478,6 +565,7 @@ where
         shielded_spends,
         shielded_outputs,
         zcash,
+        posv,
         str_d_zeel,
         tx_hash_algo: TxHashAlgo::DSHA256,
     })
@@ -495,6 +583,9 @@ impl Deserializable for Transaction {
         // specific use case
         let mut buffer = vec![];
         reader.read_to_end(&mut buffer)?;
+        if let Ok(t) = deserialize_tx(&mut Reader::from_read(buffer.as_slice()), TxType::PosvWithNTime) {
+            return Ok(t);
+        }
         if let Ok(t) = deserialize_tx(&mut Reader::from_read(buffer.as_slice()), TxType::StandardWithWitness) {
             return Ok(t);
         }
@@ -507,7 +598,7 @@ impl Deserializable for Transaction {
 
 #[cfg(test)]
 mod tests {
-    use super::{Bytes, OutPoint, Transaction, TransactionInput, TransactionOutput};
+    use super::{Bytes, ExtTransaction, OutPoint, Transaction, TransactionInput, TransactionOutput};
     use hash::{H256, H512};
     use hex::ToHex;
     use ser::{deserialize, serialize, serialize_with_flags, Serializable, SERIALIZE_TRANSACTION_WITNESS};
@@ -786,6 +877,7 @@ mod tests {
 			}],
 			lock_time: 0x00000011,
 			zcash: false,
+            posv: false,
             str_d_zeel: None,
             tx_hash_algo: TxHashAlgo::DSHA256,
 		};
@@ -971,9 +1063,50 @@ mod tests {
 			}],
 			lock_time: 1632875267,
 			zcash: false,
+            posv: false,
             str_d_zeel: None,
             tx_hash_algo: TxHashAlgo::DSHA256,
 		};
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_from_tx_to_ext_tx() {
+        // https://live.blockcypher.com/btc-testnet/tx/2be90e03abb4d5328bf7e9467ca9c571aef575837b55f1253119b87e85ccb94f/
+        let tx: Transaction = "010000000001016546e6d844ad0142c8049a839e8deae16c17f0a6587e36e75ff2181ed7020a800100000000ffffffff0247070800000000002200200bbfbd271853ec0a775e5455d4bb19d32818e9b5bda50655ac183fb15c9aa01625910300000000001600149a85cc05e9a722575feb770a217c73fd6145cf0102473044022002eac5d11f3800131985c14a3d1bc03dfe5e694f5731bde39b0d2b183eb7d3d702201d62e7ff2dd433260bf7a8223db400d539a2c4eccd27a5aa24d83f5ad9e9e1750121031ac6d25833a5961e2a8822b2e8b0ac1fd55d90cbbbb18a780552cbd66fc02bb35c099c61".into();
+        let ext_tx = ExtTransaction::from(tx.clone());
+        assert_eq!(tx.hash().reversed().to_string(), ext_tx.txid().to_string());
+    }
+
+    #[test]
+    fn n_time_posv_transaction() {
+        let raw = "0200000001fa402b05b9108ec4762247d74c48a2ff303dd832d24c341c486e32cef0434177010000004847304402207a5283cc0fe6fc384744545cb600206ec730d0cdfa6a5e1479cb509fda536ee402202bec1e79b90638f1c608d805b2877fefc8fa6d0df279f58f0a70883e0e0609ce01ffffffff030000000000000000006a734110a10a0000232102fa0ecb032c7cb7be378efd03a84532b5cf1795996bfad854f042dc521616bfdcacd57f643201000000232103c8fc5c87f00bcc32b5ce5c036957f8befeff05bf4d88d2dcde720249f78d9313ac00000000dfcb3c64";
+        let t: Transaction = raw.into();
+
+        assert_eq!(t.version, 2);
+        assert_eq!(t.lock_time, 0);
+        assert_eq!(t.inputs.len(), 1);
+        assert_eq!(t.outputs.len(), 3);
+        assert_eq!(t.n_time, Some(1681705951));
+        assert!(t.posv);
+
+        let serialized = serialize(&t);
+        assert_eq!(Bytes::from(raw), serialized);
+    }
+
+    #[test]
+    fn n_time_posv_transaction_locktime() {
+        let raw = "0200000001a471828d6290f5ca7935bc26a9d07cda37227ca3fb0e8d1282296ea839c134810100000048473044022067bbc1176fe4fa8681db854d9fce8d47d5613d01820ef78a6ab76c4f067500990220560d00098fcb69eb8587873f8072c11bcf832308fdcf5712d0e4aea4b761060e01fdffffff02940237c31d0600001976a9147fb8384a3f328148137447cdf6b1c3c1f0a8559588ac00e40b54020000001976a91485ee21a7f8cdd9034fb55004e0d8ed27db1c03c288acbd8d05002b584e63";
+        let t: Transaction = raw.into();
+
+        assert_eq!(t.version, 2);
+        assert_eq!(t.lock_time, 363965);
+        assert_eq!(t.inputs.len(), 1);
+        assert_eq!(t.outputs.len(), 2);
+        assert_eq!(t.n_time, Some(1666078763));
+        assert!(t.posv);
+
+        let serialized = serialize(&t);
+        assert_eq!(Bytes::from(raw), serialized);
     }
 }

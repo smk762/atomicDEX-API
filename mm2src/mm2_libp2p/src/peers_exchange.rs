@@ -3,8 +3,8 @@ use crate::NetworkInfo;
 use futures::StreamExt;
 use libp2p::swarm::NetworkBehaviour;
 use libp2p::{multiaddr::{Multiaddr, Protocol},
-             request_response::{handler::RequestProtocol, ProtocolName, ProtocolSupport, RequestResponse,
-                                RequestResponseConfig, RequestResponseEvent, RequestResponseMessage},
+             request_response::{ProtocolName, ProtocolSupport, RequestResponse, RequestResponseConfig,
+                                RequestResponseEvent, RequestResponseMessage},
              swarm::{NetworkBehaviourAction, NetworkBehaviourEventProcess, PollParameters},
              NetworkBehaviour, PeerId};
 use log::{error, info, warn};
@@ -72,7 +72,7 @@ pub enum PeersExchangeResponse {
 
 /// Behaviour that requests known peers list from other peers at random
 #[derive(NetworkBehaviour)]
-#[behaviour(poll_method = "poll")]
+#[behaviour(poll_method = "poll", event_process = true)]
 pub struct PeersExchange {
     request_response: RequestResponse<PeersExchangeCodec>,
     #[behaviour(ignore)]
@@ -80,7 +80,7 @@ pub struct PeersExchange {
     #[behaviour(ignore)]
     reserved_peers: Vec<PeerId>,
     #[behaviour(ignore)]
-    events: VecDeque<NetworkBehaviourAction<RequestProtocol<PeersExchangeCodec>, ()>>,
+    events: VecDeque<NetworkBehaviourAction<(), <Self as NetworkBehaviour>::ConnectionHandler>>,
     #[behaviour(ignore)]
     maintain_peers_interval: Interval,
     #[behaviour(ignore)]
@@ -132,7 +132,7 @@ impl PeersExchange {
 
     fn forget_peer_addresses(&mut self, peer: &PeerId) {
         for address in self.request_response.addresses_of_peer(peer) {
-            if !self.is_reserved_peer(&peer) {
+            if !self.is_reserved_peer(peer) {
                 self.request_response.remove_address(peer, &address);
             }
         }
@@ -163,14 +163,14 @@ impl PeersExchange {
             }
         }
 
-        if !self.reserved_peers.contains(&peer) && !addresses.is_empty() {
+        if !self.reserved_peers.contains(peer) && !addresses.is_empty() {
             self.reserved_peers.push(*peer);
         }
 
         let already_reserved = self.request_response.addresses_of_peer(peer);
         for address in addresses {
             if !already_reserved.contains(&address) {
-                self.request_response.add_address(&peer, address);
+                self.request_response.add_address(peer, address);
             }
         }
     }
@@ -204,9 +204,9 @@ impl PeersExchange {
     ) -> HashMap<PeerId, PeerAddresses> {
         let mut result = HashMap::with_capacity(num);
         let mut rng = rand::thread_rng();
-        let peer_ids = self.known_peers.iter().filter(|peer| filter(*peer)).collect::<Vec<_>>();
+        let peer_ids = self.known_peers.iter().filter(|peer| filter(peer)).collect::<Vec<_>>();
         for peer_id in peer_ids.choose_multiple(&mut rng, num) {
-            let addresses = self.request_response.addresses_of_peer(*peer_id).into_iter().collect();
+            let addresses = self.request_response.addresses_of_peer(peer_id).into_iter().collect();
             result.insert(**peer_id, addresses);
         }
         result
@@ -279,7 +279,7 @@ impl PeersExchange {
         &mut self,
         cx: &mut Context,
         _params: &mut impl PollParameters,
-    ) -> Poll<NetworkBehaviourAction<RequestProtocol<PeersExchangeCodec>, ()>> {
+    ) -> Poll<NetworkBehaviourAction<(), <Self as NetworkBehaviour>::ConnectionHandler>> {
         while let Poll::Ready(Some(())) = self.maintain_peers_interval.poll_next_unpin(cx) {
             self.maintain_known_peers();
         }
@@ -298,6 +298,10 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<PeersExchangeRequest, Pee
             RequestResponseEvent::Message { message, peer } => match message {
                 RequestResponseMessage::Request { request, channel, .. } => match request {
                     PeersExchangeRequest::GetKnownPeers { num } => {
+                        // Should not send a response in such case
+                        if num > DEFAULT_PEERS_NUM {
+                            return;
+                        }
                         let response = PeersExchangeResponse::KnownPeers {
                             peers: self.get_random_known_peers(num),
                         };
@@ -358,7 +362,7 @@ mod tests {
     fn test_peer_id_serde() {
         let peer_id = PeerIdSerde(PeerId::random());
         let serialized = rmp_serde::to_vec(&peer_id).unwrap();
-        let deserialized: PeerIdSerde = rmp_serde::from_read_ref(&serialized).unwrap();
+        let deserialized: PeerIdSerde = rmp_serde::from_slice(&serialized).unwrap();
         assert_eq!(peer_id.0, deserialized.0);
     }
 

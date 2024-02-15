@@ -1,0 +1,10 @@
+[package]
+name = "test_helpers"
+version = "0.1.0"
+edition = "2018"
+
+[lib]
+doctest = false
+
+[dependencies]
+hex = "0.4.2"

@@ -11,7 +11,7 @@ use std::str::FromStr;
 use {DisplayLayout, Error, Message, Secret, Signature};
 
 /// Secret with additional network prefix and format type
-#[derive(Default, PartialEq, Clone)]
+#[derive(Clone, Copy, Default, PartialEq)]
 pub struct Private {
     /// The network prefix on which this key should be used.
     pub prefix: u8,
@@ -27,7 +27,8 @@ impl Private {
     pub fn sign(&self, message: &Message) -> Result<Signature, Error> {
         let secret = SecretKey::from_slice(&*self.secret)?;
         let message = SecpMessage::from_slice(&**message)?;
-        let signature = SECP_SIGN.sign(&message, &secret);
+        // use low R signing from bitcoin which reduces signature malleability
+        let signature = SECP_SIGN.sign_low_r(&message, &secret);
         let data = signature.serialize_der();
         Ok(data.as_ref().to_vec().into())
     }
@@ -51,7 +52,7 @@ impl DisplayLayout for Private {
 
     fn layout(&self) -> Self::Target {
         let mut result = vec![self.prefix];
-        result.extend(&*self.secret);
+        result.extend(*self.secret);
         if self.compressed {
             result.push(1);
         }

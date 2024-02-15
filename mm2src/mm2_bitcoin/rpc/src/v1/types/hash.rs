@@ -12,16 +12,23 @@ use std::str::FromStr;
 macro_rules! impl_hash {
     ($name: ident, $other: ident, $size: expr) => {
         /// Hash serialization
+        #[derive(Clone, Copy)]
         pub struct $name(pub [u8; $size]);
 
+        impl $name {
+            pub const fn const_default() -> $name { $name([0; $size]) }
+        }
+
         impl Default for $name {
-            fn default() -> Self { $name([0; $size]) }
+            fn default() -> Self { $name::const_default() }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> { write!(f, "{:02x}", self) }
         }
 
         impl fmt::Debug for $name {
-            fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-                write!(f, "{}", $other::from(self.0.clone()).to_hex::<String>())
-            }
+            fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> { write!(f, "{:02x}", self) }
         }
 
         impl<T> From<T> for $name
@@ -82,14 +89,6 @@ macro_rules! impl_hash {
                 H: Hasher,
             {
                 $other::from(self.0.clone()).hash(state)
-            }
-        }
-
-        impl Clone for $name {
-            fn clone(&self) -> Self {
-                let mut r = [0; $size];
-                r.copy_from_slice(&self.0);
-                $name(r)
             }
         }
 
@@ -164,8 +163,9 @@ impl_hash!(H256, GlobalH256, 32);
 impl_hash!(H160, GlobalH160, 20);
 
 impl H256 {
+    #[inline]
     pub fn reversed(&self) -> Self {
-        let mut result = self.clone();
+        let mut result = *self;
         result.0.reverse();
         result
     }
@@ -194,9 +194,8 @@ mod tests {
         }
 
         let str_reversed = "XXXYYY";
-        match H256::from_str(str_reversed) {
-            Ok(_) => panic!("unexpected"),
-            _ => (),
+        if H256::from_str(str_reversed).is_ok() {
+            panic!("unexpected");
         }
     }
 

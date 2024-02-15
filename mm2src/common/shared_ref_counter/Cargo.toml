@@ -3,8 +3,11 @@ name = "shared_ref_counter"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+doctest = false
+
 [features]
 enable = []
 
 [dependencies]
-log = { version = "0.4.8", optional = true }
+log = { version = "0.4.17", optional = true }

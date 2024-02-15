@@ -1,8 +1,14 @@
 use compact::Compact;
 use crypto::dhash256;
+#[cfg(not(target_arch = "wasm32"))]
+use ext_bitcoin::blockdata::block::BlockHeader as ExtBlockHeader;
+#[cfg(not(target_arch = "wasm32"))]
+use ext_bitcoin::hash_types::{BlockHash as ExtBlockHash, TxMerkleNode as ExtTxMerkleNode};
 use hash::H256;
 use hex::FromHex;
-use ser::{deserialize, serialize, Deserializable, Reader, Serializable, Stream};
+use primitives::bytes::Bytes;
+use primitives::U256;
+use ser::{deserialize, serialize, CoinVariant, Deserializable, Reader, Serializable, Stream};
 use std::io;
 use transaction::{deserialize_tx, TxType};
 use {OutPoint, Transaction};
@@ -37,10 +43,30 @@ impl Serializable for BlockHeaderBits {
     }
 }
 
+impl From<BlockHeaderBits> for u32 {
+    fn from(bits: BlockHeaderBits) -> Self {
+        match bits {
+            BlockHeaderBits::Compact(c) => c.into(),
+            BlockHeaderBits::U32(n) => n,
+        }
+    }
+}
+
+impl From<BlockHeaderBits> for Compact {
+    fn from(bits: BlockHeaderBits) -> Self {
+        match bits {
+            BlockHeaderBits::Compact(c) => c,
+            BlockHeaderBits::U32(n) => Compact::new(n),
+        }
+    }
+}
+
 const AUX_POW_VERSION_DOGE: u32 = 6422788;
+const AUX_POW_VERSION_NMC: u32 = 65796;
 const AUX_POW_VERSION_SYS: u32 = 537919744;
 const MTP_POW_VERSION: u32 = 0x20001000u32;
-const QTUM_BLOCK_HEADER_VERSION: u32 = 536870912;
+const PROG_POW_SWITCH_TIME: u32 = 1635228000;
+const BIP9_NO_SOFT_FORK_BLOCK_HEADER_VERSION: u32 = 536870912;
 // RVN
 const KAWPOW_VERSION: u32 = 805306368;
 
@@ -57,6 +83,13 @@ pub struct AuxPow {
     coinbase_branch: MerkleBranch,
     blockchain_branch: MerkleBranch,
     parent_block_header: Box<BlockHeader>,
+}
+
+#[derive(Clone, Debug, Deserializable, PartialEq, Serializable)]
+pub struct ProgPow {
+    n_height: u32,
+    n_nonce_64: u64,
+    mix_hash: H256,
 }
 
 #[derive(Clone, Debug, Deserializable, PartialEq, Serializable)]
@@ -82,6 +115,8 @@ pub struct BlockHeader {
     pub version: u32,
     pub previous_header_hash: H256,
     pub merkle_root_hash: H256,
+    /// https://github.com/lbryio/lbrycrd/blob/71fc94b1dea1c7818f84a09832ec3db736481e0f/src/primitives/block.h#L40
+    pub claim_trie_root: Option<H256>,
     pub hash_final_sapling_root: Option<H256>,
     pub time: u32,
     pub bits: BlockHeaderBits,
@@ -89,6 +124,8 @@ pub struct BlockHeader {
     pub solution: Option<Vec<u8>>,
     /// https://en.bitcoin.it/wiki/Merged_mining_specification#Merged_mining_coinbase
     pub aux_pow: Option<AuxPow>,
+    /// https://github.com/firoorg/firo/blob/904984eecdc15df5de19bd34c70fd989847a2f08/src/primitives/block.h#L197
+    pub prog_pow: Option<ProgPow>,
     /// https://github.com/firoorg/firo/blob/75f72d061eb793c39148c6d3f3eb5595159fdca0/src/primitives/block.h#L159
     pub mtp_pow: Option<MtpPow>,
     pub is_verus: bool,
@@ -117,6 +154,9 @@ impl Serializable for BlockHeader {
         }
         s.append(&self.previous_header_hash);
         s.append(&self.merkle_root_hash);
+        if let Some(claim) = &self.claim_trie_root {
+            s.append(claim);
+        }
         match &self.hash_final_sapling_root {
             Some(h) => {
                 s.append(h);
@@ -125,7 +165,8 @@ impl Serializable for BlockHeader {
         };
         s.append(&self.time);
         s.append(&self.bits);
-        if self.version != KAWPOW_VERSION {
+        // If a BTC header uses KAWPOW_VERSION, the nonce can't be zero
+        if !self.is_prog_pow() && (self.version != KAWPOW_VERSION || self.nonce != BlockHeaderNonce::U32(0)) {
             s.append(&self.nonce);
         }
         if let Some(sol) = &self.solution {
@@ -134,6 +175,11 @@ impl Serializable for BlockHeader {
         if let Some(pow) = &self.aux_pow {
             s.append(pow);
         }
+
+        if let Some(pow) = &self.prog_pow {
+            s.append(pow);
+        }
+
         if let Some(pow) = &self.mtp_pow {
             s.append(pow);
         }
@@ -180,24 +226,39 @@ impl Deserializable for BlockHeader {
         }
         let previous_header_hash = reader.read()?;
         let merkle_root_hash = reader.read()?;
-        let hash_final_sapling_root = if version == 4 { Some(reader.read()?) } else { None };
+
+        // This is needed to deserialize coin like LBC correctly.
+        let claim_trie_root = if version == BIP9_NO_SOFT_FORK_BLOCK_HEADER_VERSION && reader.coin_variant().is_lbc() {
+            Some(reader.read()?)
+        } else {
+            None
+        };
+
+        let is_zcash = (version == 4 && !reader.coin_variant().is_btc() && !reader.coin_variant().is_ppc())
+            || reader.coin_variant().is_kmd_assetchain();
+        let hash_final_sapling_root = if is_zcash { Some(reader.read()?) } else { None };
         let time = reader.read()?;
-        let bits = if version == 4 {
+        let bits = if is_zcash {
             BlockHeaderBits::U32(reader.read()?)
         } else {
             BlockHeaderBits::Compact(reader.read()?)
         };
-        let nonce = if version == 4 {
+        let nonce = if is_zcash {
             BlockHeaderNonce::H256(reader.read()?)
-        } else if version == KAWPOW_VERSION {
+        } else if (version == KAWPOW_VERSION && !reader.coin_variant().is_btc())
+            || version == MTP_POW_VERSION && time >= PROG_POW_SWITCH_TIME
+        {
             BlockHeaderNonce::U32(0)
         } else {
             BlockHeaderNonce::U32(reader.read()?)
         };
-        let solution = if version == 4 { Some(reader.read_list()?) } else { None };
+        let solution = if is_zcash { Some(reader.read_list()?) } else { None };
 
         // https://en.bitcoin.it/wiki/Merged_mining_specification#Merged_mining_coinbase
-        let aux_pow = if version == AUX_POW_VERSION_DOGE || version == AUX_POW_VERSION_SYS {
+        let aux_pow = if matches!(
+            version,
+            AUX_POW_VERSION_DOGE | AUX_POW_VERSION_SYS | AUX_POW_VERSION_NMC
+        ) {
             let coinbase_tx = deserialize_tx(reader, TxType::StandardWithWitness)?;
             let parent_block_hash = reader.read()?;
             let coinbase_branch = reader.read()?;
@@ -214,14 +275,20 @@ impl Deserializable for BlockHeader {
             None
         };
 
-        let mtp_pow = if version == MTP_POW_VERSION {
+        let prog_pow = if version == MTP_POW_VERSION && time >= PROG_POW_SWITCH_TIME {
+            Some(reader.read()?)
+        } else {
+            None
+        };
+
+        let mtp_pow = if version == MTP_POW_VERSION && time < PROG_POW_SWITCH_TIME && prog_pow.is_none() {
             Some(reader.read()?)
         } else {
             None
         };
 
         let (hash_state_root, hash_utxo_root, prevout_stake, vch_block_sig_dlgt) =
-            if version == QTUM_BLOCK_HEADER_VERSION && reader.coin_variant().is_qtum() {
+            if version == BIP9_NO_SOFT_FORK_BLOCK_HEADER_VERSION && reader.coin_variant().is_qtum() {
                 (
                     Some(reader.read()?),
                     Some(reader.read()?),
@@ -233,7 +300,7 @@ impl Deserializable for BlockHeader {
             };
 
         // https://github.com/RavenProject/Ravencoin/blob/61c790447a5afe150d9892705ac421d595a2df60/src/primitives/block.h#L67
-        let (n_height, n_nonce_u64, mix_hash) = if version == KAWPOW_VERSION {
+        let (n_height, n_nonce_u64, mix_hash) = if version == KAWPOW_VERSION && !reader.coin_variant().is_btc() {
             (Some(reader.read()?), Some(reader.read()?), Some(reader.read()?))
         } else {
             (None, None, None)
@@ -243,12 +310,14 @@ impl Deserializable for BlockHeader {
             version,
             previous_header_hash,
             merkle_root_hash,
+            claim_trie_root,
             hash_final_sapling_root,
             time,
             bits,
             nonce,
             solution,
             aux_pow,
+            prog_pow,
             mtp_pow,
             is_verus,
             hash_state_root,
@@ -263,18 +332,59 @@ impl Deserializable for BlockHeader {
 }
 
 impl BlockHeader {
+    pub fn try_from_string_with_coin_variant(header: String, coin_variant: CoinVariant) -> Result<Self, ser::Error> {
+        let buffer = &header
+            .from_hex::<Vec<u8>>()
+            .map_err(|e| ser::Error::Custom(e.to_string()))? as &[u8];
+        let mut reader = Reader::new_with_coin_variant(buffer, coin_variant);
+        reader.read::<BlockHeader>()
+    }
+
     pub fn hash(&self) -> H256 { dhash256(&serialize(self)) }
+
+    pub fn is_prog_pow(&self) -> bool { self.version == MTP_POW_VERSION && self.time >= PROG_POW_SWITCH_TIME }
+    pub fn raw(&self) -> Bytes { serialize(self) }
+    pub fn target(&self) -> Result<U256, U256> {
+        match self.bits {
+            BlockHeaderBits::Compact(compact) => compact.to_u256(),
+            BlockHeaderBits::U32(nb) => Ok(U256::from(nb)),
+        }
+    }
 }
 
 impl From<&'static str> for BlockHeader {
     fn from(s: &'static str) -> Self { deserialize(&s.from_hex::<Vec<u8>>().unwrap() as &[u8]).unwrap() }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+impl From<BlockHeader> for ExtBlockHeader {
+    fn from(header: BlockHeader) -> Self {
+        let prev_blockhash = ExtBlockHash::from_hash(header.previous_header_hash.to_sha256d());
+        let merkle_root = ExtTxMerkleNode::from_hash(header.merkle_root_hash.to_sha256d());
+        // note: H256 nonce is not supported for bitcoin, we will just set nonce to 0 in this case since this will never happen
+        let nonce = match header.nonce {
+            BlockHeaderNonce::U32(n) => n,
+            _ => 0,
+        };
+        ExtBlockHeader {
+            version: header.version as i32,
+            prev_blockhash,
+            merkle_root,
+            time: header.time,
+            bits: header.bits.into(),
+            nonce,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use block_header::{BlockHeader, BlockHeaderBits, BlockHeaderNonce, AUX_POW_VERSION_DOGE, AUX_POW_VERSION_SYS,
-                       KAWPOW_VERSION, MTP_POW_VERSION, QTUM_BLOCK_HEADER_VERSION};
+    use super::ExtBlockHeader;
+    use block_header::{BlockHeader, BlockHeaderBits, BlockHeaderNonce, AUX_POW_VERSION_DOGE, AUX_POW_VERSION_NMC,
+                       AUX_POW_VERSION_SYS, BIP9_NO_SOFT_FORK_BLOCK_HEADER_VERSION, KAWPOW_VERSION, MTP_POW_VERSION,
+                       PROG_POW_SWITCH_TIME};
     use hex::FromHex;
+    use primitives::bytes::Bytes;
     use ser::{deserialize, serialize, serialize_list, CoinVariant, Error as ReaderError, Reader, Stream};
 
     #[test]
@@ -283,12 +393,14 @@ mod tests {
             version: 1,
             previous_header_hash: [2; 32].into(),
             merkle_root_hash: [3; 32].into(),
+            claim_trie_root: None,
             hash_final_sapling_root: None,
             time: 4,
             bits: BlockHeaderBits::Compact(5.into()),
             nonce: BlockHeaderNonce::U32(6),
             solution: None,
             aux_pow: None,
+            prog_pow: None,
             mtp_pow: None,
             is_verus: false,
             hash_state_root: None,
@@ -327,12 +439,14 @@ mod tests {
             version: 1,
             previous_header_hash: [2; 32].into(),
             merkle_root_hash: [3; 32].into(),
+            claim_trie_root: None,
             hash_final_sapling_root: Default::default(),
             time: 4,
             bits: BlockHeaderBits::Compact(5.into()),
             nonce: BlockHeaderNonce::U32(6),
             solution: None,
             aux_pow: None,
+            prog_pow: None,
             mtp_pow: None,
             is_verus: false,
             hash_state_root: None,
@@ -358,12 +472,14 @@ mod tests {
             version: 4,
             previous_header_hash: "8e4e7283b71dd1572d220935db0a1654d1042e92378579f8abab67b143f93a02".into(),
             merkle_root_hash: "fa026610d2634b72ff729b9ea7850c0d2c25eeaf7a82878ca42a8e9912028863".into(),
+            claim_trie_root: None,
             hash_final_sapling_root: Some("a2d8a734eb73a4dc734072dbfd12406f1e7121bfe0e3d6c10922495c44e5cc1c".into()),
             time: 1583159441,
             bits: BlockHeaderBits::U32(486611429),
             nonce: BlockHeaderNonce::H256("0400b9caaf41d4b63a6ab55bb4e6925d46fc3adea7be37b713d3a615e7cf0000".into()), 
             solution: Some("0001a80fa65b9a46fdb1506a7a4d26f43e7995d69902489b9f6c4599c88f9c169605cc135258953da0d6299ada4ff81a76ad63c943261078d5dd1918f91cea68b65b7fc362e9df49ba57c2ea5c6dba91591c85eb0d59a1905ac66e2295b7a291a1695301489a3cc7310fd45f2b94e3b8d94f3051e9bbaada1e0641fcec6e0d6230e76753aa9574a3f3e28eaa085959beffd3231dbe1aeea3955328f3a973650a38e31632a4ffc7ec007a3345124c0b99114e2444b3ef0ada75adbd077b247bbf3229adcffbe95bc62daac88f96317d5768540b5db636f8c39a8529a736465ed830ab2c1bbddf523587abe14397a6f1835d248092c4b5b691a955572607093177a5911e317739187b41f4aa662aa6bca0401f1a0a77915ebb6947db686cff549c5f4e7b9dd93123b00a1ae8d411cfb13fa7674de21cbee8e9fc74e12aa6753b261eab3d9256c7c32cc9b16219dad73c61014e7d88d74d5e218f12e11bc47557347ff49a9ab4490647418d2a5c2da1df24d16dfb611173608fe4b10a357b0fa7a1918b9f2d7836c84bf05f384e1e678b2fdd47af0d8e66e739fe45209ede151a180aba1188058a0db093e30bc9851980cf6fbfa5adb612d1146905da662c3347d7e7e569a1041641049d951ab867bc0c6a3863c7667d43f596a849434958cee2b63dc8fa11bd0f38aa96df86ed66461993f64736345313053508c4e939506c08a766f5b6ed0950759f3901bbc4db3dc97e05bf20b9dda4ff242083db304a4e487ac2101b823998371542354e5d534b5b6ae6420cc19b11512108b61208f4d9a5a97263d2c060da893544dea6251bcadc682d2238af35f2b1c2f65a73b89a4e194f9e1eef6f0e5948ef8d0d2862f48fd3356126b00c6a2d3770ecd0d1a78fa34974b454f270b23d461e357c9356c19496522b59ff9d5b4608c542ff89e558798324021704b2cfe9f6c1a70906c43c7a690f16615f198d29fa647d84ce8461fa570b33e3eada2ed7d77e1f280a0d2e9f03c2e1db535d922b1759a191b417595f3c15d8e8b7f810527ff942e18443a3860e67ccba356809ecedc31c5d8db59c7e039dae4b53d126679e8ffa20cc26e8b9d229c8f6ee434ad053f5f4f5a94e249a13afb995aad82b4d90890187e516e114b168fc7c7e291b9738ea578a7bab0ba31030b14ba90b772b577806ea2d17856b0cb9e74254ba582a9f2638ea7ed2ca23be898c6108ff8f466b443537ed9ec56b8771bfbf0f2f6e1092a28a7fd182f111e1dbdd155ea82c6cb72d5f9e6518cc667b8226b5f5c6646125fc851e97cf125f48949f988ed37c4283072fc03dd1da3e35161e17f44c0e22c76f708bb66405737ef24176e291b4fc2eadab876115dc62d48e053a85f0ad132ef07ad5175b036fe39e1ad14fcdcdc6ac5b3daabe05161a72a50545dd812e0f9af133d061b726f491e904d89ee57811ef58d3bda151f577aed381963a30d91fb98dc49413300d132a7021a5e834e266b4ac982d76e00f43f5336b8e8028a0cacfa11813b01e50f71236a73a4c0d0757c1832b0680ada56c80edf070f438ab2bc587542f926ff8d3644b8b8a56c78576f127dec7aed9cb3e1bc2442f978a9df1dc3056a63e653132d0f419213d3cb86e7b61720de1aa3af4b3757a58156970da27560c6629257158452b9d5e4283dc6fe7df42d2fda3352d5b62ce5a984d912777c3b01837df8968a4d494db1b663e0e68197dbf196f21ea11a77095263dec548e2010460840231329d83978885ee2423e8b327785970e27c6c6d436157fb5b56119b19239edbb730ebae013d82c35df4a6e70818a74d1ef7a2e87c090ff90e32939f58ed24e85b492b5750fd2cd14b9b8517136b76b1cc6ccc6f6f027f65f1967a0eb4f32cd6e5d5315".from_hex().unwrap()), 
             aux_pow: None,
+            prog_pow: None,
             mtp_pow: None,
             is_verus: false,
             hash_state_root: None,
@@ -382,6 +498,7 @@ mod tests {
     #[test]
     fn test_doge_block_headers_serde_2() {
         // block headers of https://dogechain.info/block/3631810 and https://dogechain.info/block/3631811
+        #[allow(clippy::zero_prefixed_literal)]
         let headers_bytes: &[u8] = &[
             02, 4, 1, 98, 0, 169, 253, 69, 196, 153, 115, 241, 239, 162, 112, 182, 254, 4, 175, 104, 238, 165, 178, 80,
             67, 77, 109, 241, 134, 124, 3, 242, 203, 235, 211, 98, 185, 102, 124, 144, 105, 144, 228, 58, 25, 26, 29,
@@ -769,6 +886,16 @@ mod tests {
     }
 
     #[test]
+    fn test_firo_block_headers_prog_pow() {
+        let header_hex = "0010002000a0f9fd846c553ab0f42da219319846c24946306d83153f9232578375ef0d786a30257842bd435908bb8392e27caee825dc6af229d3fd117f422972e8191642cff13e624011081b760f0700de2da2e90000004795c4b220117e6b0d326188de71879e14ad9887838ff3cb1d0c146da2805d7361";
+        let header_bytes: Vec<u8> = header_hex.from_hex().unwrap();
+        let header: BlockHeader = deserialize(header_bytes.as_slice()).unwrap();
+        assert!(header.time >= PROG_POW_SWITCH_TIME);
+        let serialized = serialize(&header);
+        assert_eq!(serialized.take(), header_bytes);
+    }
+
+    #[test]
     fn test_firo_block_headers_serde_11() {
         let headers_bytes: &[u8] = &[
             11, 0, 16, 0, 32, 211, 25, 36, 95, 143, 251, 214, 115, 13, 244, 188, 48, 166, 108, 254, 16, 136, 240, 63,
@@ -849,6 +976,89 @@ mod tests {
         let headers = reader.read_list::<BlockHeader>().unwrap();
         for header in headers.iter() {
             assert_eq!(header.version, MTP_POW_VERSION);
+        }
+        let serialized = serialize_list(&headers);
+        assert_eq!(serialized.take(), headers_bytes);
+    }
+
+    #[test]
+    fn test_lbc_block_herders_serde_11() {
+        let headers_bytes: &[u8] = &[
+            11, 0, 0, 0, 32, 4, 226, 205, 70, 162, 151, 56, 130, 229, 25, 56, 118, 91, 160, 178, 217, 85, 27, 1, 56,
+            140, 20, 226, 40, 81, 171, 69, 77, 146, 40, 3, 245, 151, 115, 182, 25, 85, 159, 63, 6, 216, 43, 43, 130,
+            111, 1, 126, 229, 53, 112, 195, 185, 7, 49, 80, 227, 104, 71, 129, 155, 14, 80, 229, 38, 102, 215, 134, 81,
+            191, 250, 187, 217, 169, 93, 203, 220, 82, 217, 39, 221, 45, 2, 138, 18, 143, 248, 133, 15, 59, 140, 214,
+            169, 65, 98, 208, 61, 46, 30, 213, 98, 213, 174, 0, 26, 75, 221, 59, 116, 0, 0, 0, 32, 196, 109, 14, 170,
+            9, 36, 64, 47, 8, 64, 125, 180, 223, 157, 207, 10, 17, 147, 142, 204, 121, 184, 222, 20, 96, 107, 117, 222,
+            175, 16, 105, 186, 108, 207, 33, 68, 226, 33, 122, 81, 173, 178, 158, 158, 8, 214, 102, 132, 57, 8, 233,
+            138, 194, 133, 26, 124, 84, 0, 79, 31, 203, 142, 45, 232, 94, 218, 52, 2, 164, 160, 62, 236, 233, 187, 156,
+            61, 122, 43, 214, 177, 87, 143, 144, 214, 64, 70, 168, 150, 210, 240, 78, 38, 204, 182, 2, 226, 137, 30,
+            213, 98, 207, 195, 0, 26, 26, 210, 86, 33, 0, 0, 0, 32, 248, 242, 27, 4, 83, 243, 188, 89, 225, 120, 109,
+            155, 92, 211, 112, 226, 110, 106, 117, 155, 244, 215, 210, 185, 63, 178, 180, 223, 137, 162, 58, 251, 107,
+            190, 58, 159, 209, 134, 141, 129, 158, 66, 135, 230, 248, 146, 217, 232, 6, 92, 244, 181, 139, 203, 184,
+            35, 35, 209, 240, 53, 56, 222, 63, 95, 180, 75, 178, 246, 193, 163, 175, 209, 16, 201, 188, 164, 245, 0,
+            44, 216, 64, 8, 22, 170, 213, 238, 21, 240, 118, 16, 197, 201, 177, 29, 109, 91, 217, 30, 213, 98, 171,
+            186, 0, 26, 3, 57, 180, 217, 0, 0, 0, 32, 107, 241, 118, 66, 209, 221, 160, 24, 69, 212, 76, 221, 81, 47,
+            150, 6, 196, 22, 254, 107, 67, 96, 165, 129, 93, 87, 86, 253, 174, 166, 240, 6, 87, 49, 250, 185, 201, 18,
+            49, 115, 222, 30, 154, 134, 214, 114, 183, 95, 87, 218, 116, 4, 176, 126, 196, 187, 210, 197, 142, 91, 129,
+            175, 158, 88, 141, 159, 87, 247, 179, 75, 237, 84, 58, 216, 37, 210, 72, 167, 226, 154, 15, 69, 10, 254,
+            149, 135, 74, 149, 110, 178, 91, 9, 134, 36, 137, 183, 57, 32, 213, 98, 182, 176, 0, 26, 184, 35, 19, 17,
+            0, 0, 0, 32, 54, 175, 218, 241, 215, 229, 54, 226, 65, 178, 208, 185, 207, 176, 61, 171, 1, 203, 94, 53,
+            30, 40, 188, 54, 70, 35, 33, 68, 234, 37, 203, 110, 248, 170, 156, 152, 52, 72, 42, 28, 248, 97, 9, 159,
+            106, 83, 6, 68, 106, 134, 222, 38, 97, 227, 211, 181, 75, 36, 154, 182, 130, 133, 161, 8, 94, 210, 79, 13,
+            155, 245, 191, 77, 157, 95, 40, 208, 220, 69, 190, 192, 248, 200, 39, 148, 177, 163, 88, 210, 23, 209, 106,
+            200, 239, 23, 147, 3, 87, 32, 213, 98, 41, 206, 0, 26, 36, 6, 216, 89, 0, 0, 0, 32, 191, 206, 127, 113,
+            217, 20, 89, 51, 103, 46, 155, 38, 64, 52, 51, 218, 35, 153, 161, 11, 24, 225, 116, 139, 117, 96, 245, 112,
+            218, 168, 88, 99, 13, 117, 103, 10, 163, 133, 114, 186, 178, 138, 120, 22, 245, 23, 32, 108, 186, 238, 18,
+            250, 254, 20, 236, 152, 247, 1, 229, 145, 249, 121, 29, 19, 64, 176, 250, 1, 212, 155, 54, 168, 176, 22,
+            10, 174, 183, 38, 88, 77, 17, 174, 221, 73, 84, 133, 174, 149, 222, 93, 168, 85, 47, 122, 254, 142, 191,
+            32, 213, 98, 139, 185, 0, 26, 11, 156, 81, 208, 0, 0, 0, 32, 185, 10, 134, 138, 197, 14, 90, 184, 108, 77,
+            52, 169, 245, 158, 113, 196, 92, 63, 10, 42, 93, 138, 96, 146, 248, 103, 105, 107, 110, 92, 153, 32, 46,
+            134, 91, 9, 151, 59, 17, 87, 145, 104, 83, 124, 153, 71, 154, 44, 254, 1, 16, 179, 214, 82, 219, 179, 57,
+            94, 110, 85, 137, 231, 104, 113, 216, 65, 67, 201, 131, 14, 28, 55, 72, 31, 197, 88, 146, 130, 243, 56,
+            173, 30, 153, 236, 36, 53, 220, 45, 18, 114, 217, 223, 59, 74, 60, 143, 214, 35, 213, 98, 91, 179, 0, 26,
+            184, 79, 48, 125, 0, 0, 0, 32, 207, 9, 44, 157, 84, 2, 136, 174, 93, 198, 173, 105, 35, 141, 243, 6, 21,
+            214, 24, 80, 113, 166, 149, 36, 207, 78, 157, 77, 195, 76, 118, 75, 93, 168, 103, 196, 147, 125, 5, 145,
+            183, 30, 98, 150, 37, 135, 29, 3, 184, 160, 62, 61, 205, 109, 89, 124, 161, 161, 99, 166, 76, 198, 57, 104,
+            21, 200, 173, 105, 181, 83, 152, 148, 115, 92, 215, 131, 108, 16, 121, 168, 25, 212, 150, 158, 205, 1, 128,
+            106, 232, 31, 177, 216, 61, 70, 106, 149, 19, 36, 213, 98, 8, 13, 1, 26, 66, 126, 250, 117, 0, 0, 0, 32,
+            14, 226, 195, 145, 216, 149, 97, 248, 36, 168, 95, 51, 163, 63, 36, 79, 144, 213, 195, 185, 88, 79, 179,
+            68, 6, 166, 42, 176, 56, 129, 130, 158, 157, 158, 185, 82, 70, 100, 135, 53, 130, 252, 84, 56, 153, 183, 4,
+            64, 167, 75, 237, 171, 159, 117, 76, 115, 169, 115, 131, 251, 119, 23, 3, 24, 159, 110, 115, 78, 6, 134,
+            71, 167, 91, 187, 203, 252, 77, 121, 169, 201, 152, 67, 155, 21, 5, 19, 61, 136, 215, 31, 55, 173, 225,
+            126, 138, 230, 51, 36, 213, 98, 77, 249, 0, 26, 153, 65, 133, 15, 0, 0, 0, 32, 98, 23, 129, 255, 228, 196,
+            211, 128, 56, 58, 241, 153, 48, 139, 73, 26, 39, 169, 57, 4, 91, 179, 149, 36, 158, 254, 190, 185, 52, 110,
+            160, 218, 227, 60, 248, 234, 204, 240, 216, 126, 70, 68, 180, 22, 122, 203, 103, 19, 177, 126, 226, 83, 44,
+            83, 2, 36, 157, 164, 127, 241, 219, 47, 100, 53, 86, 216, 76, 242, 161, 117, 71, 214, 50, 154, 144, 42,
+            180, 57, 145, 57, 95, 10, 18, 217, 161, 66, 70, 4, 116, 79, 24, 64, 71, 88, 47, 160, 77, 38, 213, 98, 8,
+            226, 0, 26, 6, 75, 190, 72, 0, 0, 0, 32, 92, 201, 103, 9, 253, 13, 166, 231, 44, 6, 225, 162, 236, 10, 255,
+            4, 42, 43, 196, 53, 83, 118, 220, 157, 231, 6, 104, 2, 111, 141, 219, 28, 162, 101, 33, 136, 243, 11, 130,
+            200, 145, 88, 52, 186, 115, 44, 146, 231, 80, 158, 155, 182, 134, 156, 229, 247, 68, 55, 145, 249, 71, 225,
+            115, 127, 165, 240, 245, 7, 151, 6, 193, 202, 139, 227, 48, 79, 12, 178, 233, 104, 176, 129, 136, 171, 201,
+            184, 15, 6, 37, 118, 246, 130, 5, 177, 140, 190, 58, 38, 213, 98, 92, 42, 1, 26, 63, 91, 195, 195,
+        ];
+        let mut reader = Reader::new_with_coin_variant(headers_bytes, CoinVariant::LBC);
+        let headers = reader.read_list::<BlockHeader>().unwrap();
+        for header in headers.iter() {
+            assert_eq!(header.version, BIP9_NO_SOFT_FORK_BLOCK_HEADER_VERSION);
+        }
+        let serialized = serialize_list(&headers);
+        assert_eq!(serialized.take(), headers_bytes);
+    }
+
+    #[test]
+    fn test_nmc_block_headers_serde_11() {
+        // NMC block headers
+        // start - #622807
+        // end - #622796
+        // Ref: https://chainz.cryptoid.info/nmc/block.dws?622807.htm
+        let headers_bytes: Bytes = include_str!("for_tests/nmc_block_headers_hex").into();
+        let headers_bytes = headers_bytes.as_slice();
+        let mut reader = Reader::new(headers_bytes);
+        let headers = reader.read_list::<BlockHeader>().unwrap();
+        for header in headers.iter() {
+            assert_eq!(header.version, AUX_POW_VERSION_NMC);
+            assert!(header.aux_pow.is_some());
         }
         let serialized = serialize_list(&headers);
         assert_eq!(serialized.take(), headers_bytes);
@@ -1919,7 +2129,7 @@ mod tests {
         let mut reader = Reader::new_with_coin_variant(headers_bytes, CoinVariant::Qtum);
         let headers = reader.read_list::<BlockHeader>().unwrap();
         for header in headers.iter() {
-            assert_eq!(header.version, QTUM_BLOCK_HEADER_VERSION);
+            assert_eq!(header.version, BIP9_NO_SOFT_FORK_BLOCK_HEADER_VERSION);
         }
         let serialized = serialize_list(&headers);
         assert_eq!(serialized.take(), headers_bytes);
@@ -2258,5 +2468,396 @@ mod tests {
         }
         let serialized = serialize_list(&headers);
         assert_eq!(serialized.take(), headers_bytes);
+    }
+
+    #[test]
+    fn test_btc_v4_block_headers_serde_11() {
+        // https://live.blockcypher.com/btc/block/0000000000000000097336f8439779072501753e2f48b8798c66188139f2d9cf/
+        let header = "04000000462a79dfa51b541648ee55df74cdc14b9ea7feb932e912060000000000000000374c1707a72691be50070bc5029d586e9200d672c6c3dfd29d267bf6b2b01b9e0ace395654a91118923bd9d5";
+        let header_bytes = &header.from_hex::<Vec<u8>>().unwrap() as &[u8];
+        let mut reader = Reader::new_with_coin_variant(header_bytes, CoinVariant::BTC);
+        let header = reader.read::<BlockHeader>().unwrap();
+        assert_eq!(header.version, 4);
+        let serialized = serialize(&header);
+        assert_eq!(serialized.take(), header_bytes);
+    }
+
+    #[test]
+    fn test_btc_kow_pow_version_block_headers_serde_11() {
+        // https://live.blockcypher.com/btc/block/000000000000000006e35d6675fb0fec767a5f3b346261a5160f6e2a8d258070/
+        let header = "00000030af7e7389ca428b05d8902fcdc148e70974524d39cb56bc0100000000000000007ce0cd0c9c648d1b585d29b9ab23ebc987619d43925b3c768d7cb4bc097cfb821441c05614a107187aef1ee1";
+        let header_bytes = &header.from_hex::<Vec<u8>>().unwrap() as &[u8];
+        let mut reader = Reader::new_with_coin_variant(header_bytes, CoinVariant::BTC);
+        let header = reader.read::<BlockHeader>().unwrap();
+        assert_eq!(header.version, KAWPOW_VERSION);
+        let serialized = serialize(&header);
+        assert_eq!(serialized.take(), header_bytes);
+    }
+
+    #[test]
+    fn test_from_blockheader_to_ext_blockheader() {
+        // https://live.blockcypher.com/btc/block/00000000000000000020cf2bdc6563fb25c424af588d5fb7223461e72715e4a9/
+        let header: BlockHeader = "0200000066720b99e07d284bd4fe67ff8c49a5db1dd8514fcdab610000000000000000007829844f4c3a41a537b3131ca992643eaa9d093b2383e4cdc060ad7dc548118751eb505ac1910018de19b302".into();
+        let ext_header = ExtBlockHeader::from(header.clone());
+        assert_eq!(
+            header.hash().reversed().to_string(),
+            ext_header.block_hash().to_string()
+        );
+    }
+
+    #[test]
+    fn test_ppc_block_headers() {
+        // PeerCoin block 659052 has version 4, but it doesn't use Zcash format
+        // https://chainz.cryptoid.info/ppc/block.dws?5a25b9f21589539d55e1ddf7c103fe8e466ce54f79054a0991943ba43651110f.htm
+        let serialized_headers = [
+            11, 3, 0, 0, 0, 170, 140, 242, 85, 87, 6, 202, 247, 184, 135, 155, 111, 244, 7, 250, 105, 75, 131, 174, 4,
+            68, 10, 106, 137, 90, 28, 4, 96, 181, 143, 104, 84, 73, 165, 123, 22, 178, 86, 249, 78, 33, 244, 192, 200,
+            2, 183, 125, 71, 54, 15, 96, 186, 191, 46, 215, 152, 60, 167, 94, 166, 182, 242, 94, 107, 43, 41, 162, 99,
+            91, 235, 12, 28, 0, 0, 0, 0, 3, 0, 0, 0, 60, 147, 16, 89, 128, 81, 253, 79, 190, 212, 190, 221, 218, 157,
+            229, 16, 245, 67, 18, 1, 66, 18, 223, 157, 166, 112, 129, 243, 52, 159, 49, 220, 232, 7, 49, 243, 79, 108,
+            233, 206, 255, 34, 84, 189, 216, 195, 24, 51, 82, 26, 120, 248, 241, 209, 149, 58, 197, 242, 247, 155, 4,
+            107, 232, 40, 3, 43, 162, 99, 110, 241, 12, 28, 0, 0, 0, 0, 3, 0, 244, 1, 61, 94, 238, 109, 77, 96, 208,
+            33, 232, 235, 188, 45, 37, 209, 123, 164, 70, 208, 9, 90, 255, 232, 106, 210, 145, 159, 90, 139, 194, 33,
+            48, 83, 36, 246, 212, 171, 113, 69, 163, 220, 189, 156, 20, 156, 170, 75, 50, 63, 213, 108, 106, 210, 166,
+            132, 73, 223, 30, 33, 34, 172, 100, 195, 96, 223, 111, 44, 162, 99, 42, 227, 0, 25, 104, 157, 248, 189, 3,
+            0, 0, 0, 158, 127, 227, 143, 52, 181, 82, 70, 130, 219, 103, 4, 12, 154, 127, 247, 44, 118, 114, 147, 175,
+            128, 70, 195, 0, 0, 0, 0, 0, 0, 0, 0, 25, 21, 28, 189, 23, 44, 136, 69, 26, 212, 166, 23, 21, 62, 51, 232,
+            27, 89, 127, 183, 48, 140, 50, 189, 16, 112, 169, 208, 253, 253, 226, 202, 121, 46, 162, 99, 7, 240, 12,
+            28, 0, 0, 0, 0, 3, 0, 0, 0, 119, 48, 233, 42, 176, 54, 147, 19, 154, 100, 166, 71, 125, 179, 17, 228, 237,
+            97, 166, 70, 104, 199, 231, 5, 213, 86, 190, 233, 96, 123, 71, 205, 89, 169, 110, 206, 201, 104, 90, 164,
+            242, 7, 167, 8, 97, 48, 192, 154, 91, 243, 131, 128, 49, 237, 132, 250, 244, 76, 87, 125, 244, 80, 89, 159,
+            140, 49, 162, 99, 40, 243, 12, 28, 0, 0, 0, 0, 3, 0, 0, 0, 96, 162, 150, 174, 178, 72, 227, 162, 16, 64,
+            16, 68, 13, 184, 177, 217, 9, 29, 8, 238, 106, 37, 230, 205, 211, 113, 255, 234, 160, 249, 57, 175, 165,
+            63, 215, 82, 194, 170, 131, 11, 206, 154, 94, 196, 150, 229, 231, 34, 194, 229, 69, 211, 54, 121, 189, 212,
+            80, 3, 36, 171, 133, 237, 170, 87, 15, 53, 162, 99, 52, 245, 12, 28, 0, 0, 0, 0, 3, 0, 0, 0, 70, 5, 106,
+            135, 225, 93, 205, 85, 243, 111, 204, 51, 76, 26, 188, 4, 66, 146, 196, 202, 107, 173, 22, 155, 40, 88,
+            250, 240, 228, 200, 72, 65, 152, 164, 228, 76, 113, 62, 236, 192, 36, 75, 188, 13, 230, 207, 213, 216, 249,
+            119, 94, 3, 149, 212, 25, 244, 160, 188, 121, 223, 96, 67, 70, 149, 45, 53, 162, 99, 122, 248, 12, 28, 0,
+            0, 0, 0, 3, 0, 0, 0, 251, 222, 167, 109, 77, 158, 185, 21, 151, 167, 84, 246, 45, 202, 184, 247, 174, 45,
+            233, 187, 120, 144, 135, 102, 230, 252, 243, 183, 211, 86, 136, 112, 121, 79, 60, 217, 208, 58, 95, 249,
+            230, 74, 182, 253, 231, 46, 206, 48, 11, 43, 251, 60, 166, 119, 192, 121, 226, 125, 113, 136, 150, 192, 4,
+            77, 231, 53, 162, 99, 57, 242, 12, 28, 0, 0, 0, 0, 3, 0, 0, 0, 222, 159, 64, 62, 117, 52, 203, 195, 40, 60,
+            183, 13, 66, 177, 106, 251, 41, 145, 128, 156, 141, 166, 128, 89, 161, 124, 153, 194, 1, 198, 153, 255, 43,
+            16, 241, 125, 110, 84, 130, 214, 2, 235, 242, 190, 229, 210, 21, 65, 114, 23, 255, 58, 252, 35, 107, 16,
+            194, 22, 98, 9, 125, 223, 242, 236, 74, 56, 162, 99, 176, 237, 12, 28, 0, 0, 0, 0, 3, 0, 0, 0, 216, 24,
+            144, 128, 67, 125, 152, 252, 140, 131, 29, 130, 32, 94, 202, 17, 221, 161, 250, 195, 8, 211, 36, 43, 144,
+            152, 52, 113, 155, 71, 225, 7, 78, 158, 15, 190, 68, 106, 75, 245, 149, 116, 42, 233, 64, 193, 140, 100,
+            117, 43, 232, 172, 120, 75, 39, 111, 184, 74, 205, 69, 246, 191, 7, 231, 251, 56, 162, 99, 206, 237, 12,
+            28, 0, 0, 0, 0, 4, 0, 0, 0, 233, 77, 140, 50, 73, 4, 68, 207, 105, 49, 245, 61, 211, 154, 138, 215, 242,
+            181, 232, 126, 200, 159, 164, 87, 64, 192, 115, 48, 54, 13, 132, 225, 158, 218, 135, 111, 168, 192, 173,
+            53, 161, 162, 247, 132, 187, 50, 235, 188, 174, 70, 185, 245, 211, 141, 119, 79, 178, 153, 254, 11, 140,
+            176, 126, 250, 146, 57, 162, 99, 45, 233, 12, 28, 0, 0, 0, 0,
+        ];
+        let mut reader = Reader::new_with_coin_variant(&serialized_headers, CoinVariant::PPC);
+        let headers = reader.read_list::<BlockHeader>().unwrap();
+        let serialized_from_deserialized = serialize_list(&headers);
+        assert_eq!(serialized_from_deserialized.take(), serialized_headers);
+    }
+
+    #[test]
+    fn test_rick_v1_block_header_des() {
+        // RICK Block header 0 bytes.
+        // https://rick.explorer.dexstats.info/block/027e3758c3a65b12aa1046462b486d0a63bfa1beae327897f56c5cfb7daaae71
+        let header_bytes = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            59, 163, 237, 253, 122, 123, 18, 178, 122, 199, 44, 62, 103, 118, 143, 97, 127, 200, 27, 195, 136, 138, 81,
+            50, 58, 159, 184, 170, 75, 30, 94, 74, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 41, 171, 95, 73, 15, 15, 15, 32, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 253, 64, 5, 0, 13, 91, 167, 205, 165, 212, 115, 148,
+            114, 99, 191, 25, 66, 133, 49, 113, 121, 210, 176, 211, 7, 17, 156, 46, 124, 196, 189, 138, 196, 86, 240,
+            119, 75, 213, 43, 12, 217, 36, 155, 233, 212, 7, 24, 182, 57, 122, 76, 123, 189, 143, 43, 50, 114, 254,
+            210, 130, 60, 210, 175, 75, 209, 99, 34, 0, 186, 75, 247, 150, 114, 125, 99, 71, 178, 37, 246, 112, 242,
+            146, 52, 50, 116, 204, 53, 9, 148, 102, 245, 251, 95, 12, 209, 193, 5, 18, 27, 40, 33, 61, 21, 219, 46,
+            215, 189, 186, 73, 11, 76, 237, 198, 151, 66, 165, 123, 124, 37, 175, 36, 72, 94, 82, 58, 173, 187, 119,
+            160, 20, 79, 199, 111, 121, 239, 115, 189, 133, 48, 212, 43, 159, 59, 155, 237, 28, 19, 90, 209, 254, 21,
+            41, 35, 250, 254, 152, 249, 95, 118, 241, 97, 94, 100, 196, 171, 177, 19, 127, 76, 49, 178, 24, 186, 39,
+            130, 188, 21, 83, 71, 136, 221, 162, 204, 8, 160, 238, 41, 135, 200, 178, 127, 244, 27, 212, 227, 28, 213,
+            251, 86, 67, 223, 232, 98, 201, 160, 44, 169, 249, 12, 140, 81, 166, 103, 29, 104, 29, 4, 173, 71, 228,
+            181, 59, 21, 24, 212, 190, 250, 254, 254, 140, 173, 251, 145, 47, 61, 3, 5, 27, 30, 251, 241, 223, 227,
+            123, 86, 233, 58, 116, 29, 141, 253, 128, 213, 118, 202, 37, 11, 238, 85, 250, 177, 49, 31, 199, 179, 37,
+            89, 119, 85, 140, 221, 166, 247, 214, 248, 117, 48, 110, 67, 161, 68, 19, 250, 205, 174, 210, 244, 96, 147,
+            224, 239, 30, 143, 138, 150, 62, 22, 50, 220, 190, 235, 216, 228, 159, 209, 107, 87, 212, 155, 8, 249, 118,
+            45, 232, 145, 87, 198, 82, 51, 246, 12, 142, 56, 161, 245, 3, 164, 140, 85, 95, 142, 196, 93, 237, 236,
+            213, 116, 163, 118, 1, 50, 60, 39, 190, 89, 123, 149, 99, 67, 16, 127, 139, 216, 15, 58, 146, 90, 250, 243,
+            8, 17, 223, 131, 196, 2, 17, 107, 185, 193, 229, 35, 28, 112, 255, 248, 153, 167, 200, 47, 115, 201, 2,
+            186, 84, 218, 83, 204, 69, 155, 123, 241, 17, 61, 182, 92, 200, 246, 145, 77, 54, 24, 86, 14, 166, 154,
+            189, 19, 101, 143, 167, 182, 175, 146, 211, 116, 214, 236, 169, 82, 159, 139, 213, 101, 22, 110, 79, 203,
+            242, 168, 223, 179, 201, 182, 149, 57, 212, 210, 238, 46, 147, 33, 184, 91, 51, 25, 37, 223, 25, 89, 21,
+            242, 117, 118, 55, 194, 128, 94, 29, 65, 49, 225, 173, 158, 249, 188, 27, 177, 199, 50, 216, 219, 164, 115,
+            135, 22, 211, 81, 171, 48, 201, 150, 200, 101, 123, 171, 57, 86, 126, 227, 178, 156, 109, 5, 75, 113, 20,
+            149, 192, 213, 46, 28, 213, 216, 229, 91, 79, 15, 3, 37, 185, 115, 105, 40, 7, 85, 180, 106, 2, 175, 213,
+            75, 228, 221, 217, 247, 124, 34, 39, 43, 139, 187, 23, 255, 81, 24, 254, 219, 174, 37, 100, 82, 78, 121,
+            123, 210, 139, 95, 116, 247, 7, 157, 83, 44, 204, 5, 152, 7, 152, 159, 148, 210, 103, 244, 126, 114, 75,
+            63, 30, 207, 224, 14, 201, 230, 84, 28, 150, 16, 128, 216, 137, 18, 81, 184, 75, 68, 128, 188, 41, 47, 106,
+            24, 11, 234, 8, 159, 239, 91, 189, 165, 110, 30, 65, 57, 13, 124, 14, 133, 186, 14, 245, 48, 247, 23, 116,
+            19, 72, 26, 34, 100, 101, 163, 110, 246, 175, 225, 226, 188, 166, 157, 32, 120, 113, 43, 57, 18, 187, 161,
+            169, 155, 31, 191, 240, 211, 85, 214, 255, 231, 38, 210, 187, 111, 188, 16, 60, 74, 197, 117, 110, 91, 238,
+            110, 71, 225, 116, 36, 235, 203, 241, 182, 61, 140, 185, 12, 226, 228, 1, 152, 180, 244, 25, 134, 137, 218,
+            234, 37, 67, 7, 229, 42, 37, 86, 47, 76, 20, 85, 52, 15, 15, 254, 177, 15, 157, 142, 145, 71, 117, 227,
+            125, 14, 220, 160, 25, 251, 27, 156, 110, 248, 18, 85, 237, 134, 188, 81, 197, 57, 30, 5, 145, 72, 15, 102,
+            226, 216, 140, 95, 79, 215, 39, 118, 151, 150, 134, 86, 169, 177, 19, 171, 151, 248, 116, 253, 213, 242,
+            70, 94, 85, 89, 83, 62, 1, 186, 19, 239, 74, 143, 122, 33, 208, 44, 48, 200, 222, 214, 142, 140, 84, 96,
+            58, 185, 200, 8, 78, 246, 217, 235, 78, 146, 199, 91, 7, 133, 57, 226, 174, 120, 110, 186, 182, 218, 183,
+            58, 9, 224, 170, 154, 197, 117, 188, 239, 178, 158, 147, 10, 230, 86, 229, 139, 203, 81, 63, 126, 60, 23,
+            224, 121, 220, 228, 240, 91, 93, 188, 24, 194, 168, 114, 178, 37, 9, 116, 14, 190, 106, 57, 3, 224, 10,
+            209, 171, 197, 80, 118, 68, 24, 98, 100, 63, 147, 96, 110, 61, 195, 94, 141, 159, 44, 174, 243, 238, 107,
+            225, 77, 81, 59, 46, 6, 43, 33, 208, 6, 29, 227, 189, 86, 136, 23, 19, 161, 165, 193, 127, 90, 206, 5, 225,
+            236, 9, 218, 83, 249, 148, 66, 223, 23, 90, 73, 189, 21, 74, 169, 110, 73, 73, 222, 205, 82, 254, 215, 156,
+            207, 124, 203, 206, 50, 148, 20, 25, 195, 20, 227, 116, 228, 163, 150, 172, 85, 62, 23, 181, 52, 3, 54,
+            161, 162, 92, 34, 249, 228, 42, 36, 59, 165, 64, 68, 80, 182, 80, 172, 252, 130, 106, 110, 67, 41, 113,
+            172, 231, 118, 225, 87, 25, 81, 94, 22, 52, 206, 185, 164, 163, 80, 97, 182, 104, 199, 73, 152, 211, 223,
+            181, 130, 127, 98, 56, 236, 1, 83, 119, 230, 249, 201, 79, 56, 16, 135, 104, 207, 110, 92, 139, 19, 46, 3,
+            3, 251, 90, 32, 3, 104, 248, 69, 173, 157, 70, 52, 48, 53, 166, 255, 148, 3, 29, 248, 216, 48, 148, 21,
+            187, 63, 108, 213, 237, 233, 193, 53, 253, 171, 204, 3, 5, 153, 133, 141, 128, 60, 15, 133, 190, 118, 97,
+            200, 137, 132, 216, 143, 170, 61, 38, 251, 14, 154, 172, 0, 86, 165, 63, 27, 93, 11, 174, 215, 19, 200, 83,
+            196, 162, 114, 104, 105, 160, 161, 36, 168, 165, 187, 192, 252, 14, 248, 12, 138, 228, 203, 83, 99, 106,
+            160, 37, 3, 184, 106, 30, 185, 131, 111, 204, 37, 152, 35, 226, 105, 45, 146, 29, 136, 225, 255, 193, 230,
+            203, 43, 222, 67, 147, 156, 235, 63, 50, 166, 17, 104, 111, 83, 159, 143, 124, 159, 11, 240, 3, 129, 247,
+            67, 96, 125, 64, 150, 15, 6, 211, 71, 209, 205, 138, 200, 165, 25, 105, 194, 94, 55, 21, 14, 253, 247, 170,
+            76, 32, 55, 162, 253, 5, 22, 251, 68, 69, 37, 171, 21, 122, 14, 208, 167, 65, 43, 47, 166, 155, 33, 127,
+            227, 151, 38, 49, 83, 120, 44, 15, 100, 53, 31, 189, 242, 103, 143, 160, 220, 133, 105, 145, 45, 205, 142,
+            60, 202, 211, 143, 52, 242, 59, 187, 206, 20, 198, 162, 106, 194, 73, 17, 179, 8, 184, 44, 126, 67, 6, 45,
+            24, 11, 174, 172, 75, 167, 21, 56, 88, 54, 92, 114, 198, 61, 207, 95, 106, 91, 8, 7, 11, 115, 10, 219, 1,
+            122, 234, 233, 37, 183, 208, 67, 153, 121, 226, 103, 159, 69, 237, 47, 37, 167, 237, 207, 210, 251, 119,
+            168, 121, 70, 48, 40, 92, 203, 10, 7, 31, 92, 206, 65, 11, 70, 219, 249, 117, 11, 3, 84, 170, 232, 182, 85,
+            116, 80, 28, 198, 158, 251, 91, 106, 67, 68, 64, 116, 254, 225, 22, 100, 27, 178, 157, 165, 108, 43, 74,
+            127, 69, 105, 145, 252, 146, 178,
+        ];
+        let mut reader = Reader::new_with_coin_variant(&header_bytes, "RICK".into());
+        let header = reader.read::<BlockHeader>().unwrap();
+        assert_eq!(header.version, 1);
+        let serialized = serialize(&header);
+        assert_eq!(serialized.take(), header_bytes);
+    }
+
+    #[test]
+    fn test_rick_v4_block_header_des() {
+        // RICK Block header 1 bytes.
+        // https://rick.explorer.dexstats.info/block/027e3758c3a65b12aa1046462b486d0a63bfa1beae327897f56c5cfb7daaae71
+        let header_bytes = [
+            4, 0, 0, 0, 113, 174, 170, 125, 251, 92, 108, 245, 151, 120, 50, 174, 190, 161, 191, 99, 10, 109, 72, 43,
+            70, 70, 16, 170, 18, 91, 166, 195, 88, 55, 126, 2, 194, 29, 71, 248, 246, 242, 7, 112, 124, 147, 83, 57,
+            42, 168, 11, 219, 126, 193, 43, 185, 130, 203, 144, 55, 29, 176, 71, 96, 191, 113, 242, 146, 251, 194, 244,
+            48, 12, 1, 240, 183, 130, 13, 0, 227, 52, 124, 141, 164, 238, 97, 70, 116, 55, 108, 188, 69, 53, 157, 170,
+            84, 249, 181, 73, 62, 77, 26, 64, 93, 15, 15, 15, 32, 3, 0, 126, 43, 89, 14, 131, 200, 63, 244, 88, 32,
+            110, 251, 196, 31, 34, 78, 14, 187, 253, 190, 176, 188, 22, 99, 91, 146, 255, 244, 0, 0, 253, 64, 5, 0, 12,
+            186, 229, 59, 82, 42, 159, 171, 130, 1, 115, 22, 85, 192, 57, 113, 206, 186, 138, 31, 36, 22, 28, 176, 192,
+            16, 57, 183, 3, 138, 197, 18, 222, 93, 10, 250, 1, 51, 217, 78, 106, 3, 118, 233, 158, 30, 14, 236, 18,
+            177, 236, 240, 153, 219, 121, 174, 108, 139, 17, 165, 186, 202, 24, 121, 228, 130, 173, 87, 175, 197, 87,
+            129, 52, 171, 140, 105, 113, 69, 71, 104, 87, 191, 67, 0, 16, 171, 80, 86, 154, 131, 153, 191, 215, 102,
+            28, 59, 244, 71, 185, 183, 220, 80, 8, 203, 14, 21, 60, 152, 170, 116, 45, 13, 226, 75, 227, 207, 92, 113,
+            155, 221, 248, 219, 55, 35, 18, 1, 113, 143, 5, 125, 200, 23, 248, 108, 210, 241, 104, 253, 104, 254, 213,
+            238, 111, 211, 135, 46, 16, 122, 250, 202, 163, 20, 61, 109, 161, 183, 50, 48, 11, 37, 182, 197, 255, 201,
+            251, 126, 229, 1, 188, 206, 238, 28, 143, 117, 165, 239, 142, 65, 145, 13, 34, 21, 252, 184, 27, 24, 97,
+            87, 36, 107, 2, 13, 244, 84, 242, 183, 75, 142, 68, 25, 25, 221, 75, 185, 44, 191, 142, 143, 78, 9, 63,
+            119, 107, 99, 130, 132, 94, 39, 41, 16, 175, 203, 106, 133, 48, 183, 160, 73, 30, 79, 12, 141, 177, 19,
+            237, 108, 68, 79, 232, 83, 213, 174, 193, 231, 164, 134, 244, 133, 187, 167, 92, 18, 119, 141, 220, 191,
+            147, 51, 125, 27, 148, 213, 136, 222, 55, 90, 174, 185, 89, 60, 22, 117, 24, 202, 63, 40, 155, 157, 6, 111,
+            136, 131, 65, 250, 107, 48, 167, 133, 180, 182, 150, 17, 5, 40, 199, 190, 14, 225, 23, 219, 211, 50, 237,
+            214, 53, 71, 223, 93, 157, 194, 206, 51, 192, 6, 41, 236, 31, 184, 74, 252, 69, 85, 234, 246, 36, 213, 218,
+            93, 76, 125, 226, 255, 222, 17, 243, 3, 57, 7, 16, 150, 9, 6, 137, 238, 44, 144, 191, 7, 14, 164, 200, 180,
+            60, 76, 210, 232, 11, 249, 251, 69, 151, 117, 29, 31, 184, 23, 247, 95, 184, 82, 49, 234, 165, 188, 152,
+            238, 195, 24, 74, 124, 137, 198, 213, 191, 197, 225, 2, 101, 213, 130, 195, 13, 189, 148, 38, 90, 232, 107,
+            36, 63, 139, 62, 156, 17, 11, 11, 173, 236, 50, 182, 69, 121, 53, 210, 115, 72, 253, 14, 152, 6, 155, 76,
+            67, 255, 67, 149, 128, 197, 132, 162, 223, 111, 245, 221, 149, 222, 74, 112, 2, 31, 28, 181, 57, 232, 68,
+            233, 247, 105, 181, 20, 51, 21, 181, 124, 65, 38, 86, 159, 28, 115, 124, 9, 103, 244, 209, 251, 230, 24,
+            109, 182, 129, 119, 181, 228, 244, 238, 241, 239, 153, 59, 120, 53, 23, 151, 227, 111, 10, 71, 100, 67,
+            176, 93, 55, 54, 218, 210, 54, 54, 253, 150, 94, 121, 124, 3, 252, 232, 111, 52, 98, 168, 145, 158, 14,
+            183, 84, 23, 237, 13, 170, 233, 255, 249, 248, 231, 4, 167, 22, 124, 181, 171, 43, 47, 116, 44, 161, 25,
+            26, 95, 59, 216, 133, 129, 113, 250, 77, 25, 87, 114, 170, 27, 70, 104, 137, 72, 244, 2, 25, 209, 204, 234,
+            140, 236, 217, 212, 63, 206, 69, 45, 226, 206, 125, 27, 6, 237, 118, 31, 9, 99, 57, 217, 13, 214, 118, 6,
+            125, 244, 73, 6, 169, 55, 35, 85, 15, 220, 34, 221, 112, 195, 139, 180, 219, 123, 217, 123, 95, 159, 249,
+            242, 8, 209, 222, 29, 162, 160, 218, 239, 224, 88, 194, 52, 86, 60, 194, 85, 158, 245, 253, 18, 90, 19,
+            184, 68, 182, 103, 151, 247, 119, 215, 5, 117, 170, 251, 179, 8, 237, 135, 99, 78, 162, 173, 35, 125, 101,
+            132, 238, 174, 102, 7, 232, 39, 52, 29, 193, 250, 243, 1, 201, 138, 175, 164, 24, 8, 1, 142, 4, 149, 90,
+            102, 59, 195, 93, 198, 210, 221, 254, 87, 85, 217, 131, 191, 192, 246, 17, 84, 173, 114, 88, 199, 243, 189,
+            215, 161, 195, 70, 49, 125, 176, 1, 108, 122, 59, 132, 95, 24, 6, 9, 222, 199, 222, 181, 107, 22, 229, 147,
+            93, 170, 240, 23, 93, 174, 184, 15, 182, 122, 32, 32, 146, 149, 173, 19, 62, 107, 126, 206, 52, 155, 58,
+            248, 110, 133, 154, 225, 143, 73, 199, 12, 21, 239, 50, 143, 9, 13, 164, 106, 237, 217, 105, 247, 207, 237,
+            166, 151, 124, 186, 214, 47, 36, 152, 79, 51, 74, 91, 178, 93, 5, 222, 132, 103, 172, 87, 134, 59, 68, 62,
+            159, 94, 91, 24, 32, 154, 35, 11, 12, 247, 144, 188, 247, 209, 149, 26, 155, 18, 13, 220, 124, 220, 213,
+            24, 46, 50, 221, 115, 2, 208, 79, 123, 18, 173, 115, 106, 244, 59, 134, 46, 157, 203, 85, 52, 23, 13, 130,
+            57, 121, 108, 232, 231, 63, 162, 70, 244, 78, 130, 239, 59, 253, 82, 92, 190, 241, 108, 111, 226, 6, 239,
+            48, 166, 25, 139, 168, 251, 137, 94, 143, 110, 43, 79, 48, 167, 92, 235, 14, 55, 252, 63, 255, 43, 149, 16,
+            175, 239, 160, 244, 49, 234, 93, 59, 185, 86, 100, 82, 201, 23, 64, 247, 125, 245, 94, 21, 43, 111, 39,
+            160, 180, 255, 21, 73, 122, 42, 125, 50, 190, 83, 83, 28, 43, 121, 114, 213, 94, 45, 11, 8, 9, 75, 68, 74,
+            234, 153, 175, 70, 254, 123, 238, 7, 50, 22, 151, 217, 30, 153, 249, 91, 203, 122, 203, 44, 182, 115, 255,
+            27, 82, 38, 157, 51, 59, 31, 159, 62, 22, 249, 87, 105, 134, 203, 141, 162, 126, 112, 153, 133, 83, 90,
+            177, 188, 88, 126, 36, 93, 7, 218, 138, 218, 191, 147, 4, 118, 135, 155, 87, 118, 211, 35, 150, 189, 30,
+            122, 165, 8, 213, 109, 193, 178, 156, 180, 25, 251, 229, 116, 217, 55, 102, 233, 65, 162, 82, 208, 134, 76,
+            85, 62, 223, 110, 237, 233, 179, 149, 244, 92, 203, 197, 51, 114, 135, 31, 74, 209, 92, 32, 27, 53, 195,
+            134, 58, 203, 172, 250, 35, 205, 8, 197, 125, 167, 229, 61, 22, 200, 163, 60, 178, 21, 73, 9, 11, 55, 15,
+            147, 239, 85, 237, 141, 151, 111, 101, 75, 24, 166, 57, 81, 222, 190, 137, 9, 242, 157, 142, 205, 237, 49,
+            155, 169, 140, 130, 96, 102, 29, 27, 249, 61, 166, 84, 213, 104, 16, 100, 187, 68, 88, 172, 116, 53, 170,
+            161, 195, 253, 149, 211, 153, 129, 41, 50, 144, 214, 85, 20, 251, 15, 42, 108, 237, 156, 15, 201, 109, 50,
+            136, 244, 197, 147, 99, 63, 135, 93, 52, 100, 27, 125, 199, 228, 105, 122, 130, 29, 229, 110, 117, 26, 210,
+            202, 81, 199, 35, 192, 155, 80, 238, 10, 49, 6, 53, 124, 93, 150, 106, 242, 15, 234, 106, 255, 215, 162,
+            203, 44, 99, 186, 73, 24, 19, 14, 130, 5, 243, 226, 211, 87, 164, 100, 129, 254, 123, 241, 245, 133, 160,
+            99, 111, 88, 212, 12, 136, 8, 219, 131, 22, 10, 69, 22, 69, 193, 163, 123, 44, 152, 216, 241, 107, 211, 83,
+            110, 95, 107, 251, 242, 119, 229, 106, 201, 202, 244, 168, 236, 66, 85, 220, 14, 63, 3, 154, 31, 138, 11,
+            221, 112, 246, 74, 19, 37, 121, 215, 57, 68, 75, 52, 105, 144, 206, 173, 67, 183, 54, 6, 17, 182, 39, 164,
+            14, 198, 181, 134, 94, 192, 35, 12, 213, 100, 205, 226, 173, 186, 218, 40, 42, 12, 251, 180, 148, 18, 18,
+            177, 201, 167, 14, 130, 112, 23, 34, 136, 129, 229, 62, 122, 148, 56, 32, 94, 62, 254, 254, 207, 15, 102,
+            197, 30, 99, 165, 167, 45, 90, 134, 148, 30, 190, 180, 68,
+        ];
+        let mut reader = Reader::new_with_coin_variant(&header_bytes, "RICK".into());
+        let header = reader.read::<BlockHeader>().unwrap();
+        assert_eq!(header.version, 4);
+        let serialized = serialize(&header);
+        assert_eq!(serialized.take(), header_bytes);
+    }
+
+    #[test]
+    fn test_morty_v1_block_header_des() {
+        // MORTY Block header 0 bytes.
+        // https://morty.explorer.dexstats.info/block/027e3758c3a65b12aa1046462b486d0a63bfa1beae327897f56c5cfb7daaae71
+        let header_bytes = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            59, 163, 237, 253, 122, 123, 18, 178, 122, 199, 44, 62, 103, 118, 143, 97, 127, 200, 27, 195, 136, 138, 81,
+            50, 58, 159, 184, 170, 75, 30, 94, 74, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 41, 171, 95, 73, 15, 15, 15, 32, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 253, 64, 5, 0, 13, 91, 167, 205, 165, 212, 115, 148,
+            114, 99, 191, 25, 66, 133, 49, 113, 121, 210, 176, 211, 7, 17, 156, 46, 124, 196, 189, 138, 196, 86, 240,
+            119, 75, 213, 43, 12, 217, 36, 155, 233, 212, 7, 24, 182, 57, 122, 76, 123, 189, 143, 43, 50, 114, 254,
+            210, 130, 60, 210, 175, 75, 209, 99, 34, 0, 186, 75, 247, 150, 114, 125, 99, 71, 178, 37, 246, 112, 242,
+            146, 52, 50, 116, 204, 53, 9, 148, 102, 245, 251, 95, 12, 209, 193, 5, 18, 27, 40, 33, 61, 21, 219, 46,
+            215, 189, 186, 73, 11, 76, 237, 198, 151, 66, 165, 123, 124, 37, 175, 36, 72, 94, 82, 58, 173, 187, 119,
+            160, 20, 79, 199, 111, 121, 239, 115, 189, 133, 48, 212, 43, 159, 59, 155, 237, 28, 19, 90, 209, 254, 21,
+            41, 35, 250, 254, 152, 249, 95, 118, 241, 97, 94, 100, 196, 171, 177, 19, 127, 76, 49, 178, 24, 186, 39,
+            130, 188, 21, 83, 71, 136, 221, 162, 204, 8, 160, 238, 41, 135, 200, 178, 127, 244, 27, 212, 227, 28, 213,
+            251, 86, 67, 223, 232, 98, 201, 160, 44, 169, 249, 12, 140, 81, 166, 103, 29, 104, 29, 4, 173, 71, 228,
+            181, 59, 21, 24, 212, 190, 250, 254, 254, 140, 173, 251, 145, 47, 61, 3, 5, 27, 30, 251, 241, 223, 227,
+            123, 86, 233, 58, 116, 29, 141, 253, 128, 213, 118, 202, 37, 11, 238, 85, 250, 177, 49, 31, 199, 179, 37,
+            89, 119, 85, 140, 221, 166, 247, 214, 248, 117, 48, 110, 67, 161, 68, 19, 250, 205, 174, 210, 244, 96, 147,
+            224, 239, 30, 143, 138, 150, 62, 22, 50, 220, 190, 235, 216, 228, 159, 209, 107, 87, 212, 155, 8, 249, 118,
+            45, 232, 145, 87, 198, 82, 51, 246, 12, 142, 56, 161, 245, 3, 164, 140, 85, 95, 142, 196, 93, 237, 236,
+            213, 116, 163, 118, 1, 50, 60, 39, 190, 89, 123, 149, 99, 67, 16, 127, 139, 216, 15, 58, 146, 90, 250, 243,
+            8, 17, 223, 131, 196, 2, 17, 107, 185, 193, 229, 35, 28, 112, 255, 248, 153, 167, 200, 47, 115, 201, 2,
+            186, 84, 218, 83, 204, 69, 155, 123, 241, 17, 61, 182, 92, 200, 246, 145, 77, 54, 24, 86, 14, 166, 154,
+            189, 19, 101, 143, 167, 182, 175, 146, 211, 116, 214, 236, 169, 82, 159, 139, 213, 101, 22, 110, 79, 203,
+            242, 168, 223, 179, 201, 182, 149, 57, 212, 210, 238, 46, 147, 33, 184, 91, 51, 25, 37, 223, 25, 89, 21,
+            242, 117, 118, 55, 194, 128, 94, 29, 65, 49, 225, 173, 158, 249, 188, 27, 177, 199, 50, 216, 219, 164, 115,
+            135, 22, 211, 81, 171, 48, 201, 150, 200, 101, 123, 171, 57, 86, 126, 227, 178, 156, 109, 5, 75, 113, 20,
+            149, 192, 213, 46, 28, 213, 216, 229, 91, 79, 15, 3, 37, 185, 115, 105, 40, 7, 85, 180, 106, 2, 175, 213,
+            75, 228, 221, 217, 247, 124, 34, 39, 43, 139, 187, 23, 255, 81, 24, 254, 219, 174, 37, 100, 82, 78, 121,
+            123, 210, 139, 95, 116, 247, 7, 157, 83, 44, 204, 5, 152, 7, 152, 159, 148, 210, 103, 244, 126, 114, 75,
+            63, 30, 207, 224, 14, 201, 230, 84, 28, 150, 16, 128, 216, 137, 18, 81, 184, 75, 68, 128, 188, 41, 47, 106,
+            24, 11, 234, 8, 159, 239, 91, 189, 165, 110, 30, 65, 57, 13, 124, 14, 133, 186, 14, 245, 48, 247, 23, 116,
+            19, 72, 26, 34, 100, 101, 163, 110, 246, 175, 225, 226, 188, 166, 157, 32, 120, 113, 43, 57, 18, 187, 161,
+            169, 155, 31, 191, 240, 211, 85, 214, 255, 231, 38, 210, 187, 111, 188, 16, 60, 74, 197, 117, 110, 91, 238,
+            110, 71, 225, 116, 36, 235, 203, 241, 182, 61, 140, 185, 12, 226, 228, 1, 152, 180, 244, 25, 134, 137, 218,
+            234, 37, 67, 7, 229, 42, 37, 86, 47, 76, 20, 85, 52, 15, 15, 254, 177, 15, 157, 142, 145, 71, 117, 227,
+            125, 14, 220, 160, 25, 251, 27, 156, 110, 248, 18, 85, 237, 134, 188, 81, 197, 57, 30, 5, 145, 72, 15, 102,
+            226, 216, 140, 95, 79, 215, 39, 118, 151, 150, 134, 86, 169, 177, 19, 171, 151, 248, 116, 253, 213, 242,
+            70, 94, 85, 89, 83, 62, 1, 186, 19, 239, 74, 143, 122, 33, 208, 44, 48, 200, 222, 214, 142, 140, 84, 96,
+            58, 185, 200, 8, 78, 246, 217, 235, 78, 146, 199, 91, 7, 133, 57, 226, 174, 120, 110, 186, 182, 218, 183,
+            58, 9, 224, 170, 154, 197, 117, 188, 239, 178, 158, 147, 10, 230, 86, 229, 139, 203, 81, 63, 126, 60, 23,
+            224, 121, 220, 228, 240, 91, 93, 188, 24, 194, 168, 114, 178, 37, 9, 116, 14, 190, 106, 57, 3, 224, 10,
+            209, 171, 197, 80, 118, 68, 24, 98, 100, 63, 147, 96, 110, 61, 195, 94, 141, 159, 44, 174, 243, 238, 107,
+            225, 77, 81, 59, 46, 6, 43, 33, 208, 6, 29, 227, 189, 86, 136, 23, 19, 161, 165, 193, 127, 90, 206, 5, 225,
+            236, 9, 218, 83, 249, 148, 66, 223, 23, 90, 73, 189, 21, 74, 169, 110, 73, 73, 222, 205, 82, 254, 215, 156,
+            207, 124, 203, 206, 50, 148, 20, 25, 195, 20, 227, 116, 228, 163, 150, 172, 85, 62, 23, 181, 52, 3, 54,
+            161, 162, 92, 34, 249, 228, 42, 36, 59, 165, 64, 68, 80, 182, 80, 172, 252, 130, 106, 110, 67, 41, 113,
+            172, 231, 118, 225, 87, 25, 81, 94, 22, 52, 206, 185, 164, 163, 80, 97, 182, 104, 199, 73, 152, 211, 223,
+            181, 130, 127, 98, 56, 236, 1, 83, 119, 230, 249, 201, 79, 56, 16, 135, 104, 207, 110, 92, 139, 19, 46, 3,
+            3, 251, 90, 32, 3, 104, 248, 69, 173, 157, 70, 52, 48, 53, 166, 255, 148, 3, 29, 248, 216, 48, 148, 21,
+            187, 63, 108, 213, 237, 233, 193, 53, 253, 171, 204, 3, 5, 153, 133, 141, 128, 60, 15, 133, 190, 118, 97,
+            200, 137, 132, 216, 143, 170, 61, 38, 251, 14, 154, 172, 0, 86, 165, 63, 27, 93, 11, 174, 215, 19, 200, 83,
+            196, 162, 114, 104, 105, 160, 161, 36, 168, 165, 187, 192, 252, 14, 248, 12, 138, 228, 203, 83, 99, 106,
+            160, 37, 3, 184, 106, 30, 185, 131, 111, 204, 37, 152, 35, 226, 105, 45, 146, 29, 136, 225, 255, 193, 230,
+            203, 43, 222, 67, 147, 156, 235, 63, 50, 166, 17, 104, 111, 83, 159, 143, 124, 159, 11, 240, 3, 129, 247,
+            67, 96, 125, 64, 150, 15, 6, 211, 71, 209, 205, 138, 200, 165, 25, 105, 194, 94, 55, 21, 14, 253, 247, 170,
+            76, 32, 55, 162, 253, 5, 22, 251, 68, 69, 37, 171, 21, 122, 14, 208, 167, 65, 43, 47, 166, 155, 33, 127,
+            227, 151, 38, 49, 83, 120, 44, 15, 100, 53, 31, 189, 242, 103, 143, 160, 220, 133, 105, 145, 45, 205, 142,
+            60, 202, 211, 143, 52, 242, 59, 187, 206, 20, 198, 162, 106, 194, 73, 17, 179, 8, 184, 44, 126, 67, 6, 45,
+            24, 11, 174, 172, 75, 167, 21, 56, 88, 54, 92, 114, 198, 61, 207, 95, 106, 91, 8, 7, 11, 115, 10, 219, 1,
+            122, 234, 233, 37, 183, 208, 67, 153, 121, 226, 103, 159, 69, 237, 47, 37, 167, 237, 207, 210, 251, 119,
+            168, 121, 70, 48, 40, 92, 203, 10, 7, 31, 92, 206, 65, 11, 70, 219, 249, 117, 11, 3, 84, 170, 232, 182, 85,
+            116, 80, 28, 198, 158, 251, 91, 106, 67, 68, 64, 116, 254, 225, 22, 100, 27, 178, 157, 165, 108, 43, 74,
+            127, 69, 105, 145, 252, 146, 178,
+        ];
+        let mut reader = Reader::new_with_coin_variant(&header_bytes, "MORTY".into());
+        let header = reader.read::<BlockHeader>().unwrap();
+        assert_eq!(header.version, 1);
+        let serialized = serialize(&header);
+        assert_eq!(serialized.take(), header_bytes);
+    }
+
+    #[test]
+    fn test_morty_v4_block_header_des() {
+        // MORTY Block header 0 bytes.
+        // https://morty.explorer.dexstats.info/block/027e3758c3a65b12aa1046462b486d0a63bfa1beae327897f56c5cfb7daaae71
+        let header_bytes = [
+            4, 0, 0, 0, 113, 174, 170, 125, 251, 92, 108, 245, 151, 120, 50, 174, 190, 161, 191, 99, 10, 109, 72, 43,
+            70, 70, 16, 170, 18, 91, 166, 195, 88, 55, 126, 2, 151, 199, 90, 42, 33, 212, 194, 188, 209, 116, 36, 128,
+            91, 2, 174, 229, 185, 93, 183, 2, 179, 206, 206, 175, 86, 80, 11, 96, 37, 196, 9, 164, 251, 194, 244, 48,
+            12, 1, 240, 183, 130, 13, 0, 227, 52, 124, 141, 164, 238, 97, 70, 116, 55, 108, 188, 69, 53, 157, 170, 84,
+            249, 181, 73, 62, 9, 28, 64, 93, 15, 15, 15, 32, 14, 0, 253, 84, 160, 204, 64, 38, 208, 250, 142, 84, 16,
+            96, 7, 47, 42, 82, 199, 204, 159, 177, 5, 61, 174, 22, 236, 47, 153, 181, 0, 0, 253, 64, 5, 0, 120, 233,
+            249, 24, 200, 221, 174, 207, 128, 194, 81, 54, 187, 214, 14, 169, 15, 56, 52, 72, 59, 218, 242, 180, 5,
+            181, 105, 111, 216, 85, 87, 238, 68, 91, 32, 187, 117, 194, 94, 221, 176, 36, 56, 100, 163, 232, 91, 25,
+            200, 226, 110, 166, 99, 252, 208, 200, 219, 139, 38, 220, 253, 33, 64, 148, 229, 11, 33, 97, 160, 165, 47,
+            58, 148, 106, 112, 172, 177, 43, 38, 140, 251, 17, 115, 5, 143, 218, 114, 172, 144, 228, 162, 209, 154,
+            160, 151, 45, 145, 60, 6, 99, 48, 55, 176, 198, 31, 100, 235, 237, 214, 101, 10, 175, 50, 87, 71, 81, 76,
+            96, 247, 251, 30, 92, 255, 82, 244, 14, 95, 109, 79, 96, 225, 112, 253, 165, 16, 97, 146, 109, 220, 81,
+            234, 156, 158, 54, 68, 58, 22, 252, 90, 161, 18, 174, 179, 233, 125, 59, 243, 84, 30, 39, 86, 74, 64, 214,
+            54, 192, 250, 8, 191, 189, 121, 70, 207, 204, 176, 187, 252, 80, 252, 163, 235, 190, 96, 96, 125, 213, 246,
+            210, 9, 37, 230, 27, 125, 27, 88, 11, 144, 215, 197, 92, 189, 75, 172, 150, 237, 15, 120, 223, 247, 17,
+            151, 63, 235, 148, 206, 253, 223, 97, 194, 72, 67, 140, 241, 129, 35, 117, 135, 30, 42, 141, 44, 226, 34,
+            145, 115, 114, 210, 17, 184, 178, 66, 240, 66, 252, 236, 208, 204, 104, 214, 132, 15, 33, 209, 97, 116,
+            231, 53, 189, 21, 250, 70, 178, 235, 235, 248, 252, 197, 85, 118, 241, 66, 200, 69, 17, 196, 179, 100, 90,
+            112, 247, 220, 19, 120, 10, 245, 236, 93, 98, 249, 129, 186, 154, 85, 42, 56, 198, 221, 179, 77, 199, 165,
+            192, 60, 116, 202, 106, 190, 159, 50, 94, 246, 219, 141, 162, 83, 216, 59, 75, 110, 85, 31, 31, 81, 53,
+            214, 10, 3, 202, 54, 121, 234, 50, 126, 148, 125, 9, 161, 137, 3, 164, 67, 250, 0, 117, 118, 17, 80, 85,
+            220, 251, 196, 217, 141, 23, 124, 159, 10, 46, 44, 122, 31, 99, 188, 97, 33, 191, 161, 27, 51, 148, 157,
+            208, 175, 102, 148, 152, 100, 11, 205, 241, 189, 151, 135, 53, 137, 39, 238, 180, 45, 178, 93, 108, 130,
+            105, 75, 217, 62, 215, 70, 61, 51, 21, 171, 248, 166, 27, 205, 111, 117, 36, 184, 73, 187, 230, 11, 244,
+            31, 23, 175, 20, 178, 235, 182, 224, 89, 8, 169, 87, 175, 51, 74, 37, 170, 10, 1, 19, 101, 148, 241, 89,
+            33, 174, 43, 137, 187, 215, 223, 147, 248, 67, 214, 180, 40, 244, 178, 163, 134, 131, 220, 91, 151, 24,
+            169, 86, 244, 179, 83, 220, 125, 180, 69, 162, 216, 32, 207, 65, 36, 219, 176, 231, 48, 154, 24, 217, 154,
+            215, 178, 29, 201, 9, 239, 49, 100, 25, 220, 234, 178, 85, 62, 38, 154, 213, 35, 12, 156, 98, 15, 33, 71,
+            42, 64, 65, 178, 100, 202, 55, 204, 100, 241, 224, 46, 95, 21, 177, 63, 119, 247, 224, 113, 146, 172, 171,
+            103, 71, 68, 138, 67, 84, 122, 250, 236, 172, 125, 194, 90, 23, 57, 71, 107, 17, 177, 154, 15, 192, 175,
+            66, 46, 109, 110, 110, 182, 111, 61, 244, 182, 27, 96, 29, 101, 39, 240, 95, 30, 101, 43, 83, 247, 122,
+            194, 89, 148, 146, 150, 180, 218, 250, 196, 13, 113, 92, 174, 0, 45, 101, 35, 209, 254, 7, 94, 240, 253,
+            11, 250, 190, 54, 125, 88, 67, 57, 32, 109, 228, 186, 175, 45, 119, 177, 181, 51, 255, 66, 225, 252, 73,
+            98, 178, 123, 82, 18, 13, 193, 84, 229, 197, 209, 56, 25, 70, 4, 40, 142, 243, 235, 170, 138, 178, 152,
+            153, 123, 88, 23, 115, 205, 215, 50, 220, 204, 95, 135, 5, 193, 219, 145, 171, 182, 234, 9, 181, 147, 180,
+            42, 0, 161, 173, 225, 52, 71, 243, 170, 128, 252, 178, 249, 149, 54, 62, 238, 126, 25, 29, 114, 30, 30,
+            217, 86, 254, 58, 164, 125, 111, 95, 220, 114, 126, 172, 243, 154, 165, 143, 117, 187, 180, 3, 11, 45, 196,
+            149, 179, 117, 164, 201, 238, 197, 164, 56, 215, 104, 109, 25, 229, 64, 153, 183, 232, 28, 67, 33, 243, 35,
+            78, 222, 254, 241, 203, 193, 217, 53, 162, 127, 237, 231, 179, 156, 212, 198, 1, 12, 212, 199, 26, 243, 41,
+            229, 165, 107, 150, 218, 71, 92, 209, 171, 29, 36, 157, 219, 179, 29, 93, 52, 244, 170, 158, 83, 111, 52,
+            228, 194, 25, 93, 249, 6, 91, 5, 242, 121, 165, 58, 29, 202, 71, 177, 210, 15, 115, 163, 32, 175, 151, 43,
+            139, 78, 67, 5, 213, 200, 59, 191, 130, 54, 85, 239, 82, 29, 126, 61, 63, 244, 52, 21, 242, 44, 241, 26,
+            202, 115, 237, 90, 110, 2, 0, 176, 205, 88, 137, 87, 163, 69, 89, 70, 193, 97, 171, 205, 175, 208, 255,
+            129, 139, 49, 15, 35, 224, 53, 106, 215, 82, 181, 253, 42, 177, 18, 217, 127, 192, 69, 241, 165, 81, 77,
+            235, 139, 8, 229, 153, 53, 242, 195, 65, 110, 241, 128, 146, 224, 194, 104, 242, 10, 187, 65, 94, 160, 123,
+            28, 82, 221, 134, 222, 91, 69, 201, 41, 31, 70, 53, 27, 221, 10, 191, 107, 90, 29, 52, 187, 0, 219, 198,
+            104, 87, 73, 118, 8, 105, 226, 176, 209, 108, 16, 233, 116, 231, 149, 23, 59, 246, 36, 194, 190, 129, 166,
+            164, 197, 105, 194, 239, 227, 252, 125, 203, 206, 13, 49, 123, 180, 219, 117, 2, 133, 221, 153, 79, 135,
+            146, 194, 161, 191, 225, 24, 243, 145, 47, 25, 23, 87, 17, 219, 91, 35, 13, 185, 78, 136, 205, 153, 62,
+            174, 92, 57, 86, 180, 230, 38, 147, 40, 11, 61, 101, 180, 1, 206, 196, 194, 120, 88, 177, 251, 43, 148,
+            131, 198, 41, 244, 35, 201, 27, 212, 248, 121, 194, 7, 218, 98, 8, 32, 4, 139, 208, 173, 49, 192, 203, 155,
+            147, 201, 250, 124, 118, 244, 160, 65, 4, 114, 231, 198, 184, 129, 131, 142, 124, 150, 132, 103, 163, 247,
+            125, 214, 110, 229, 215, 139, 245, 55, 90, 155, 212, 26, 31, 77, 47, 126, 219, 21, 74, 22, 204, 12, 93,
+            253, 127, 145, 118, 156, 15, 103, 122, 219, 2, 228, 48, 37, 87, 206, 2, 93, 86, 74, 106, 24, 231, 202, 221,
+            237, 232, 47, 162, 195, 114, 16, 20, 214, 151, 38, 212, 198, 33, 36, 75, 233, 98, 139, 203, 28, 23, 55, 21,
+            69, 74, 238, 226, 26, 201, 205, 22, 137, 35, 248, 13, 79, 174, 88, 254, 50, 149, 155, 146, 92, 123, 53, 88,
+            148, 219, 226, 172, 223, 226, 5, 238, 106, 223, 20, 146, 173, 133, 54, 179, 132, 5, 186, 40, 177, 227, 15,
+            114, 16, 240, 192, 86, 56, 197, 247, 231, 169, 251, 216, 208, 48, 166, 26, 200, 193, 46, 192, 165, 206,
+            237, 103, 176, 148, 88, 166, 46, 137, 37, 31, 203, 241, 187, 229, 34, 99, 6, 241, 51, 182, 172, 105, 205,
+            216, 131, 231, 117, 49, 145, 83, 135, 96, 60, 239, 227, 40, 86, 164, 104, 218, 81, 238, 242, 212, 213, 52,
+            19, 143, 213, 69, 245, 94, 198, 149, 46, 127, 13, 142, 74, 11, 212, 179, 48, 71, 197, 234, 177, 160, 43,
+            150, 17, 242, 127, 195, 249, 125, 236, 27, 157, 254, 146, 96, 230, 138, 133, 199, 232, 225, 251, 248, 92,
+            159, 41, 168, 137, 250, 119, 111, 19, 156, 63, 1, 145, 242, 254, 191, 198, 39, 50, 135, 1, 206, 153, 173,
+            18, 144, 31, 139, 113, 34, 195, 127, 249, 240, 148, 137, 108, 183, 210, 82, 68, 79, 47, 159, 196, 184, 61,
+            124, 219, 155,
+        ];
+        let mut reader = Reader::new_with_coin_variant(&header_bytes, "MORTY".into());
+        let header = reader.read::<BlockHeader>().unwrap();
+        assert_eq!(header.version, 4);
+        let serialized = serialize(&header);
+        assert_eq!(serialized.take(), header_bytes);
     }
 }

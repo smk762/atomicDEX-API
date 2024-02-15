@@ -16,10 +16,14 @@ use secp256k1::{Message as SecpMessage, PublicKey as Secp256k1Pubkey, Secp256k1,
 use sha2::{Digest, Sha256};
 
 pub use atomicdex_behaviour::{spawn_gossipsub, AdexBehaviourError, NodeType, WssCerts};
-pub use atomicdex_gossipsub::{GossipsubEvent, GossipsubMessage, MessageId};
+pub use atomicdex_gossipsub::{GossipsubEvent, GossipsubMessage, MessageId, TopicHash};
+pub use libp2p::identity::error::DecodingError;
+pub use libp2p::identity::secp256k1::PublicKey as Libp2pSecpPublic;
+pub use libp2p::identity::PublicKey as Libp2pPublic;
 pub use libp2p::{Multiaddr, PeerId};
 pub use peers_exchange::PeerAddresses;
 pub use relay_address::{RelayAddress, RelayAddressError};
+pub use runtime::SwarmRuntime;
 use serde::{de, Deserialize, Serialize, Serializer};
 
 lazy_static! {
@@ -49,8 +53,9 @@ pub fn encode_message<T: Serialize>(message: &T) -> Result<Vec<u8>, rmp_serde::e
     rmp_serde::to_vec(message)
 }
 
+#[inline]
 pub fn decode_message<'de, T: de::Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, rmp_serde::decode::Error> {
-    rmp_serde::from_read_ref(bytes)
+    rmp_serde::from_slice(bytes)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -83,7 +88,7 @@ pub fn decode_signed<'de, T: de::Deserialize<'de>>(
     let helper: SignedMessageSerdeHelper = decode_message(encoded)?;
     let signature = Signature::from_compact(helper.signature)
         .map_err(|e| rmp_serde::decode::Error::Syntax(format!("Failed to parse signature {}", e)))?;
-    let sig_hash = SecpMessage::from_slice(&sha256(&helper.payload)).expect("Message::from_slice should never fail");
+    let sig_hash = SecpMessage::from_slice(&sha256(helper.payload)).expect("Message::from_slice should never fail");
     match &helper.pubkey {
         PublicKey::Secp256k1(serialized_pub) => {
             if SECP_VERIFY.verify(&sig_hash, &signature, &serialized_pub.0).is_err() {

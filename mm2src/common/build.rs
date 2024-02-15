@@ -3,16 +3,14 @@
 
 // The script is experimentally formatted with `rustfmt`. Probably not going to use `rustfmt` for the rest of the project though.
 
-// Bindgen requirements: https://rust-lang-nursery.github.io/rust-bindgen/requirements.html
+// Bindgen requirements: https://rust-lang.github.io/rust-bindgen/requirements.html
 //              Windows: https://github.com/rust-lang-nursery/rustup.rs/issues/1003#issuecomment-289825927
 // On build.rs: https://doc.rust-lang.org/cargo/reference/build-scripts.html
 
 #![allow(uncommon_codepoints)]
 
-#[macro_use] extern crate fomat_macros;
-
 use gstuff::{last_modified_sec, slurp};
-use std::env::{self};
+use std::env::var;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -34,7 +32,7 @@ fn _in_place(path: &dyn AsRef<Path>, update: &mut dyn FnMut(Vec<u8>) -> Vec<u8>)
     }
     let updated = update(bulk.clone());
     if bulk != updated {
-        let tmp = dir.join(fomat! ((name) ".tmp"));
+        let tmp = dir.join(format!("{}.tmp", name));
         {
             let mut file = fs::File::create(&tmp).unwrap();
             file.write_all(&updated).unwrap();
@@ -55,7 +53,7 @@ enum TargetArch {
 
 impl TargetArch {
     fn detect() -> Option<TargetArch> {
-        match env::var("CARGO_CFG_TARGET_ARCH") {
+        match var("CARGO_CFG_TARGET_ARCH") {
             Ok(arch) => Some(TargetArch::from(arch)),
             Err(e) => {
                 eprintln!("Error on get CARGO_CFG_TARGET_ARCH env: {}", e);
@@ -85,10 +83,11 @@ fn build_c_code() {
         return;
     }
 
-    if cfg!(windows) {
+    let target_os = var("CARGO_CFG_TARGET_FAMILY").expect("!CARGO_CFG_TARGET_FAMILY");
+    if target_os == "windows" {
         // Link in the Windows-specific crash handling code.
         let lm_seh = last_modified_sec(&"seh.c").expect("Can't stat seh.c");
-        let out_dir = env::var("OUT_DIR").expect("!OUT_DIR");
+        let out_dir = var("OUT_DIR").expect("!OUT_DIR");
         let lib_path = Path::new(&out_dir).join("libseh.a");
         let lm_lib = last_modified_sec(&lib_path).unwrap_or(0.);
         if lm_seh >= lm_lib - SLIDE {
@@ -104,6 +103,6 @@ fn main() {
     // cf. https://github.com/rust-lang/cargo/issues/4514#issuecomment-330976605
     //     https://github.com/rust-lang/cargo/issues/4213#issuecomment-310697337
     // `RUST_LOG=cargo::core::compiler::fingerprint cargo build` shows the fingerprit files used.
-
+    println!("cargo:rerun-if-changed=seh.c");
     build_c_code();
 }

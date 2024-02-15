@@ -19,6 +19,9 @@ pub enum ScriptType {
     Call,
     Create,
     LelantusMint,
+    ColdStaking,
+    // Komodo smart chains specific
+    CryptoCondition,
 }
 
 impl From<GlobalScriptType> for ScriptType {
@@ -36,6 +39,8 @@ impl From<GlobalScriptType> for ScriptType {
             GlobalScriptType::CreateSender => ScriptType::CreateSender,
             GlobalScriptType::Call => ScriptType::Call,
             GlobalScriptType::Create => ScriptType::Create,
+            GlobalScriptType::ColdStaking => ScriptType::ColdStaking,
+            GlobalScriptType::CryptoCondition => ScriptType::CryptoCondition,
         }
     }
 }
@@ -59,6 +64,8 @@ impl Serialize for ScriptType {
             ScriptType::Call => "call".serialize(serializer),
             ScriptType::Create => "create".serialize(serializer),
             ScriptType::LelantusMint => "lelantusmint".serialize(serializer),
+            ScriptType::ColdStaking => "cold_staking".serialize(serializer),
+            ScriptType::CryptoCondition => "cryptocondition".serialize(serializer),
         }
     }
 }
@@ -95,6 +102,8 @@ impl<'a> Deserialize<'a> for ScriptType {
                     "call" => Ok(ScriptType::Call),
                     "create" => Ok(ScriptType::Create),
                     "lelantusmint" => Ok(ScriptType::LelantusMint),
+                    "cold_staking" => Ok(ScriptType::ColdStaking),
+                    "cryptocondition" => Ok(ScriptType::CryptoCondition),
                     _ => Err(E::invalid_value(Unexpected::Str(value), &self)),
                 }
             }
@@ -144,6 +153,14 @@ mod tests {
         );
         assert_eq!(serde_json::to_string(&ScriptType::Call).unwrap(), r#""call""#);
         assert_eq!(serde_json::to_string(&ScriptType::Create).unwrap(), r#""create""#);
+        assert_eq!(
+            serde_json::to_string(&ScriptType::ColdStaking).unwrap(),
+            r#""cold_staking""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ScriptType::CryptoCondition).unwrap(),
+            r#""cryptocondition""#
+        );
     }
 
     #[test]
@@ -195,6 +212,14 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ScriptType>(r#""create""#).unwrap(),
             ScriptType::Create
+        );
+        assert_eq!(
+            serde_json::from_str::<ScriptType>(r#""cold_staking""#).unwrap(),
+            ScriptType::ColdStaking
+        );
+        assert_eq!(
+            serde_json::from_str::<ScriptType>(r#""cryptocondition""#).unwrap(),
+            ScriptType::CryptoCondition
         );
     }
 }

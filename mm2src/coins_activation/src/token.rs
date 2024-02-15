@@ -1,35 +1,30 @@
-/// Contains token activation traits and their implementations for various coins
-///
+// Contains token activation traits and their implementations for various coins
+
+use crate::platform_coin_with_tokens::{self, RegisterTokenInfo};
 use crate::prelude::*;
 use async_trait::async_trait;
 use coins::utxo::rpc_clients::UtxoRpcError;
-use coins::{lp_coinfind, lp_coinfind_or_err, CoinProtocol, CoinsContext, MmCoinEnum};
-use common::mm_ctx::MmArc;
-use common::mm_error::prelude::*;
-use common::{HttpStatusCode, NotSame, StatusCode};
+use coins::{lp_coinfind, lp_coinfind_or_err, BalanceError, CoinProtocol, CoinsContext, MmCoinEnum, RegisterCoinError,
+            UnexpectedDerivationMethod};
+use common::{HttpStatusCode, StatusCode};
 use derive_more::Display;
+use mm2_core::mm_ctx::MmArc;
+use mm2_err_handle::prelude::*;
 use ser_error_derive::SerializeErrorType;
 use serde_derive::{Deserialize, Serialize};
-
-pub trait TryPlatformCoinFromMmCoinEnum {
-    fn try_from_mm_coin(coin: MmCoinEnum) -> Option<Self>
-    where
-        Self: Sized;
-}
 
 pub trait TokenProtocolParams {
     fn platform_coin_ticker(&self) -> &str;
 }
 
 #[async_trait]
-pub trait TokenActivationOps: Into<MmCoinEnum> {
-    type PlatformCoin: TryPlatformCoinFromMmCoinEnum;
+pub trait TokenActivationOps: Into<MmCoinEnum> + platform_coin_with_tokens::TokenOf {
     type ActivationParams;
     type ProtocolInfo: TokenProtocolParams + TryFromCoinProtocol;
     type ActivationResult;
     type ActivationError: NotMmError;
 
-    async fn init_token(
+    async fn enable_token(
         ticker: String,
         platform_coin: Self::PlatformCoin,
         activation_params: Self::ActivationParams,
@@ -61,8 +56,21 @@ pub enum EnableTokenError {
         platform_coin_ticker: String,
         token_ticker: String,
     },
+    #[display(fmt = "{}", _0)]
+    UnexpectedDerivationMethod(UnexpectedDerivationMethod),
+    CouldNotFetchBalance(String),
+    InvalidConfig(String),
     Transport(String),
     Internal(String),
+}
+
+impl From<RegisterCoinError> for EnableTokenError {
+    fn from(err: RegisterCoinError) -> Self {
+        match err {
+            RegisterCoinError::CoinIsInitializedAlready { coin } => Self::TokenIsAlreadyActivated(coin),
+            RegisterCoinError::Internal(err) => Self::Internal(err),
+        }
+    }
 }
 
 impl From<CoinConfWithProtocolError> for EnableTokenError {
@@ -82,6 +90,16 @@ impl From<CoinConfWithProtocolError> for EnableTokenError {
     }
 }
 
+impl From<BalanceError> for EnableTokenError {
+    fn from(e: BalanceError) -> Self {
+        match e {
+            BalanceError::Transport(e) | BalanceError::InvalidResponse(e) => EnableTokenError::Transport(e),
+            BalanceError::UnexpectedDerivationMethod(e) => EnableTokenError::UnexpectedDerivationMethod(e),
+            BalanceError::Internal(e) | BalanceError::WalletStorageError(e) => EnableTokenError::Internal(e),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct EnableTokenRequest<T> {
     ticker: String,
@@ -93,9 +111,9 @@ pub async fn enable_token<Token>(
     req: EnableTokenRequest<Token::ActivationParams>,
 ) -> Result<Token::ActivationResult, MmError<EnableTokenError>>
 where
-    Token: TokenActivationOps,
+    Token: TokenActivationOps + Clone,
     EnableTokenError: From<Token::ActivationError>,
-    (Token::ActivationError, EnableTokenError): NotSame,
+    (Token::ActivationError, EnableTokenError): NotEqual,
 {
     if let Ok(Some(_)) = lp_coinfind(&ctx, &req.ticker).await {
         return MmError::err(EnableTokenError::TokenIsAlreadyActivated(req.ticker));
@@ -105,7 +123,7 @@ where
 
     let platform_coin = lp_coinfind_or_err(&ctx, token_protocol.platform_coin_ticker())
         .await
-        .mm_err(|_| EnableTokenError::PlatformCoinIsNotActivated(req.ticker.clone()))?;
+        .mm_err(|_| EnableTokenError::PlatformCoinIsNotActivated(token_protocol.platform_coin_ticker().to_owned()))?;
 
     let platform_coin = Token::PlatformCoin::try_from_mm_coin(platform_coin).or_mm_err(|| {
         EnableTokenError::UnsupportedPlatformCoin {
@@ -115,13 +133,12 @@ where
     })?;
 
     let (token, activation_result) =
-        Token::init_token(req.ticker, platform_coin, req.activation_params, token_protocol).await?;
+        Token::enable_token(req.ticker, platform_coin.clone(), req.activation_params, token_protocol).await?;
 
     let coins_ctx = CoinsContext::from_ctx(&ctx).unwrap();
-    coins_ctx
-        .add_coin(token.into())
-        .await
-        .mm_err(|e| EnableTokenError::TokenIsAlreadyActivated(e.ticker))?;
+    coins_ctx.add_token(token.clone().into()).await?;
+
+    platform_coin.register_token_info(&token);
 
     Ok(activation_result)
 }
@@ -147,7 +164,10 @@ impl HttpStatusCode for EnableTokenError {
             | EnableTokenError::UnexpectedTokenProtocol { .. } => StatusCode::BAD_REQUEST,
             EnableTokenError::TokenProtocolParseError { .. }
             | EnableTokenError::UnsupportedPlatformCoin { .. }
+            | EnableTokenError::UnexpectedDerivationMethod(_)
             | EnableTokenError::Transport(_)
+            | EnableTokenError::CouldNotFetchBalance(_)
+            | EnableTokenError::InvalidConfig(_)
             | EnableTokenError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

@@ -1,11 +1,10 @@
 use crate::prelude::*;
-use crate::token::{EnableTokenError, TokenActivationOps, TokenProtocolParams, TryPlatformCoinFromMmCoinEnum};
+use crate::token::{EnableTokenError, TokenActivationOps, TokenProtocolParams};
 use async_trait::async_trait;
 use coins::utxo::bch::BchCoin;
-use coins::utxo::rpc_clients::UtxoRpcError;
-use coins::utxo::slp::{SlpProtocolConf, SlpToken};
+use coins::utxo::slp::{EnableSlpError, SlpProtocolConf, SlpToken};
 use coins::{CoinBalance, CoinProtocol, MarketCoinOps, MmCoin, MmCoinEnum};
-use common::mm_error::prelude::*;
+use mm2_err_handle::prelude::*;
 use rpc::v1::types::H256 as H256Json;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -53,11 +52,13 @@ impl TokenProtocolParams for SlpProtocolConf {
     fn platform_coin_ticker(&self) -> &str { &self.platform_coin_ticker }
 }
 
-impl From<SlpInitError> for EnableTokenError {
-    fn from(err: SlpInitError) -> Self {
+impl From<EnableSlpError> for EnableTokenError {
+    fn from(err: EnableSlpError) -> Self {
         match err {
-            SlpInitError::GetBalanceError(rpc_err) => rpc_err.into(),
-            SlpInitError::MyAddressError(e) => EnableTokenError::Internal(e),
+            EnableSlpError::GetBalanceError(rpc_err) => rpc_err.into(),
+            EnableSlpError::UnexpectedDerivationMethod(e) | EnableSlpError::Internal(e) => {
+                EnableTokenError::Internal(e)
+            },
         }
     }
 }
@@ -70,21 +71,14 @@ pub struct SlpInitResult {
     required_confirmations: u64,
 }
 
-#[derive(Debug)]
-pub enum SlpInitError {
-    GetBalanceError(UtxoRpcError),
-    MyAddressError(String),
-}
-
 #[async_trait]
 impl TokenActivationOps for SlpToken {
-    type PlatformCoin = BchCoin;
     type ActivationParams = SlpActivationRequest;
     type ProtocolInfo = SlpProtocolConf;
     type ActivationResult = SlpInitResult;
-    type ActivationError = SlpInitError;
+    type ActivationError = EnableSlpError;
 
-    async fn init_token(
+    async fn enable_token(
         ticker: String,
         platform_coin: Self::PlatformCoin,
         activation_params: Self::ActivationParams,
@@ -103,9 +97,9 @@ impl TokenActivationOps for SlpToken {
             protocol_conf.token_id,
             platform_coin,
             required_confirmations,
-        );
-        let balance = token.my_coin_balance().await.mm_err(SlpInitError::GetBalanceError)?;
-        let my_address = token.my_address().map_to_mm(SlpInitError::MyAddressError)?;
+        )?;
+        let balance = token.my_coin_balance().await.mm_err(EnableSlpError::GetBalanceError)?;
+        let my_address = token.my_address()?;
         let mut balances = HashMap::new();
         balances.insert(my_address, balance);
         let init_result = SlpInitResult {

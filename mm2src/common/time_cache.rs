@@ -21,12 +21,12 @@
 //! This implements a time-based LRU cache for checking gossipsub message duplicates.
 
 use fnv::FnvHashMap;
+use instant::Instant;
 use std::collections::hash_map::{self,
                                  Entry::{Occupied, Vacant},
                                  Iter, Keys};
 use std::collections::VecDeque;
 use std::time::Duration;
-use wasm_timer::Instant;
 
 #[derive(Debug)]
 pub struct ExpiringElement<Element> {
@@ -247,10 +247,8 @@ where
     }
 }
 
-#[allow(dead_code)]
 pub struct DuplicateCache<Key: std::hash::Hash>(TimeCache<Key, ()>);
 
-#[allow(dead_code)]
 impl<Key> DuplicateCache<Key>
 where
     Key: Eq + std::hash::Hash + Clone,
@@ -271,6 +269,10 @@ where
     }
 
     pub fn contains(&mut self, key: &Key) -> bool { self.0.contains_key(key) }
+
+    // Removes a certain key even if it didn't expire plus removing other expired keys
+    #[inline]
+    pub fn remove(&mut self, key: Key) { self.0.remove(key); }
 }
 
 #[cfg(test)]

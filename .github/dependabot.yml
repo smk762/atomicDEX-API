@@ -1,0 +1,16 @@
+# Please see the documentation for all configuration options:
+# https://help.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+
+version: 2
+updates:
+  - package-ecosystem: cargo
+    # Define the location of the package manifests
+    directory: "/mm2src"
+    # Use target-branch to specify a different(from default) branch for manifest files and for pull requests.
+    target-branch: "dev"
+    # By default, Dependabot opens a maximum of five pull requests for version updates.
+    # Use open-pull-requests-limit to change this limit.
+    open-pull-requests-limit: 2
+    schedule:
+      # By default, Dependabot checks for new versions on Monday at a random set time for the repository
+      interval: weekly

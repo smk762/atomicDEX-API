@@ -9,51 +9,61 @@ use super::ZCoin;
 use crate::utxo::rpc_clients::{UtxoRpcClientEnum, UtxoRpcError};
 use crate::utxo::utxo_common::payment_script;
 use crate::utxo::{sat_from_big_decimal, UtxoAddressFormat};
-use crate::z_coin::{ARRRConsensusParams, SendOutputsErr, ZOutput, DEX_FEE_OVK};
+use crate::z_coin::SendOutputsErr;
+use crate::z_coin::{ZOutput, DEX_FEE_OVK};
 use crate::NumConversError;
-use bigdecimal::BigDecimal;
+use crate::{PrivKeyPolicyNotAllowed, TransactionEnum};
 use bitcrypto::dhash160;
-use chain::Transaction as UtxoTx;
-use common::mm_error::prelude::*;
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
-use keys::{Address, Public};
-use script::{Builder as ScriptBuilder, Opcode, Script};
-use secp256k1::SecretKey;
-use serialization::deserialize;
-use zcash_primitives::consensus;
+use keys::{AddressBuilder, KeyPair, Public};
+use mm2_err_handle::prelude::*;
+use mm2_number::BigDecimal;
+use script::Script;
+use script::{Builder as ScriptBuilder, Opcode};
 use zcash_primitives::legacy::Script as ZCashScript;
 use zcash_primitives::memo::MemoBytes;
-use zcash_primitives::transaction::builder::{Builder as ZTxBuilder, Error as ZTxBuilderError};
-use zcash_primitives::transaction::components::{Amount, OutPoint as ZCashOutpoint, TxOut};
+use zcash_primitives::transaction::builder::Error as ZTxBuilderError;
+use zcash_primitives::transaction::components::{Amount, TxOut};
 use zcash_primitives::transaction::Transaction as ZTransaction;
+
+cfg_native!(
+    use common::async_blocking;
+    use secp256k1::SecretKey;
+    use zcash_primitives::consensus;
+    use zcash_primitives::transaction::builder::Builder as ZTxBuilder;
+    use zcash_primitives::transaction::components::OutPoint as ZCashOutpoint;
+);
 
 /// Sends HTLC output from the coin's my_z_addr
 pub async fn z_send_htlc(
     coin: &ZCoin,
     time_lock: u32,
+    my_pub: &Public,
     other_pub: &Public,
     secret_hash: &[u8],
     amount: BigDecimal,
 ) -> Result<ZTransaction, MmError<SendOutputsErr>> {
-    let payment_script = payment_script(time_lock, secret_hash, coin.utxo_arc.key_pair.public(), &other_pub);
+    let payment_script = payment_script(time_lock, secret_hash, my_pub, other_pub);
     let script_hash = dhash160(&payment_script);
-    let htlc_address = Address {
-        prefix: coin.utxo_arc.conf.p2sh_addr_prefix,
-        t_addr_prefix: coin.utxo_arc.conf.p2sh_t_addr_prefix,
-        hash: script_hash,
-        checksum_type: coin.utxo_arc.conf.checksum_type,
-        addr_format: UtxoAddressFormat::Standard,
-        hrp: None,
-    };
+    let htlc_address = AddressBuilder::new(
+        UtxoAddressFormat::Standard,
+        script_hash.into(),
+        coin.utxo_arc.conf.checksum_type,
+        coin.utxo_arc.conf.address_prefixes.clone(),
+        None,
+    )
+    .as_sh()
+    .build()
+    .map_to_mm(SendOutputsErr::InternalError)?;
 
     let amount_sat = sat_from_big_decimal(&amount, coin.utxo_arc.decimals)?;
     let address = htlc_address.to_string();
-    if let UtxoRpcClientEnum::Native(native) = coin.rpc_client() {
+    if let UtxoRpcClientEnum::Native(native) = coin.utxo_rpc_client() {
         native.import_address(&address, &address, false).compat().await.unwrap();
     }
 
-    let htlc_script = ScriptBuilder::build_p2sh(&script_hash).to_bytes().take();
+    let htlc_script = ScriptBuilder::build_p2sh(&script_hash.into()).to_bytes().take();
     let htlc_output = TxOut {
         value: Amount::from_u64(amount_sat).map_err(|_| NumConversError::new("Invalid ZCash amount".into()))?,
         script_pubkey: ZCashScript(htlc_script),
@@ -93,21 +103,44 @@ pub async fn z_send_dex_fee(
 }
 
 #[derive(Debug, Display)]
-#[allow(clippy::large_enum_variant, clippy::upper_case_acronyms)]
+#[allow(clippy::large_enum_variant, clippy::upper_case_acronyms, unused)]
 pub enum ZP2SHSpendError {
     ZTxBuilderError(ZTxBuilderError),
+    PrivKeyPolicyNotAllowed(PrivKeyPolicyNotAllowed),
     Rpc(UtxoRpcError),
+    #[display(fmt = "{:?} {}", _0, _1)]
+    TxRecoverable(TransactionEnum, String),
+    Io(std::io::Error),
 }
 
 impl From<ZTxBuilderError> for ZP2SHSpendError {
     fn from(tx_builder: ZTxBuilderError) -> ZP2SHSpendError { ZP2SHSpendError::ZTxBuilderError(tx_builder) }
 }
 
+impl From<PrivKeyPolicyNotAllowed> for ZP2SHSpendError {
+    fn from(err: PrivKeyPolicyNotAllowed) -> Self { ZP2SHSpendError::PrivKeyPolicyNotAllowed(err) }
+}
+
 impl From<UtxoRpcError> for ZP2SHSpendError {
     fn from(rpc: UtxoRpcError) -> ZP2SHSpendError { ZP2SHSpendError::Rpc(rpc) }
 }
 
+impl From<std::io::Error> for ZP2SHSpendError {
+    fn from(e: std::io::Error) -> Self { ZP2SHSpendError::Io(e) }
+}
+
+impl ZP2SHSpendError {
+    #[inline]
+    pub fn get_tx(&self) -> Option<TransactionEnum> {
+        match self {
+            ZP2SHSpendError::TxRecoverable(ref tx, _) => Some(tx.clone()),
+            _ => None,
+        }
+    }
+}
+
 /// Spends P2SH output 0 to the coin's my_z_addr
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn z_p2sh_spend(
     coin: &ZCoin,
     p2sh_tx: ZTransaction,
@@ -115,50 +148,60 @@ pub async fn z_p2sh_spend(
     input_sequence: u32,
     redeem_script: Script,
     script_data: Script,
-) -> Result<UtxoTx, MmError<ZP2SHSpendError>> {
+    htlc_keypair: &KeyPair,
+) -> Result<ZTransaction, MmError<ZP2SHSpendError>> {
     let current_block = coin.utxo_arc.rpc_client.get_block_count().compat().await? as u32;
-    let mut tx_builder = ZTxBuilder::new(ARRRConsensusParams {}, current_block.into());
+    let mut tx_builder = ZTxBuilder::new(coin.consensus_params(), current_block.into());
     tx_builder.set_lock_time(tx_locktime);
 
-    let secp_secret =
-        SecretKey::from_slice(&*coin.utxo_arc.key_pair.private().secret).expect("Keypair contains a valid secret key");
+    let secp_secret = SecretKey::from_slice(htlc_keypair.private_ref()).expect("Keypair contains a valid secret key");
 
     let outpoint = ZCashOutpoint::new(p2sh_tx.txid().0, 0);
     let tx_out = TxOut {
         value: p2sh_tx.vout[0].value,
         script_pubkey: ZCashScript(redeem_script.to_vec()),
     };
-    tx_builder
-        .add_transparent_input(
-            secp_secret,
-            outpoint,
-            input_sequence,
-            ZCashScript(script_data.to_vec()),
-            tx_out,
-        )
-        .map_to_mm(ZP2SHSpendError::from)?;
-    tx_builder
-        .add_sapling_output(
-            None,
-            coin.z_fields.my_z_addr.clone(),
-            // TODO use fee from coin here
-            p2sh_tx.vout[0].value - Amount::from_i64(1000).expect("1000 will always succeed"),
-            None,
-        )
-        .map_to_mm(ZP2SHSpendError::from)?;
+    tx_builder.add_transparent_input(
+        secp_secret,
+        outpoint,
+        input_sequence,
+        ZCashScript(script_data.to_vec()),
+        tx_out,
+    )?;
+    tx_builder.add_sapling_output(
+        None,
+        coin.z_fields.my_z_addr.clone(),
+        // TODO use fee from coin here. Will do on next iteration, 1000 is default value that works fine
+        p2sh_tx.vout[0].value - Amount::from_i64(1000).expect("1000 will always succeed"),
+        None,
+    )?;
 
-    let (zcash_tx, _) = tx_builder
-        .build(consensus::BranchId::Sapling, &coin.z_fields.z_tx_prover)
-        .map_to_mm(ZP2SHSpendError::from)?;
+    let (zcash_tx, _) = async_blocking({
+        let prover = coin.z_fields.z_tx_prover.clone();
+        move || tx_builder.build(consensus::BranchId::Sapling, prover.as_ref())
+    })
+    .await?;
 
     let mut tx_buffer = Vec::with_capacity(1024);
-    zcash_tx.write(&mut tx_buffer).unwrap();
-    let refund_tx: UtxoTx = deserialize(tx_buffer.as_slice()).expect("librustzcash should produce a valid tx");
+    zcash_tx.write(&mut tx_buffer)?;
 
-    coin.rpc_client()
+    coin.utxo_rpc_client()
         .send_raw_transaction(tx_buffer.into())
         .compat()
-        .await?;
+        .await
+        .map(|_| zcash_tx.clone())
+        .mm_err(|e| ZP2SHSpendError::TxRecoverable(zcash_tx.into(), e.to_string()))
+}
 
-    Ok(refund_tx)
+#[cfg(target_arch = "wasm32")]
+pub async fn z_p2sh_spend(
+    _coin: &ZCoin,
+    _p2sh_tx: ZTransaction,
+    _tx_locktime: u32,
+    _input_sequence: u32,
+    _redeem_script: Script,
+    _script_data: Script,
+    _htlc_keypair: &KeyPair,
+) -> Result<ZTransaction, MmError<ZP2SHSpendError>> {
+    todo!()
 }

@@ -1,0 +1,21 @@
+[package]
+name = "utxo_signer"
+version = "0.1.0"
+edition = "2018"
+
+[lib]
+doctest = false
+
+[dependencies]
+async-trait = "0.1"
+chain = { path = "../../mm2_bitcoin/chain" }
+common = { path = "../../common" }
+mm2_err_handle = { path = "../../mm2_err_handle" }
+crypto = { path = "../../crypto" }
+derive_more = "0.99"
+hex = "0.4.2"
+keys = { path = "../../mm2_bitcoin/keys" }
+primitives = { path = "../../mm2_bitcoin/primitives" }
+rpc = { path = "../../mm2_bitcoin/rpc" }
+script = { path = "../../mm2_bitcoin/script" }
+serialization = { path = "../../mm2_bitcoin/serialization" }

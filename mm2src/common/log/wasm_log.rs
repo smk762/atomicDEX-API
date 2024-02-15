@@ -16,7 +16,7 @@ const DEFAULT_LEVEL_FILTER: LogLevel = LogLevel::Info;
 #[macro_export]
 macro_rules! console_err {
     ($($args: tt)+) => {{
-        let here = format!("{}:{}]", ::gstuff::filename(file!()), line!());
+        let here = format!("{}:{}]", $crate::filename(file!()), line!());
         let msg = format!($($args)+);
         let msg_formatted = format!("{} {}", here, msg);
         let msg_js = $crate::log::wasm_log::JsValue::from(msg_formatted);
@@ -27,7 +27,7 @@ macro_rules! console_err {
 #[macro_export]
 macro_rules! console_info {
     ($($args: tt)+) => {{
-        let here = format!("{}:{}]", ::gstuff::filename(file!()), line!());
+        let here = format!("{}:{}]", $crate::filename(file!()), line!());
         let msg = format!($($args)+);
         let msg_formatted = format!("{} {}", here, msg);
         let msg_js = $crate::log::wasm_log::JsValue::from(msg_formatted);
@@ -38,7 +38,7 @@ macro_rules! console_info {
 #[macro_export]
 macro_rules! console_log {
     ($($args: tt)+) => {{
-        let here = format!("{}:{}]", ::gstuff::filename(file!()), line!());
+        let here = format!("{}:{}]", $crate::filename(file!()), line!());
         let msg = format!($($args)+);
         let msg_formatted = format!("{} {}", here, msg);
         let msg_js = $crate::log::wasm_log::JsValue::from(msg_formatted);
@@ -64,6 +64,10 @@ pub enum LogLevel {
     Debug = 4,
     /// Corresponds to the `TRACE` log level.
     Trace = 5,
+}
+
+impl Default for LogLevel {
+    fn default() -> Self { DEFAULT_LEVEL_FILTER }
 }
 
 impl From<LogLevel> for JsValue {
@@ -97,6 +101,10 @@ impl WasmCallback {
                 }
             }
         };
+
+        // There is no async operations within the loop except reading from the `rx` receiver.
+        // So we're sure that once the `tx` sender is dropped, the loop will be stopped immediately.
+        // Please note that `WasmCallBack` is set on MarketMaker start/restart.
         spawn_local(fut);
         WasmCallback { tx }
     }
@@ -111,6 +119,10 @@ impl WasmCallback {
                 console::log_1(&msg_js);
             }
         };
+
+        // The future can be spawned safely since it doesn't hold any shared pointer,
+        // and will be stopped immediately once `WasmCallback` is dropped.
+        // Please note that `WasmCallBack` is set on MarketMaker start/restart.
         spawn_local(fut);
         WasmCallback { tx }
     }
@@ -164,4 +176,28 @@ impl Log for WasmLogger {
 struct CallbackMsg {
     level: LogLevel,
     line: String,
+}
+
+pub fn register_wasm_log() {
+    use crate::log::register_callback;
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+    // Check if the logger is initialized already
+    if let Err(true) = IS_INITIALIZED.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed) {
+        return;
+    }
+
+    let log_level = match option_env!("RUST_WASM_TEST_LOG") {
+        Some(level_str) => LogLevel::from_str(level_str).unwrap_or(LogLevel::Info),
+        None => LogLevel::Info,
+    };
+
+    register_callback(WasmCallback::console_log());
+    WasmLoggerBuilder::default()
+        .level_filter(log_level)
+        .try_init()
+        .expect("Must be initialized only once");
 }

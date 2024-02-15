@@ -15,13 +15,12 @@ DB/*
 
 .env.client
 .env.seed
-etomic_build/client/DB
-etomic_build/client/stats.log
-etomic_build/client/unparsed.txt
-etomic_build/seed/DB
-etomic_build/seed/stats.log
-etomic_build/seed/unparsed.txt
-iguana/exchanges/manychains
+scripts/mm2/client/DB
+scripts/mm2/client/stats.log
+scripts/mm2/client/unparsed.txt
+scripts/mm2/seed/DB
+scripts/mm2/seed/stats.log
+scripts/mm2/seed/unparsed.txt
 
 /marketmaker_depends
 /x64
@@ -38,18 +37,21 @@ iguana/exchanges/manychains
 /MM_DATETIME
 /MM_DATETIME.tmp
 /MM_VERSION
+/MM_VERSION.tmp
 /target
-/iguana/exchanges/etomicswap/target
+/targettest
+/clippytarget
 
 # Subcrate artefacts
-/mm2src/common/c_headers
 /mm2src/*/target
 
 # Private IDE configuration
-/mm2src/peers/.vscode/tasks.json
+/mm2src/*/.vscode/tasks.json
+/mm2src/*/.vscode/c_cpp_properties.json
 /.vscode/settings.json
 /.vscode/tasks.json
 /.vscode/c_cpp_properties.json
+/.vscode/launch.json
 
 # IDE artefacts
 /.vscode/ipch
@@ -59,3 +61,13 @@ iguana/exchanges/manychains
 /coins
 # MM2 conf to avoid occasional adding to git by someone
 MM2.json
+
+# vim
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+
+# mergetool
+*.orig

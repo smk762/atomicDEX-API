@@ -1,10 +1,10 @@
 use crate::{NetworkInfo, NetworkPorts};
 use derive_more::Display;
 use libp2p::Multiaddr;
-use serde::{de, Deserialize, Deserializer};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use std::str::FromStr;
 
-#[derive(Debug, Display)]
+#[derive(Clone, Debug, Display, Serialize)]
 pub enum RelayAddressError {
     #[display(
         fmt = "Error parsing 'RelayAddress' from {}: address has unknown protocol, expected either IPv4 or DNS or Memory address",
@@ -90,8 +90,8 @@ impl RelayAddress {
         };
 
         match self {
-            RelayAddress::IPv4(ipv4) => Ok(ipv4_multiaddr(&ipv4, network_ports)),
-            RelayAddress::Dns(dns) => Ok(dns_multiaddr(&dns, network_ports)),
+            RelayAddress::IPv4(ipv4) => Ok(ipv4_multiaddr(ipv4, network_ports)),
+            RelayAddress::Dns(dns) => Ok(dns_multiaddr(dns, network_ports)),
             RelayAddress::Memory(_) => Err(RelayAddressError::memory_addr_on_distributed_network(self)),
         }
     }
@@ -148,7 +148,7 @@ fn test_relay_address_from_str() {
         ("/memory/71428421981", RelayAddress::Memory(71428421981)),
     ];
     for (s, expected) in valid_addresses {
-        let actual = RelayAddress::from_str(s).expect(&format!("Error parsing '{}'", s));
+        let actual = RelayAddress::from_str(s).unwrap_or_else(|_| panic!("Error parsing '{}'", s));
         assert_eq!(actual, expected);
     }
 

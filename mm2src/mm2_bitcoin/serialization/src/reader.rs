@@ -51,12 +51,49 @@ pub trait Deserializable {
 
 #[derive(Debug)]
 pub enum CoinVariant {
-    Standard,
+    // Todo: https://github.com/KomodoPlatform/atomicDEX-API/issues/1345
+    BTC,
     Qtum,
+    LBC,
+    Standard,
+    PPC,
+    /// Needed to deserialize `RICK` block headers correctly as it's genesis header is `version 1` while all other
+    /// block headers are `version 4`.
+    RICK,
+    /// Same reason as RICK.
+    MORTY,
 }
 
 impl CoinVariant {
+    pub fn is_btc(&self) -> bool { matches!(self, CoinVariant::BTC) }
     pub fn is_qtum(&self) -> bool { matches!(self, CoinVariant::Qtum) }
+    pub fn is_lbc(&self) -> bool { matches!(self, CoinVariant::LBC) }
+    pub fn is_ppc(&self) -> bool { matches!(self, CoinVariant::PPC) }
+    pub fn is_kmd_assetchain(&self) -> bool { matches!(self, CoinVariant::RICK | CoinVariant::MORTY) }
+}
+
+fn ticker_matches(ticker: &str, with: &str) -> bool {
+    ticker == with || ticker.contains(&format!("{with}-")) || ticker.contains(&format!("{with}_"))
+}
+
+impl From<&str> for CoinVariant {
+    fn from(ticker: &str) -> Self {
+        match ticker {
+            // "BTC", "BTC-segwit", "tBTC", "tBTC-segwit", etc..
+            t if ticker_matches(t, "BTC") => CoinVariant::BTC,
+            // "QTUM", "QTUM-segwit", "tQTUM", "tQTUM-segwit", etc..
+            t if ticker_matches(t, "QTUM") => CoinVariant::Qtum,
+            // "LBC", "LBC-segwit", etc..
+            t if ticker_matches(t, "LBC") => CoinVariant::LBC,
+            // "PPC", "PPC-segwit", etc..
+            t if ticker_matches(t, "PPC") => CoinVariant::PPC,
+            // "RICK"
+            t if ticker_matches(t, "RICK") => CoinVariant::RICK,
+            // "MORTY
+            t if ticker_matches(t, "MORTY") => CoinVariant::MORTY,
+            _ => CoinVariant::Standard,
+        }
+    }
 }
 
 /// Bitcoin structures reader.
