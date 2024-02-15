@@ -55,9 +55,8 @@ jobs:
         run: docker login --username ${{ secrets.DOCKER_HUB_USERNAME }} --password ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}  docker.io
 
       - name: Build and push container image
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
         run: |
-          CONTAINER_TAG="dev-$COMMIT_HASH"
-          docker build -t ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:"$CONTAINER_TAG" -t ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:dev-latest -f .docker/Dockerfile.dev-release .
+          CONTAINER_TAG="${{ env.BRANCH_NAME }}-$COMMIT_HASH"
+          docker build -t ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:"$CONTAINER_TAG" -t ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:${{ env.BRANCH_NAME }}-latest -f .docker/Dockerfile.dev-release .
           docker push ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:"$CONTAINER_TAG"
-          docker push ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:dev-latest
+          docker push ${{ secrets.DOCKER_HUB_ORG }}/atomicdexapi:${{ env.BRANCH_NAME }}-latest
