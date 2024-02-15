@@ -14,7 +14,7 @@ env:
   JEMALLOC_SYS_WITH_MALLOC_CONF: "background_thread:true,narenas:1,tcache:false,dirty_decay_ms:0,muzzy_decay_ms:0,metadata_thp:auto"
 
 jobs:
-  linux-x86-64:
+  Dockerhub-linux-only-build:
     timeout-minutes: 60
     runs-on: ubuntu-latest
     container: komodoofficial/ci-container:latest
