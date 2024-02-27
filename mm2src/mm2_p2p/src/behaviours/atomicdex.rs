@@ -736,7 +736,19 @@ fn start_gossipsub(
     let polling_fut = poll_fn(move |cx: &mut Context| {
         loop {
             match swarm.behaviour_mut().cmd_rx.poll_next_unpin(cx) {
-                Poll::Ready(Some(cmd)) => swarm.behaviour_mut().process_cmd(cmd).unwrap(),
+                Poll::Ready(Some(cmd)) => {
+                    if let AdexBehaviourCmd::AddReservedPeer { peer, addresses } = &cmd {
+                        if !swarm.is_connected(peer) {
+                            for address in addresses {
+                                if let Err(e) = swarm.dial(address.clone()) {
+                                    error!("Dialing failed on '{peer}'. Error: {e}");
+                                }
+                            }
+                        }
+                    };
+
+                    swarm.behaviour_mut().process_cmd(cmd).unwrap()
+                },
                 Poll::Ready(None) => return Poll::Ready(()),
                 Poll::Pending => break,
             }
